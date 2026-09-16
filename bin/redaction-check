@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Report private identifiers in files that are meant to be shared.
+
+The RULE ships; the EVIDENCE stays private. A standard nobody can check mechanically holds only while
+someone remembers it, so this is the check.
+
+⚠️ THE BUILT-IN PATTERNS ARE SHAPES, NOT NAMES. A checker for private names that CONTAINS those names
+is itself the disclosure it exists to prevent. The patterns below match FORMS (a vendor tool call, a
+ticket reference, a path into a home directory). Literal instance names — your hosts, clients,
+products — live in a private list this repository never sees, passed with --private-patterns.
+
+⚠️ A MISSING PRIVATE LIST IS "NOT CHECKED", NEVER "CLEAN". Without it the instance-name leg reports
+SKIPPED and the exit code says so. Do not give CI access to the private list: a job triggered by pull
+requests runs code the author controls, so granting it the list lets any pull request read it. Run the
+full check where the list already lives.
+
+PRIVATE LIST FORMAT: a Markdown note with the patterns in one fence tagged ```redaction-instances, or
+a plain file with one pattern per line. `#` starts a comment; a `literal:` prefix means "a name, not a
+regex" and is escaped. A Markdown file WITHOUT the fence is refused, because prose compiles into
+patterns that match ordinary English.
+
+Usage:  redaction-check [--enforce] [--private-patterns FILE] [--json] [PATHS...]
+        default PATHS: README.md core adapter-template   (Markdown files only)
+        env GOVERNANCE_PRIVATE_PATTERNS is used when --private-patterns is not given
+Exit:   0 clean, or findings without --enforce · 1 findings with --enforce · 2 cannot run ·
+        3 the instance-name leg was not checked
+"""
+import argparse, json, os, re, sys
+
+SHAPE_PATTERNS = [
+    ("vendor-tool-noun", re.compile(r"\b(?:gitea|github|gitlab|jira|linear|slack|matrix|posthog|loki|tempo|prom|crm)_[a-z_]{3,}\b"),
+     "a vendor tool call name — describe it (\"the per-run detail call\")"),
+    ("mcp-tool-path", re.compile(r"\bmcp__[a-z0-9_-]+__[a-z_]+\b"),
+     "a fully-qualified tool path from one installation"),
+    ("ticket-ref", re.compile(r"(?<![\w/#-])[a-z][a-z0-9-]{1,14}#\d{1,6}\b"),
+     "an internal ticket reference — the rule must stand without it"),
+    ("workflow-filename", re.compile(r"\b[a-z][a-z0-9._-]*\.ya?ml\b(?!\s*(?:schema|spec))"),
+     "a concrete workflow/config filename — say \"the gate workflow\""),
+    ("home-path", re.compile(r"(?<![\w~.])/(?:Users|home)/[A-Za-z][\w.-]*/"),
+     "an absolute path into one person's home — write `~/…` or name the directory's role"),
+    ("contact-address", re.compile(
+        r"(?<![\w.+-])(?!noreply@|no-reply@|git@)[A-Za-z0-9._%+-]+@"
+        r"(?!(?:[\w-]+\.)*(?:example\.(?:com|org|net)|example|invalid|test|localhost)\b)"
+        r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b"),
+     "a contact address names a person or an organisation — the rule must not need one"),
+    ("registration-id", re.compile(
+        r"\b(?:CAGE|UEI|EIN|ITIN|TIN|SSN|DUNS)(?:\s+(?:code|number|no\.?|id))?\s*[:#=]?\s*"
+        r"(?=[A-Z0-9-]*\d)[A-Z0-9][A-Z0-9-]{4,}\b"
+        r"|\b\d{3}-\d{2}-\d{4}\b|\b\d{2}-\d{7}\b"),
+     "a government/registration identifier — personal or entity data"),
+]
+
+# Comment lines, shell-prompt lines and fence markers legitimately carry shapes; a checker that flags
+# its own explanation trains people to ignore it.
+SKIP_LINE = re.compile(r"^\s*(?:#|//)|^\s{4,}[$>]|^\s*```")
+FENCE_TAG = "redaction-instances"
+DEFAULT_PATHS = ["README.md", "core", "adapter-template"]
+
+
+def fenced_lines(raw, tag=FENCE_TAG):
+    """Lines inside the first ```<tag> fence → (lines, status); status is ok · no-fence · unterminated."""
+    out, inside = [], False
+    for n, line in enumerate(raw.splitlines(), 1):
+        s = line.strip()
+        if not inside:
+            if s.startswith("```") and s[3:].strip() == tag:
+                inside = True
+            continue
+        if s.startswith("```"):
+            return out, "ok"
+        out.append((n, line))
+    return ([], "unterminated") if inside else ([], "no-fence")
+
+
+def compile_pattern(line):
+    """`literal:` means a name, not a pattern — an unescaped dot in a hostname is a wildcard that still
+    matches the intended string, so it reads as working while over-matching."""
+    if line.startswith("literal:"):
+        body = line[len("literal:"):].strip()
+        if not body:
+            raise re.error("empty literal:")
+        return re.compile(re.escape(body)), "literal"
+    return re.compile(line), "regex"
+
+
+def load_private(path):
+    """→ (patterns, note). patterns is None — never [] — when the list could not be used: None means
+    'not checked', [] would mean 'checked, nothing to find'."""
+    if not path:
+        return None, "no --private-patterns given"
+    if not os.path.isfile(path):
+        return None, "private pattern file not found"
+    with open(path, encoding="utf-8") as fh:
+        raw = fh.read()
+    lines, status = fenced_lines(raw)
+    if status == "unterminated":
+        return None, f"the ```{FENCE_TAG} fence is never closed — refusing to guess where it ends"
+    if status == "no-fence":
+        if raw.lstrip().startswith("---") or "```" in raw:
+            return None, f"Markdown with no ```{FENCE_TAG} fence — refusing to compile prose into patterns"
+        lines = list(enumerate(raw.splitlines(), 1))
+    pats = []
+    for n, line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            rx, kind = compile_pattern(line)
+        except re.error as e:
+            print(f"warning: private list line {n} is not a valid regex ({e}) — skipped", file=sys.stderr)
+            continue
+        pats.append((f"instance-name:{n}", rx, f"a literal instance name ({kind})"))
+    return pats, f"{len(pats)} pattern(s)"
+
+
+def expand(paths):
+    """Directories → the Markdown files under them. A directory must never count as one unreadable
+    file: that reports a clean scan of nothing."""
+    out, bad = [], []
+    for p in paths:
+        if os.path.isdir(p):
+            for dirpath, _, files in os.walk(p):
+                out += [os.path.join(dirpath, f) for f in files if f.endswith(".md")]
+        elif os.path.isfile(p):
+            out.append(p)
+        else:
+            bad.append(p)
+    return out, bad
+
+
+def scan(paths, patterns):
+    findings, unreadable = [], []
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as fh:
+                for n, line in enumerate(fh, 1):
+                    if SKIP_LINE.match(line):
+                        continue
+                    for kind, rx, why in patterns:
+                        for m in rx.finditer(line):
+                            findings.append({"file": path, "line": n, "kind": kind,
+                                             "match": m.group(0), "why": why})
+        except OSError as e:
+            print(f"error: cannot read {path}: {e}", file=sys.stderr)
+            unreadable.append(path)
+    return findings, unreadable
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("paths", nargs="*")
+    ap.add_argument("--enforce", action="store_true")
+    ap.add_argument("--private-patterns", default=os.environ.get("GOVERNANCE_PRIVATE_PATTERNS"))
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("-h", "--help", action="store_true")
+    a = ap.parse_args()
+    if a.help:
+        print(__doc__)
+        return 0
+
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)
+    paths = a.paths or [os.path.join(root, p) for p in DEFAULT_PATHS]
+    paths, missing = expand(paths)
+    if missing:
+        print("error: no such file or directory: " + ", ".join(missing), file=sys.stderr)
+        print("refusing to report a result over a path set I could not resolve.", file=sys.stderr)
+        return 2
+    paths = sorted(set(paths))
+    if not paths:
+        print("error: no files to scan — refusing to report a clean result on an empty set.", file=sys.stderr)
+        return 2
+
+    private, note = load_private(a.private_patterns)
+    findings, unreadable = scan(paths, list(SHAPE_PATTERNS) + (private or []))
+    if unreadable:
+        print(f"refusing to report: {len(unreadable)} of {len(paths)} path(s) could not be read.", file=sys.stderr)
+        return 2
+
+    if a.json:
+        print(json.dumps({"findings": findings, "files_scanned": len(paths),
+                          "instance_leg": "skipped" if private is None else "ran",
+                          "instance_note": note, "enforce": a.enforce}, indent=2))
+    else:
+        print(f"redaction-check — {len(paths)} file(s), {len(findings)} finding(s)")
+        print(f"  instance-name leg: {'SKIPPED — ' if private is None else 'ran — '}{note}")
+        by_kind = {}
+        for f in findings:
+            by_kind.setdefault(f["kind"], []).append(f)
+        for kind in sorted(by_kind):
+            group = by_kind[kind]
+            print(f"\n  {kind}  ({len(group)})  — {group[0]['why']}")
+            for f in group[:12]:
+                print(f"    {os.path.relpath(f['file'])}:{f['line']}  {f['match']}")
+            if len(group) > 12:
+                print(f"    … and {len(group) - 12} more")
+        if not a.enforce:
+            print("\nREPORT-ONLY — findings do not fail. Use --enforce to make them fail.")
+
+    if a.enforce and findings:
+        return 1
+    return 3 if private is None else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

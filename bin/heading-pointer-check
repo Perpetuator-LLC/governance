@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Resolve every `<doc>.md → *Section*` pointer against the doc it names.
+
+Instruction files point at rules BY NAME: `core/AGENTS.md` → *Precedence*. Nothing else checks that the
+named text still exists. A pointer whose target was renamed, merged or moved raises no error — the
+rule simply stops being found, and the file carrying the pointer still reads as complete.
+
+A pointer RESOLVES when its target text appears in the named doc: as a heading, or anywhere in the
+body (pointers often name a bold sub-rule inside a section). Matching ignores case, inline markup
+(backticks, asterisks, underscores) and line wraps — the three ways a hand-written survivor grep
+returns a false zero while the rule is present.
+
+⚠️ AN EMPTY SCAN IS NOT A CLEAN SCAN. Finding zero pointers exits 2: a pattern that stopped matching the
+pointer syntax would otherwise report "all resolved" forever.
+
+Forms recognised:
+  `doc.md` → *Target* · *Another target*
+  `doc.md → Target text`            (the whole pointer inside one code span)
+
+Usage:  heading-pointer-check [--json] [--root DIR] [PATHS...]
+        default PATHS: README.md core adapter-template
+Exit:   0 all resolved · 1 dangling pointer(s) · 2 cannot run, or no pointers found
+"""
+import argparse, json, os, re, sys
+
+DOC = r"(?P<prefix>[\w./~-]*/)?(?P<doc>[A-Za-z][\w-]*\.md)"
+ARROW = r"\s*(?:→|->)\s*"
+FORM_A = re.compile(DOC + r"`?\)?" + ARROW + r"(?P<targets>\*[^*\n]{2,160}\*(?:\s*·\s*\*[^*\n]{2,160}\*)*)")
+FORM_B = re.compile(r"`" + DOC + ARROW + r"(?P<target>[^`\n*]{2,160})`")
+DEFAULT_PATHS = ["README.md", "core", "adapter-template"]
+
+
+def norm(text):
+    text = re.sub(r"[`*_]", "", text)
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def md_files(paths):
+    out, missing = [], []
+    for p in paths:
+        if os.path.isdir(p):
+            for d, _, fs in os.walk(p):
+                out += [os.path.join(d, f) for f in fs if f.endswith(".md")]
+        elif os.path.isfile(p):
+            out.append(p)
+        else:
+            missing.append(p)
+    return sorted(set(out)), missing
+
+
+def find_pointers(path):
+    ptrs = []
+    with open(path, encoding="utf-8", errors="ignore") as fh:
+        for n, line in enumerate(fh, 1):
+            for m in FORM_A.finditer(line):
+                for t in re.findall(r"\*([^*\n]{2,160})\*", m.group("targets")):
+                    ptrs.append((n, m.group("prefix"), m.group("doc"), t.strip()))
+            for m in FORM_B.finditer(line):
+                ptrs.append((n, m.group("prefix"), m.group("doc"), m.group("target").strip()))
+    return ptrs
+
+
+def resolve_doc(root, source, doc, prefix=None):
+    """An explicit path is tried against the root and the source's directory; a bare name against the
+    source's directory, core/ and the root; then a UNIQUE basename anywhere in the tree. An ambiguous
+    basename is not guessed — it resolves to nothing and is reported."""
+    prefix = re.sub(r"^~/\.[\w-]+/", "", prefix or "")
+    cands = []
+    if prefix:
+        cands += [os.path.join(root, prefix, doc), os.path.join(os.path.dirname(source), prefix, doc)]
+    else:
+        cands += [os.path.join(os.path.dirname(source), doc), os.path.join(root, "core", doc),
+                  os.path.join(root, doc)]
+    for cand in cands:
+        if os.path.isfile(cand):
+            return cand
+    if prefix:
+        return None
+    hits = [os.path.join(d, doc) for d, _, fs in os.walk(root) if doc in fs and "/.git" not in d]
+    return hits[0] if len(hits) == 1 else None
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("paths", nargs="*")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--root", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+    ap.add_argument("-h", "--help", action="store_true")
+    a = ap.parse_args()
+    if a.help:
+        print(__doc__)
+        return 0
+    root = os.path.abspath(a.root)
+    paths = a.paths or [os.path.join(root, p) for p in DEFAULT_PATHS]
+    files, missing = md_files(paths)
+    if missing:
+        print("error: no such path: " + ", ".join(missing), file=sys.stderr)
+        return 2
+
+    cache, results = {}, []
+    for f in files:
+        for line, prefix, doc, target in find_pointers(f):
+            docpath = resolve_doc(root, f, doc, prefix)
+            if docpath is None:
+                status = "no-such-doc"
+            else:
+                if docpath not in cache:
+                    raw = open(docpath, encoding="utf-8", errors="ignore").read()
+                    heads = [norm(h) for h in re.findall(r"^#{1,6}\s+(.*)$", raw, re.M)]
+                    cache[docpath] = (heads, norm(raw))
+                heads, body = cache[docpath]
+                t = norm(target)
+                status = "heading" if any(t in h for h in heads) else ("text" if t in body else "dangling")
+            results.append({"file": os.path.relpath(f, root), "line": line, "doc": doc,
+                            "target": target, "status": status})
+
+    bad = [r for r in results if r["status"] in ("dangling", "no-such-doc")]
+    if a.json:
+        print(json.dumps({"pointers": len(results), "dangling": bad, "files_scanned": len(files)}, indent=2))
+    else:
+        print(f"heading-pointer-check — {len(files)} file(s), {len(results)} pointer(s), {len(bad)} dangling")
+        for r in bad:
+            print(f"  {r['status'].upper():12} {r['file']}:{r['line']}  {r['doc']} → *{r['target']}*")
+    if not results:
+        print("error: found NO pointers — a pattern that stopped matching reads as clean; refusing.",
+              file=sys.stderr)
+        return 2
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

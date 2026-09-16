@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Render layered instruction files, and detect when a rendered file has drifted from its layers.
+
+  governance render --out FILE [--core DIR] [--adapter DIR] [--local FILE]
+  governance check  --out FILE [--core DIR] [--adapter DIR] [--local FILE]
+
+Layers are concatenated CORE → ADAPTER → LOCAL, so on conflict the later layer is the one a model reads
+last. Within a directory layer, AGENTS.md comes first, then every other Markdown file in sorted path
+order. --core defaults to this repository's core/ directory.
+
+Why render rather than link: symlinked instruction files and imports resolving outside the working
+directory are skipped by some harness surfaces, silently. A rendered file loads everywhere; its only
+failure mode is staleness, and `check` detects that.
+
+The rendered file begins with a header carrying the sha256 of its body. `check` distinguishes the two
+ways a rendered file goes wrong, because they have different fixes:
+  LAYERS CHANGED   a layer was edited after rendering      → re-render
+  EDITED BY HAND   the rendered file itself was edited      → move the edit into a layer, re-render
+
+Exit: 0 rendered / in sync · 1 drift · 2 cannot run (a named layer is missing; the output is absent,
+      or has no header)
+"""
+import argparse, hashlib, os, re, sys
+
+HEADER = "<!-- rendered by governance — DO NOT EDIT: change a layer, then re-render. sha256={} -->\n"
+HEADER_RX = re.compile(r"\A<!-- rendered by governance — DO NOT EDIT: change a layer, then re-render\. sha256=([0-9a-f]{64}) -->\n")
+
+
+def layer_files(path):
+    if os.path.isfile(path):
+        return [(os.path.basename(path), path)]
+    found = []
+    for d, _, fs in os.walk(path):
+        for f in fs:
+            if f.endswith(".md"):
+                full = os.path.join(d, f)
+                found.append((os.path.relpath(full, path), full))
+    found.sort(key=lambda rel_full: (rel_full[0] != "AGENTS.md", rel_full[0]))
+    return found
+
+
+def build_body(layers):
+    parts = []
+    for name, path in layers:
+        for rel, full in layer_files(path):
+            with open(full, encoding="utf-8") as fh:
+                text = fh.read()
+            if not text.endswith("\n"):
+                text += "\n"
+            parts.append(f"<!-- layer: {name} · {rel} -->\n{text}")
+    return "\n".join(parts)
+
+
+def sha(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="governance")
+    ap.add_argument("command", choices=["render", "check"])
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--core", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "core"))
+    ap.add_argument("--adapter")
+    ap.add_argument("--local")
+    a = ap.parse_args()
+
+    layers = [("core", a.core)] + ([("adapter", a.adapter)] if a.adapter else []) + \
+             ([("local", a.local)] if a.local else [])
+    for name, path in layers:
+        if not os.path.exists(path):
+            print(f"error: {name} layer not found: {path}", file=sys.stderr)
+            return 2
+    body = build_body(layers)
+    if not body:
+        print("error: the layers contain no Markdown — refusing to render an empty instruction file",
+              file=sys.stderr)
+        return 2
+
+    if a.command == "render":
+        tmp = a.out + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(HEADER.format(sha(body)) + body)
+        os.replace(tmp, a.out)
+        print(f"rendered {len(layers)} layer(s) → {a.out}")
+        return 0
+
+    if not os.path.isfile(a.out):
+        print(f"NOT RENDERED  {a.out} does not exist", file=sys.stderr)
+        return 2
+    with open(a.out, encoding="utf-8") as fh:
+        current = fh.read()
+    m = HEADER_RX.match(current)
+    if not m:
+        print(f"NOT RENDERED  {a.out} has no governance header — it was not produced by render",
+              file=sys.stderr)
+        return 2
+    recorded, on_disk = m.group(1), current[m.end():]
+    if sha(on_disk) != recorded:
+        print(f"EDITED BY HAND  {a.out} — move the change into a layer, then re-render")
+        return 1
+    if recorded != sha(body):
+        print(f"LAYERS CHANGED  {a.out} is stale — re-render")
+        return 1
+    print(f"in sync  {a.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
