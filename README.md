@@ -4,8 +4,8 @@ A generic core for AI-assisted work that improves itself: the rules an agent fol
 that layers an organisation's own rules on top, and the checks that keep both honest.
 
 **Status: pre-release.** The layering mechanism and its gates come first; the rules themselves are
-being extracted from a working system and generalised section by section. **No license has been
-chosen yet** — until a `LICENSE` file exists, nothing here may be redistributed.
+being extracted from a working system and generalised section by section. Licensed under the MIT
+License — see `LICENSE`.
 
 ## How it fits together
 
