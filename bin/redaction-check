@@ -20,7 +20,7 @@ regex" and is escaped. A Markdown file WITHOUT the fence is refused, because pro
 patterns that match ordinary English.
 
 Usage:  redaction-check [--enforce] [--private-patterns FILE] [--json] [PATHS...]
-        default PATHS: README.md core adapter-template   (Markdown files only)
+        default PATHS: README.md core adapter-template agents   (Markdown files only)
         env GOVERNANCE_PRIVATE_PATTERNS is used when --private-patterns is not given
 Exit:   0 clean, or findings without --enforce · 1 findings with --enforce · 2 cannot run ·
         3 the instance-name leg was not checked
@@ -54,7 +54,7 @@ SHAPE_PATTERNS = [
 # its own explanation trains people to ignore it.
 SKIP_LINE = re.compile(r"^\s*(?:#|//)|^\s{4,}[$>]|^\s*```")
 FENCE_TAG = "redaction-instances"
-DEFAULT_PATHS = ["README.md", "core", "adapter-template"]
+DEFAULT_PATHS = ["README.md", "core", "adapter-template", "agents"]
 
 
 def fenced_lines(raw, tag=FENCE_TAG):
