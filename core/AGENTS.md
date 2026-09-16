@@ -28,6 +28,9 @@ exceptions:
 
 - **The floor is not text.** A rule that must hold whatever any layer says is a pre-tool hook or a deny
   rule in the harness settings. Prose can be argued with; a gate that refuses the tool call cannot.
+  The gates live in `hooks/`; each is proven to refuse a known-bad call and allow a known-good one,
+  on the input channel the harness actually uses, and to say *why* it refused on the channel the
+  harness returns to the model.
 - **A human's instruction in the session outranks every file.**
 
 ## Rendering

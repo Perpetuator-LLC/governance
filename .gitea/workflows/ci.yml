@@ -16,13 +16,13 @@ jobs:
         run: |
           set -euo pipefail
           n=0
-          for f in tests/*.test.sh; do bash -n "$f"; n=$((n + 1)); done
+          for f in tests/*.test.sh hooks/*.sh; do bash -n "$f"; n=$((n + 1)); done
           for f in bin/*; do
             python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f"; n=$((n + 1))
           done
           echo "parse-checked $n file(s)"
           # An empty glob would pass having checked nothing.
-          [ "$n" -ge 6 ] || { echo "::error::only $n files parse-checked; discovery is broken"; exit 1; }
+          [ "$n" -ge 11 ] || { echo "::error::only $n files parse-checked; discovery is broken"; exit 1; }
 
       - name: Test suite
         run: |
@@ -32,8 +32,8 @@ jobs:
           echo "discovered ${#suites[@]} suite(s)"
           # ASSERT THE COUNT, NOT JUST THE EXIT CODE: a runner that discovers zero suites exits 0
           # forever. Raise the floor when suites are added; never lower it to make a run pass.
-          if [ "${#suites[@]}" -lt 3 ]; then
-            echo "::error::only ${#suites[@]} suites discovered, expected >= 3"
+          if [ "${#suites[@]}" -lt 4 ]; then
+            echo "::error::only ${#suites[@]} suites discovered, expected >= 4"
             exit 1
           fi
           fails=0

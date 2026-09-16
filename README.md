@@ -21,6 +21,16 @@ Four layers. They are read in order, and the later layer wins — except the flo
 The model in full — precedence, why instruction files are rendered rather than linked, and how a
 lesson travels upstream — is `core/AGENTS.md` → *Layers*.
 
+## What is here
+
+| path | what |
+|---|---|
+| `core/AGENTS.md` | the layer model and how the pieces fit |
+| `core/domains/` | rules, one domain per file, as they are generalised |
+| `hooks/` | the floor: pre-tool gates that refuse destructive and secret-exposing calls, plus audit and lint hooks |
+| `agents/` | reusable sub-agent definitions (review, exploration, investigation) |
+| `bin/` | render, check, and the repository's own gates |
+
 ## Checks
 
 | check | proves |
