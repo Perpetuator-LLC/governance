@@ -58,6 +58,14 @@ check "an unknown argument exits 2" \
 
 # The rejected detector, asserted as rejected: if detection is ever "fixed" by testing for a marker
 # directory, this fails on a home where every overlay exists.
+# --- an adapter can declare EXTRA harness names; declared names are accepted, never inferred ---
+check "an undeclared extra name is refused (exit 2)" \
+  "noenv env GOVERNANCE_HARNESS=custombot '$DETECT' --quiet; [ \$? -eq 2 ]"
+check "a declared extra name is accepted from GOVERNANCE_HARNESS" \
+  "out=\$(noenv env GOVERNANCE_EXTRA_HARNESSES=custombot GOVERNANCE_HARNESS=custombot '$DETECT'); [ \$? -eq 0 ] && [ \"\$out\" = custombot ]"
+check "a declared extra name is never inferred from signals" \
+  "out=\$(noenv env GOVERNANCE_EXTRA_HARNESSES=custombot '$DETECT' 2>/dev/null); [ \"\$out\" != custombot ]"
+
 mkdir -p "$TMP/home/.claude" "$TMP/home/.codex" "$TMP/home/.grok"
 check "marker directories for every harness decide NOTHING" \
   "noenv env HOME='$TMP/home' '$DETECT' --quiet; [ \$? -eq 3 ]"
