@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Render layered instruction files, and detect when a rendered file has drifted from its layers.
+"""Render layered instruction files, install a layered agent setup, and detect drift in either.
 
-  governance render --out FILE [--core DIR] [--adapter DIR] [--local FILE]
-  governance check  --out FILE [--core DIR] [--adapter DIR] [--local FILE]
+  governance render   --out FILE [--core DIR] [--adapter DIR ...] [--local FILE]
+  governance check    --out FILE [--core DIR] [--adapter DIR ...] [--local FILE]
+  governance install  --home DIR --adapter DIR [--adapter DIR ...] [--local FILE]
+                      [--harness claude|codex|grok ...] [--repo DIR] [--dry-run]
+  governance check    --home DIR
+  governance restore  --home DIR [--backup TIMESTAMP]
+  governance discover --root DIR [--home DIR] [--max-depth N]
 
-Layers are concatenated CORE → ADAPTER → LOCAL, so on conflict the later layer is the one a model reads
-last. Within a directory layer, AGENTS.md comes first, then every other Markdown file in sorted path
-order. --core defaults to this repository's core/ directory.
+RENDER. Layers are concatenated CORE → ADAPTER(s), in the order given → LOCAL, so on conflict the later
+layer is the one a model reads last. Within a directory layer, AGENTS.md comes first, then every other
+Markdown file in sorted path order. --core defaults to this repository's core/ directory.
 
 Why render rather than link: symlinked instruction files and imports resolving outside the working
 directory are skipped by some harness surfaces, silently. A rendered file loads everywhere; its only
@@ -17,14 +22,63 @@ ways a rendered file goes wrong, because they have different fixes:
   LAYERS CHANGED   a layer was edited after rendering      → re-render
   EDITED BY HAND   the rendered file itself was edited      → move the edit into a layer, re-render
 
-Exit: 0 rendered / in sync · 1 drift · 2 cannot run (a named layer is missing; the output is absent,
-      or has no header)
-"""
-import argparse, hashlib, os, re, sys
+INSTALL builds a harness home from CORE (--repo, default this repository) and each ADAPTER directory.
+--home is required and never defaults: pass --home "$HOME" to install for real. For --harness claude
+(the default), under <home>/.claude/:
+  CLAUDE.md               rendered: core/AGENTS.md → each adapter AGENTS.md → --local
+  governance/<domain>.md  rendered: core/domains/<domain>.md → each adapter domains/<domain>.md
+  skills/ hooks/ agents/ bin/
+                          real directories holding one symlink per entry, core first, then adapters;
+                          a later layer wins a name collision and the collision is reported — except
+                          that no adapter may shadow a core hook: those are the floor
+  scheduled-tasks         symlink to the one adapter that provides scheduled-tasks/ (two = refused)
+  settings.json           deep merge of settings/claude.json, core then adapters: objects merge,
+                          lists union in order, scalars take the later value. A layer can extend a
+                          list or object but never replace it, so core deny rules and hook wiring
+                          survive every adapter; disableAllHooks is refused outright.
+--harness codex renders <home>/.codex/AGENTS.md; --harness grok renders
+<home>/.grok/rules/00-governance.md and assembles <home>/.grok/skills/ like the claude skills.
+The harness list is declarative: a re-install without a harness removes that harness's outputs.
 
+UNDO FIRST. Before anything is touched, the prior state of every path the install will change — missing,
+symlink → target, regular file, directory — is written to <home>/.governance-backup/<UTC timestamp>/
+manifest.json, and existing files and directories are moved into that backup, never deleted. A
+re-install that changes nothing writes no backup. `restore` (default: the newest backup) puts every path
+back exactly; `restore --backup T` undoes every install from the newest back to T, so the home returns
+to its state before T. <home>/.governance-state.json records the invocation, every rendered source
+(path + sha256), and every output (path + type + sha256 or target).
+
+CHECK --home re-derives the install from the recorded invocation and reports each output:
+  in sync
+  LAYERS CHANGED   a source changed, or an output was added or dropped   → re-install
+  EDITED BY HAND   a rendered file differs from what was installed      → move the edit into a layer
+  LINK MOVED       a symlink points somewhere else                       → re-install
+  MISSING          an output is gone                                     → re-install
+
+DISCOVER lists, read-only, the git repositories and vaults (directories holding .obsidian/) under --root
+and which directories look like adapters (AGENTS.md plus any of skills/ hooks/ domains/ settings/).
+
+Exit: 0 done / in sync · 1 drift · 2 cannot run (a named layer or source is missing, the output is
+      absent or has no header, the install was refused, or there is nothing to restore)
+"""
+import argparse, datetime, hashlib, json, os, re, shutil, sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))  # realpath: bin/ is installed as a symlink
 HEADER = "<!-- rendered by governance — DO NOT EDIT: change a layer, then re-render. sha256={} -->\n"
 HEADER_RX = re.compile(r"\A<!-- rendered by governance — DO NOT EDIT: change a layer, then re-render\. sha256=([0-9a-f]{64}) -->\n")
+STATE = ".governance-state.json"
+BACKUPS = ".governance-backup"
+BACKUP_RX = re.compile(r"\A\d{8}T\d{6}-\d{6}Z\Z")
+HARNESSES = ("claude", "codex", "grok")
+LINKED_PARTS = ("skills", "hooks", "agents", "bin")
+DISCOVER_SKIP = {"node_modules", "__pycache__", "venv"}
 
+
+class Refusal(Exception):
+    """The inputs cannot be installed as given. Raised before anything is written."""
+
+
+# --- rendering -----------------------------------------------------------------------------------
 
 def layer_files(path):
     if os.path.isfile(path):
@@ -55,16 +109,21 @@ def sha(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="governance")
-    ap.add_argument("command", choices=["render", "check"])
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--core", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "core"))
-    ap.add_argument("--adapter")
-    ap.add_argument("--local")
-    a = ap.parse_args()
+def file_sha(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
-    layers = [("core", a.core)] + ([("adapter", a.adapter)] if a.adapter else []) + \
+
+def adapter_label(i, n):
+    return "adapter" if n == 1 else f"adapter {i}"
+
+
+def cmd_render_or_check_out(a):
+    core = a.core or os.path.join(ROOT, "core")
+    layers = [("core", core)] + [(adapter_label(i, len(a.adapter)), p) for i, p in enumerate(a.adapter, 1)] + \
              ([("local", a.local)] if a.local else [])
     for name, path in layers:
         if not os.path.exists(path):
@@ -103,6 +162,530 @@ def main():
         return 1
     print(f"in sync  {a.out}")
     return 0
+
+
+# --- the install plan: what the home should contain, derived from the layers alone ----------------
+
+class Plan:
+    def __init__(self):
+        self.outputs = {}   # home-relative path → wanted state; a parent always precedes its children
+        self.sources = {}   # every file whose content is baked into an output → sha256
+        self.notes = []
+
+    def dir(self, rel):
+        self.outputs.setdefault(rel, {"type": "dir"})
+
+    def file(self, rel, text):
+        self.outputs[rel] = {"type": "file", "sha256": sha(text), "text": text}
+
+    def link(self, rel, target):
+        self.outputs[rel] = {"type": "symlink", "target": target}
+
+    def render(self, layers):
+        for _, path in layers:
+            self.sources.setdefault(path, file_sha(path))
+        body = build_body(layers)
+        return HEADER.format(sha(body)) + body
+
+
+def record(rel, out):
+    r = {"path": rel, "type": out["type"]}
+    if out["type"] == "file":
+        r["sha256"] = out["sha256"]
+    elif out["type"] == "symlink":
+        r["target"] = out["target"]
+    return r
+
+
+def md_names(d):
+    return [f for f in sorted(os.listdir(d)) if f.endswith(".md") and os.path.isfile(os.path.join(d, f))] \
+        if os.path.isdir(d) else []
+
+
+def link_sources(layers, part, notes):
+    chosen = {}
+    for name, parts_root, _ in layers:
+        d = os.path.join(parts_root, part)
+        if not os.path.isdir(d):
+            continue
+        for entry in sorted(os.listdir(d)):
+            src = os.path.join(d, entry)
+            wanted = os.path.isdir(src) if part == "skills" else os.path.isfile(src)
+            if entry.startswith(".") or not wanted:
+                continue
+            if entry in chosen:
+                prev = chosen[entry][0]
+                if part == "hooks" and prev == "core":
+                    raise Refusal(f"{name} provides hooks/{entry}, which would replace a core floor hook "
+                                  f"({d}) — give it another name")
+                notes.append(f"COLLISION  {part}/{entry}: {prev} overridden by {name} ({src})")
+            chosen[entry] = (name, src)
+    return {entry: src for entry, (_, src) in chosen.items()}
+
+
+def merge(base, over, where, layer):
+    if isinstance(base, dict) and isinstance(over, dict):
+        out = dict(base)
+        for k, v in over.items():
+            out[k] = merge(base[k], v, f"{where}.{k}" if where else k, layer) if k in base else v
+        return out
+    if isinstance(base, list) and isinstance(over, list):
+        out = list(base)
+        for item in over:
+            if item not in out:
+                out.append(item)
+        return out
+    if isinstance(base, (dict, list)) or isinstance(over, (dict, list)):
+        raise Refusal(f"{layer} settings: `{where}` is a {type(over).__name__} where an earlier layer has a "
+                      f"{type(base).__name__} — a layer can extend a list or an object, never replace it")
+    return over
+
+
+def merged_settings(plan, layers):
+    merged = {}
+    for name, parts_root, _ in layers:
+        p = os.path.join(parts_root, "settings", "claude.json")
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except ValueError as e:
+            raise Refusal(f"{name} settings are not valid JSON: {p}: {e}")
+        if not isinstance(data, dict):
+            raise Refusal(f"{name} settings must be a JSON object: {p}")
+        plan.sources.setdefault(p, file_sha(p))
+        merged = merge(merged, data, "", name)
+    if merged.get("disableAllHooks"):
+        raise Refusal("the merged settings set disableAllHooks, which switches off the floor hooks — no layer may")
+    return json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
+
+
+def build_plan(repo, adapters, local, harnesses):
+    if not os.path.isdir(repo):
+        raise Refusal(f"core repository not found: {repo}")
+    core_agents = os.path.join(repo, "core", "AGENTS.md")
+    if not os.path.isfile(core_agents):
+        raise Refusal(f"core instruction file not found: {core_agents}")
+    # (name, root of skills/hooks/agents/bin/settings/scheduled-tasks, root of AGENTS.md and domains/)
+    layers = [("core", repo, os.path.join(repo, "core"))]
+    for i, a in enumerate(adapters, 1):
+        if not os.path.isdir(a):
+            raise Refusal(f"adapter not found: {a}")
+        layers.append((adapter_label(i, len(adapters)), a, a))
+    if local and not os.path.isfile(local):
+        raise Refusal(f"local layer not found: {local}")
+
+    plan = Plan()
+    instruction = plan.render(
+        [(n, os.path.join(ir, "AGENTS.md")) for n, _, ir in layers if os.path.isfile(os.path.join(ir, "AGENTS.md"))]
+        + ([("local", local)] if local else []))
+    providers = [(n, os.path.join(pr, "scheduled-tasks")) for n, pr, _ in layers[1:]
+                 if os.path.isdir(os.path.join(pr, "scheduled-tasks"))]
+    if len(providers) > 1:
+        raise Refusal("scheduled-tasks is provided by more than one adapter ("
+                      + ", ".join(f"{n}: {p}" for n, p in providers) + ") — at most one may provide it")
+    parts = LINKED_PARTS if "claude" in harnesses else ("skills",) if "grok" in harnesses else ()
+    links = {part: link_sources(layers, part, plan.notes) for part in parts}
+
+    for h in harnesses:
+        if h == "claude":
+            plan.dir(".claude")
+            plan.file(".claude/CLAUDE.md", instruction)
+            plan.dir(".claude/governance")
+            for d in sorted({d for _, _, ir in layers for d in md_names(os.path.join(ir, "domains"))}):
+                plan.file(f".claude/governance/{d}", plan.render(
+                    [(n, os.path.join(ir, "domains", d)) for n, _, ir in layers
+                     if os.path.isfile(os.path.join(ir, "domains", d))]))
+            for part in LINKED_PARTS:
+                plan.dir(f".claude/{part}")
+                for entry, src in links[part].items():
+                    plan.link(f".claude/{part}/{entry}", src)
+            if providers:
+                plan.link(".claude/scheduled-tasks", providers[0][1])
+            plan.file(".claude/settings.json", merged_settings(plan, layers))
+        elif h == "codex":
+            plan.dir(".codex")
+            plan.file(".codex/AGENTS.md", instruction)
+        elif h == "grok":
+            plan.dir(".grok")
+            plan.dir(".grok/rules")
+            plan.file(".grok/rules/00-governance.md", instruction)
+            plan.dir(".grok/skills")
+            for entry, src in links["skills"].items():
+                plan.link(f".grok/skills/{entry}", src)
+    return plan
+
+
+# --- the home as it is -----------------------------------------------------------------------------
+
+def inspect(home, rel):
+    """The current state of home/rel, never looking through an ancestor that is not a real directory:
+    under a symlinked skills/ the entries belong to wherever it points, not to this home."""
+    parts = rel.split("/")
+    for i in range(2, len(parts)):
+        anc = os.path.join(home, *parts[:i])
+        if os.path.islink(anc) or not os.path.isdir(anc):
+            return {"type": "missing"}
+    p = os.path.join(home, rel)
+    if os.path.islink(p):
+        return {"type": "symlink", "target": os.readlink(p)}
+    if os.path.isdir(p):
+        return {"type": "dir"}
+    if os.path.isfile(p):
+        return {"type": "file", "sha256": file_sha(p)}
+    return {"type": "unsupported"} if os.path.lexists(p) else {"type": "missing"}
+
+
+def matches(home, rel, want, cur):
+    if want["type"] == "dir":
+        # A harness directory (~/.claude itself) may legitimately be a symlink to a directory.
+        return cur["type"] == "dir" or ("/" not in rel and cur["type"] == "symlink"
+                                        and os.path.isdir(os.path.join(home, rel)))
+    if want["type"] == "file":
+        return cur["type"] == "file" and cur["sha256"] == want["sha256"]
+    return cur["type"] == "symlink" and cur["target"] == want["target"]
+
+
+def load_state(home):
+    p = os.path.join(home, STATE)
+    if not os.path.isfile(p):
+        return None
+    try:
+        with open(p, encoding="utf-8") as fh:
+            return json.load(fh)
+    except ValueError as e:
+        raise Refusal(f"cannot read {p}: {e}")
+
+
+# --- install ----------------------------------------------------------------------------------------
+
+def plan_changes(home, plan, invocation):
+    old = load_state(home)
+    changes, notes = [], []
+    stale = [o["path"] for o in (old or {}).get("outputs", []) if o["path"] not in plan.outputs]
+    for rel in sorted(stale, key=lambda r: -r.count("/")):   # children before their directory
+        cur = inspect(home, rel)
+        if cur["type"] == "missing":
+            continue
+        if cur["type"] == "unsupported":
+            raise Refusal(f"{os.path.join(home, rel)} is neither a file, a directory nor a symlink")
+        if cur["type"] == "dir":
+            leaving = {c[0].rsplit("/", 1)[1] for c in changes if c[0].rsplit("/", 1)[0] == rel}
+            if "/" not in rel or set(os.listdir(os.path.join(home, rel))) - leaving:
+                notes.append(f"left in place (no longer installed, holds other files): {os.path.join(home, rel)}")
+                continue
+        changes.append((rel, cur, None))
+    for rel, want in plan.outputs.items():
+        cur = inspect(home, rel)
+        if cur["type"] == "unsupported":
+            raise Refusal(f"{os.path.join(home, rel)} is neither a file, a directory nor a symlink")
+        if not matches(home, rel, want, cur):
+            changes.append((rel, cur, want))
+    state = {"version": 1, "invocation": invocation,
+             "sources": [{"path": p, "sha256": s} for p, s in plan.sources.items()],
+             "outputs": [record(r, o) for r, o in plan.outputs.items()]}
+    text = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
+    want = {"type": "file", "sha256": sha(text), "text": text}
+    cur = inspect(home, STATE)
+    if not matches(home, STATE, want, cur):
+        changes.append((STATE, cur, want))
+    return changes, notes
+
+
+def describe(rel, cur, want):
+    if want is None:
+        return f"remove   {rel}"
+    if cur["type"] == "missing":
+        return f"create   {rel}"
+    return f"replace  {rel} (was {cur['type']})"
+
+
+def new_backup(home):
+    while True:
+        name = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S-%fZ")
+        path = os.path.join(home, BACKUPS, name)
+        try:
+            os.makedirs(path)
+            return name, path
+        except FileExistsError:
+            continue
+
+
+def write_json(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
+def create(p, want):
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    if want["type"] == "dir":
+        os.mkdir(p)
+    elif want["type"] == "symlink":
+        os.symlink(want["target"], p)
+    else:
+        tmp = p + ".governance-tmp"
+        with open(tmp, "wb") as fh:
+            fh.write(want["text"].encode("utf-8"))
+        os.replace(tmp, p)
+
+
+def cmd_install(a):
+    home = os.path.abspath(a.home)
+    if not os.path.isdir(home):
+        print(f"error: --home is not a directory: {home}", file=sys.stderr)
+        return 2
+    invocation = {"repo": os.path.abspath(a.repo or ROOT),
+                  "adapters": [os.path.abspath(p) for p in a.adapter],
+                  "local": os.path.abspath(a.local) if a.local else None,
+                  "harnesses": list(dict.fromkeys(a.harness or ["claude"]))}
+    try:
+        plan = build_plan(invocation["repo"], invocation["adapters"], invocation["local"], invocation["harnesses"])
+        changes, notes = plan_changes(home, plan, invocation)
+    except Refusal as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 2
+    for n in plan.notes + notes:
+        print(n)
+    override = os.path.join(home, ".codex", "AGENTS.override.md")
+    if "codex" in invocation["harnesses"] and os.path.isfile(override) and os.path.getsize(override):
+        print(f"warning: {override} is not empty and shadows the rendered AGENTS.md", file=sys.stderr)
+    if not changes:
+        print(f"nothing to install — every output is already in place in {home}")
+        return 0
+    if a.dry_run:
+        for rel, cur, want in changes:
+            print(f"would {describe(rel, cur, want)}")
+        print(f"dry run: {len(changes)} change(s), nothing written")
+        return 0
+
+    name, bdir = new_backup(home)
+    entries = []
+    for rel, cur, want in changes:
+        e = {"path": rel, "prior": cur["type"]}
+        if cur["type"] == "symlink":
+            e["target"] = cur["target"]
+        if cur["type"] == "file":
+            e["sha256"] = cur["sha256"]
+        if cur["type"] in ("file", "dir"):
+            e["stored"] = "files/" + rel
+        e["installed"] = {k: v for k, v in record(rel, want).items() if k != "path"} if want else {"type": "removed"}
+        entries.append(e)
+    write_json(os.path.join(bdir, "manifest.json"), {"backup": name, "home": home, "entries": entries})
+
+    for (rel, cur, want), e in zip(changes, entries):
+        p = os.path.join(home, rel)
+        if cur["type"] == "symlink":
+            os.unlink(p)
+        elif cur["type"] in ("file", "dir"):
+            dst = os.path.join(bdir, e["stored"])
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(p, dst)
+        if want:
+            create(p, want)
+        print(f"  {describe(rel, cur, want)}")
+    print(f"installed {len(changes)} change(s) into {home}; prior state in {bdir}")
+    print(f"undo: governance restore --home {home}")
+    return 0
+
+
+# --- restore ----------------------------------------------------------------------------------------
+
+def restore_entry(home, bdir, e, notes):
+    rel, p = e["path"], os.path.join(home, e["path"])
+    installed = e.get("installed", {})
+    aside = os.path.join(bdir + ".restored", "displaced", rel)
+
+    def displace():
+        dst = os.path.join(bdir, "displaced", rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.move(p, dst)
+        notes.append(f"changed since install, moved aside: {p} → {aside}")
+
+    if os.path.islink(p):
+        if installed.get("type") != "symlink" or os.readlink(p) != installed.get("target"):
+            notes.append(f"removed a symlink that differed from the install: {p} → {os.readlink(p)}")
+        os.unlink(p)
+    elif os.path.isdir(p):
+        if not os.listdir(p):
+            os.rmdir(p)
+        elif e["prior"] == "missing":
+            notes.append(f"left in place, holds files the install did not create: {p}")
+            return
+        else:
+            displace()
+    elif os.path.lexists(p):
+        if installed.get("type") == "file" and file_sha(p) == installed.get("sha256"):
+            os.unlink(p)
+        else:
+            displace()
+
+    if e["prior"] == "symlink":
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        os.symlink(e["target"], p)
+    elif e["prior"] in ("file", "dir"):
+        src = os.path.join(bdir, e["stored"])
+        if os.path.lexists(src):
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            shutil.move(src, p)
+        else:
+            notes.append(f"not in the backup, cannot restore: {p}")
+
+
+def cmd_restore(a):
+    home = os.path.abspath(a.home)
+    broot = os.path.join(home, BACKUPS)
+    names = sorted(n for n in (os.listdir(broot) if os.path.isdir(broot) else []) if BACKUP_RX.match(n))
+    if not names:
+        print(f"error: no backup to restore in {broot}", file=sys.stderr)
+        return 2
+    target = a.backup or names[-1]
+    if target not in names:
+        print(f"error: no unrestored backup named {target}; available: {', '.join(names)}", file=sys.stderr)
+        return 2
+    notes = []
+    for name in reversed([n for n in names if n >= target]):
+        bdir = os.path.join(broot, name)
+        manifest = os.path.join(bdir, "manifest.json")
+        entries = []
+        if os.path.isfile(manifest):
+            with open(manifest, encoding="utf-8") as fh:
+                entries = json.load(fh)["entries"]
+        else:
+            notes.append(f"{name} has no manifest — the install stopped before touching anything")
+        for e in reversed(entries):
+            restore_entry(home, bdir, e, notes)
+        os.rename(bdir, bdir + ".restored")
+        print(f"restored {name}: {len(entries)} path(s)")
+    for n in notes:
+        print(n)
+    return 0
+
+
+# --- check --home -----------------------------------------------------------------------------------
+
+def cmd_check_home(a):
+    home = os.path.abspath(a.home)
+    try:
+        state = load_state(home)
+    except Refusal as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if state is None:
+        print(f"NOT INSTALLED  {os.path.join(home, STATE)} does not exist", file=sys.stderr)
+        return 2
+    inv = state["invocation"]
+    try:
+        plan = build_plan(inv["repo"], inv["adapters"], inv["local"], inv["harnesses"])
+    except Refusal as e:
+        print(f"error: cannot re-derive the install: {e}", file=sys.stderr)
+        return 2
+
+    drift = 0
+    recorded = {o["path"]: o for o in state["outputs"]}
+    for rel, rec in recorded.items():
+        cur, want, shown = inspect(home, rel), plan.outputs.get(rel), os.path.join(home, rel)
+        if cur["type"] == "missing" or (rec["type"] == "dir" and not matches(home, rel, rec, cur)):
+            line = f"MISSING  {shown} — re-install"
+        elif rec["type"] == "file" and not matches(home, rel, rec, cur):
+            line = f"EDITED BY HAND  {shown} — move the change into a layer, then re-install"
+        elif rec["type"] == "symlink" and not matches(home, rel, rec, cur):
+            line = f"LINK MOVED  {shown} → {cur.get('target', cur['type'])} (installed → {rec['target']}) — re-install"
+        elif want is None:
+            line = f"LAYERS CHANGED  {shown} is no longer produced by the layers — re-install"
+        elif record(rel, want) != rec:
+            line = f"LAYERS CHANGED  {shown} is stale — re-install"
+        else:
+            print(f"in sync  {shown}")
+            continue
+        drift += 1
+        print(line)
+    for rel in plan.outputs:
+        if rel not in recorded:
+            drift += 1
+            print(f"LAYERS CHANGED  {os.path.join(home, rel)} is produced by the layers but not installed — re-install")
+    return 1 if drift else 0
+
+
+# --- discover ---------------------------------------------------------------------------------------
+
+def cmd_discover(a):
+    root = os.path.abspath(a.root)
+    if not os.path.isdir(root):
+        print(f"error: --root is not a directory: {root}", file=sys.stderr)
+        return 2
+    installed = None
+    if a.home:
+        try:
+            state = load_state(os.path.abspath(a.home))
+        except Refusal:
+            state = None
+        installed = set(state["invocation"]["adapters"]) if state else set()
+    repos, vaults, adapters = [], [], []
+    base = root.rstrip(os.sep).count(os.sep)
+    for d, dirs, files in os.walk(root):
+        if ".git" in dirs or ".git" in files:
+            repos.append(d)
+        if ".obsidian" in dirs:
+            vaults.append(d)
+        if "AGENTS.md" in files:
+            parts = [p for p in ("skills", "hooks", "domains", "settings") if p in dirs]
+            if parts:
+                found = {"path": d, "parts": parts}
+                if installed is not None:
+                    found["installed"] = d in installed
+                adapters.append(found)
+        depth = d.rstrip(os.sep).count(os.sep) - base
+        dirs[:] = sorted(x for x in dirs if not x.startswith(".") and x not in DISCOVER_SKIP) \
+            if depth < a.max_depth else []
+    print(json.dumps({"root": root, "repos": repos, "vaults": vaults, "adapters": adapters}, indent=2))
+    return 0
+
+
+# --- command line -----------------------------------------------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser(prog="governance", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="command", required=True)
+    for name in ("render", "check"):
+        p = sub.add_parser(name)
+        if name == "render":
+            p.add_argument("--out", required=True)
+        else:
+            target = p.add_mutually_exclusive_group(required=True)
+            target.add_argument("--out", help="check one rendered file against the layers given")
+            target.add_argument("--home", help="check every output of an install against its recorded sources")
+        p.add_argument("--core", help="default: this repository's core/")
+        p.add_argument("--adapter", action="append", default=[], help="repeatable; later adapters win")
+        p.add_argument("--local")
+    p = sub.add_parser("install")
+    p.add_argument("--home", required=True, help="the home directory to install into; never defaulted")
+    p.add_argument("--adapter", action="append", required=True, help="repeatable; later adapters win")
+    p.add_argument("--local")
+    p.add_argument("--harness", action="append", choices=HARNESSES, help="repeatable; default: claude")
+    p.add_argument("--repo", help="the governance checkout providing CORE; default: this repository")
+    p.add_argument("--dry-run", action="store_true")
+    p = sub.add_parser("restore")
+    p.add_argument("--home", required=True)
+    p.add_argument("--backup", help="undo every install back to and including this one; default: the newest")
+    p = sub.add_parser("discover")
+    p.add_argument("--root", required=True)
+    p.add_argument("--home", help="mark which adapters the install in this home uses")
+    p.add_argument("--max-depth", type=int, default=4)
+    a = ap.parse_args()
+
+    if a.command == "check" and a.home:
+        if a.core or a.adapter or a.local:
+            print("error: check --home re-derives from the recorded install; do not pass layers", file=sys.stderr)
+            return 2
+        return cmd_check_home(a)
+    if a.command in ("render", "check"):
+        return cmd_render_or_check_out(a)
+    return {"install": cmd_install, "restore": cmd_restore, "discover": cmd_discover}[a.command](a)
 
 
 if __name__ == "__main__":
