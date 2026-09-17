@@ -60,13 +60,14 @@ jobs:
         env:
           GOVERNANCE_PRIVATE_PATTERNS_CONTENT: ${{ secrets.GOVERNANCE_PRIVATE_PATTERNS }}
         run: |
+          # The runner executes this under `bash -e`: a bare `cmd; rc=$?` aborts before rc is read.
           set -uo pipefail
           files=$(git ls-files | grep -vE '^tests/redaction-check\.test\.sh$' | grep -E '\.(md|sh|py|json|ya?ml)$|^bin/|^hooks/')
           if [ -n "${GOVERNANCE_PRIVATE_PATTERNS_CONTENT:-}" ]; then
             umask 077; tmp=$(mktemp); printf '%s\n' "$GOVERNANCE_PRIVATE_PATTERNS_CONTENT" > "$tmp"
-            python3 bin/redaction-check --enforce --private-patterns "$tmp" $files; rc=$?; rm -f "$tmp"
+            rc=0; python3 bin/redaction-check --enforce --private-patterns "$tmp" $files || rc=$?; rm -f "$tmp"
           else
-            python3 bin/redaction-check --enforce $files; rc=$?
+            rc=0; python3 bin/redaction-check --enforce $files || rc=$?
           fi
           echo "redaction-check exit $rc (0 clean · 1 findings · 2 cannot run · 3 private leg not checked)"
           case "$rc" in
