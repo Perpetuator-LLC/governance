@@ -44,8 +44,27 @@ runs every suite plus the first two checks against this tree.
 
 ## Starting an adapter
 
-Copy `adapter-template/` to wherever your organisation keeps its rules, then render the layers into
-the file your harness reads:
+An adapter lives **inside your organisation's knowledge vault**, at `<vault>/.governance/` — hidden
+from the vault's UI, tracked by the vault's git. Copy `adapter-template/` there. Any other vault
+(personal, per-client) is a *member*: it carries a `GOVERNANCE.md` pointer to the adapter and nothing
+else.
+
+Then let this repository find your vaults and record what this machine's setup should be, and bring
+everything into that state:
+
+    bin/governance discover --root <dir holding your vaults> --home "$HOME" --write
+    bin/governance reconcile --home "$HOME"
+
+`discover --write` writes a machine-local manifest (`~/.governance/manifest.json`, never committed):
+the core clone, the harness homes present (`.claude`, `.codex`, `.grok`), the one adapter vault and
+every member vault. `reconcile` reads it and ensures, item by item — the adapter's shape, the rendered
+harness homes, each vault's `GOVERNANCE.md` (managed frontmatter keys and a marker block; everything
+else in the file is yours) and its `CLAUDE.md` import line, then drift — reporting each as `ok`,
+`fixed` or `refused`. **It is safe to run at any time and is a noop when everything is in state**: no
+backup, no rewrite. `--dry-run` shows what would change. `install … --write-manifest` seeds the same
+manifest from an explicit install, so later runs need no arguments.
+
+To render one file by hand instead:
 
     bin/governance render --adapter <adapter-dir> --out <instruction-file>
 

@@ -7,7 +7,8 @@
                       [--harness claude|codex|grok ...] [--repo DIR] [--dry-run]
   governance check    --home DIR
   governance restore  --home DIR [--backup TIMESTAMP]
-  governance discover --root DIR [--home DIR] [--max-depth N]
+  governance discover --root DIR [--home DIR] [--max-depth N] [--write]
+  governance reconcile --home DIR [--manifest FILE] [--dry-run] [--json]
 
 RENDER. Layers are concatenated CORE → ADAPTER(s), in the order given → LOCAL, so on conflict the later
 layer is the one a model reads last. Within a directory layer, AGENTS.md comes first, then every other
@@ -55,11 +56,31 @@ CHECK --home re-derives the install from the recorded invocation and reports eac
   LINK MOVED       a symlink points somewhere else                       → re-install
   MISSING          an output is gone                                     → re-install
 
-DISCOVER lists, read-only, the git repositories and vaults (directories holding .obsidian/) under --root
-and which directories look like adapters (AGENTS.md plus any of skills/ hooks/ domains/ settings/).
+DISCOVER lists, read-only, the git repositories and vaults (directories holding .obsidian/ or a root
+GOVERNANCE.md) under --root and which directories look like adapters (AGENTS.md plus any of skills/
+hooks/ domains/ settings/). Each vault is classified: `adapter` when it holds .governance/AGENTS.md (the
+organisation's layer lives INSIDE its knowledge vault, hidden from the vault UI, tracked by its git),
+otherwise `member`. With --home it also proposes the MANIFEST — the machine-local record of what this
+machine's setup should be — and with --write writes it to <home>/.governance/manifest.json. Two adapter
+vaults under one root are refused: one machine has one organisation layer.
 
-Exit: 0 done / in sync · 1 drift · 2 cannot run (a named layer or source is missing, the output is
-      absent or has no header, the install was refused, or there is nothing to restore)
+RECONCILE reads the manifest and ensures, in order, reporting one line per item as `ok` (already right,
+nothing written) / `fixed` (changed) / `refused` (cannot be fixed safely):
+  a. adapter shape      <adapter>/AGENTS.md exists (created from adapter-template/ if not); optional parts
+                        (skills/ hooks/ agents/ bin/ domains/ settings/ scheduled-tasks/), if present, are dirs
+  b. home               the install for the manifest's harnesses, adapter and local — a noop when in state
+  c. GOVERNANCE.md      in every vault: frontmatter keys type/canonical_home/adapter/role and a pointer
+                        block between <!-- governance:begin --> and <!-- governance:end -->; nothing else
+                        in the file is touched, byte for byte
+  d. CLAUDE.md          in every vault: the line `@GOVERNANCE.md` exactly once (appended if absent)
+  e. drift              `check --home` over the result
+Running it again when everything is in state changes nothing — no backup, no rewrite. --dry-run says
+what would change and writes nothing. `install --write-manifest` seeds the manifest from its arguments so
+the first install is the last command that needs any.
+
+Exit: 0 done / in sync · 1 drift, or reconcile refused an item · 2 cannot run (a named layer or source
+      is missing, the output is absent or has no header, the install was refused, there is nothing to
+      restore, or there is no manifest)
 """
 import argparse, datetime, hashlib, json, os, re, shutil, sys
 
@@ -69,6 +90,11 @@ HEADER_RX = re.compile(r"\A<!-- rendered by governance — DO NOT EDIT: change a
 STATE = ".governance-state.json"
 BACKUPS = ".governance-backup"
 BACKUP_RX = re.compile(r"\A\d{8}T\d{6}-\d{6}Z\Z")
+MANIFEST = os.path.join(".governance", "manifest.json")
+ADAPTER_DIR = ".governance"          # the organisation layer, inside its vault
+ADAPTER_PARTS = ("skills", "hooks", "agents", "bin", "domains", "settings", "scheduled-tasks")
+GOV_MD, CLAUDE_MD, IMPORT_LINE = "GOVERNANCE.md", "CLAUDE.md", "@GOVERNANCE.md"
+MARK_BEGIN, MARK_END = "<!-- governance:begin -->", "<!-- governance:end -->"
 HARNESSES = ("claude", "codex", "grok")
 LINKED_PARTS = ("skills", "hooks", "agents", "bin")
 DISCOVER_SKIP = {"node_modules", "__pycache__", "venv"}
@@ -433,34 +459,28 @@ def create(p, want):
         os.replace(tmp, p)
 
 
-def cmd_install(a):
-    home = os.path.abspath(a.home)
-    if not os.path.isdir(home):
-        print(f"error: --home is not a directory: {home}", file=sys.stderr)
-        return 2
-    invocation = {"repo": os.path.abspath(a.repo or ROOT),
-                  "adapters": [os.path.abspath(p) for p in a.adapter],
-                  "local": os.path.abspath(a.local) if a.local else None,
-                  "harnesses": list(dict.fromkeys(a.harness or ["claude"]))}
+def install_home(home, invocation, dry_run=False, say=print):
+    """Bring HOME to the state the invocation implies. Returns (exit code, number of changes applied
+    or, on a dry run, that would be applied). A home already in state gets no backup and no write."""
     try:
         plan = build_plan(invocation["repo"], invocation["adapters"], invocation["local"], invocation["harnesses"])
         changes, notes = plan_changes(home, plan, invocation)
     except Refusal as e:
         print(f"refused: {e}", file=sys.stderr)
-        return 2
+        return 2, 0
     for n in plan.notes + notes:
-        print(n)
+        say(n)
     override = os.path.join(home, ".codex", "AGENTS.override.md")
     if "codex" in invocation["harnesses"] and os.path.isfile(override) and os.path.getsize(override):
         print(f"warning: {override} is not empty and shadows the rendered AGENTS.md", file=sys.stderr)
     if not changes:
-        print(f"nothing to install — every output is already in place in {home}")
-        return 0
-    if a.dry_run:
+        say(f"nothing to install — every output is already in place in {home}")
+        return 0, 0
+    if dry_run:
         for rel, cur, want in changes:
-            print(f"would {describe(rel, cur, want)}")
-        print(f"dry run: {len(changes)} change(s), nothing written")
-        return 0
+            say(f"would {describe(rel, cur, want)}")
+        say(f"dry run: {len(changes)} change(s), nothing written")
+        return 0, len(changes)
 
     name, bdir = new_backup(home)
     entries = []
@@ -486,10 +506,35 @@ def cmd_install(a):
             shutil.move(p, dst)
         if want:
             create(p, want)
-        print(f"  {describe(rel, cur, want)}")
-    print(f"installed {len(changes)} change(s) into {home}; prior state in {bdir}")
-    print(f"undo: governance restore --home {home}")
-    return 0
+        say(f"  {describe(rel, cur, want)}")
+    say(f"installed {len(changes)} change(s) into {home}; prior state in {bdir}")
+    say(f"undo: governance restore --home {home}")
+    return 0, len(changes)
+
+
+def cmd_install(a):
+    home = os.path.abspath(a.home)
+    if not os.path.isdir(home):
+        print(f"error: --home is not a directory: {home}", file=sys.stderr)
+        return 2
+    invocation = {"repo": os.path.abspath(a.repo or ROOT),
+                  "adapters": [os.path.abspath(p) for p in a.adapter],
+                  "local": os.path.abspath(a.local) if a.local else None,
+                  "harnesses": list(dict.fromkeys(a.harness or ["claude"]))}
+    if a.write_manifest and len(invocation["adapters"]) != 1:
+        print("error: --write-manifest records ONE adapter; this install names "
+              f"{len(invocation['adapters'])}", file=sys.stderr)
+        return 2
+    rc, _ = install_home(home, invocation, a.dry_run)
+    if rc == 0 and a.write_manifest and not a.dry_run:
+        adapter = invocation["adapters"][0]
+        vault = os.path.dirname(adapter) if os.path.basename(adapter) == ADAPTER_DIR else None
+        m = manifest_from(invocation["repo"], home, invocation["harnesses"], adapter, vault,
+                          [vault] if vault else [], invocation["local"])
+        os.makedirs(os.path.join(home, ADAPTER_DIR), exist_ok=True)
+        write_json(os.path.join(home, MANIFEST), m)
+        print(f"manifest written: {os.path.join(home, MANIFEST)}")
+    return rc
 
 
 # --- restore ----------------------------------------------------------------------------------------
@@ -567,24 +612,21 @@ def cmd_restore(a):
 
 # --- check --home -----------------------------------------------------------------------------------
 
-def cmd_check_home(a):
-    home = os.path.abspath(a.home)
+def check_home(home):
+    """(lines, drift count, error or None) for the install recorded in HOME."""
     try:
         state = load_state(home)
     except Refusal as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
+        return [], 0, str(e)
     if state is None:
-        print(f"NOT INSTALLED  {os.path.join(home, STATE)} does not exist", file=sys.stderr)
-        return 2
+        return [], 0, f"NOT INSTALLED  {os.path.join(home, STATE)} does not exist"
     inv = state["invocation"]
     try:
         plan = build_plan(inv["repo"], inv["adapters"], inv["local"], inv["harnesses"])
     except Refusal as e:
-        print(f"error: cannot re-derive the install: {e}", file=sys.stderr)
-        return 2
+        return [], 0, f"cannot re-derive the install: {e}"
 
-    drift = 0
+    lines, drift = [], 0
     recorded = {o["path"]: o for o in state["outputs"]}
     for rel, rec in recorded.items():
         cur, want, shown = inspect(home, rel), plan.outputs.get(rel), os.path.join(home, rel)
@@ -599,28 +641,58 @@ def cmd_check_home(a):
         elif record(rel, want) != rec:
             line = f"LAYERS CHANGED  {shown} is stale — re-install"
         else:
-            print(f"in sync  {shown}")
+            lines.append(f"in sync  {shown}")
             continue
         drift += 1
-        print(line)
+        lines.append(line)
     for rel in plan.outputs:
         if rel not in recorded:
             drift += 1
-            print(f"LAYERS CHANGED  {os.path.join(home, rel)} is produced by the layers but not installed — re-install")
+            lines.append(f"LAYERS CHANGED  {os.path.join(home, rel)} is produced by the layers but not installed — re-install")
+    return lines, drift, None
+
+
+def cmd_check_home(a):
+    lines, drift, err = check_home(os.path.abspath(a.home))
+    if err:
+        print(f"error: {err}" if not err.startswith("NOT INSTALLED") else err, file=sys.stderr)
+        return 2
+    for line in lines:
+        print(line)
     return 1 if drift else 0
 
 
 # --- discover ---------------------------------------------------------------------------------------
+
+def is_vault(d, dirs, files):
+    return ".obsidian" in dirs or GOV_MD in files
+
+
+def vault_role(d):
+    return "adapter" if os.path.isfile(os.path.join(d, ADAPTER_DIR, "AGENTS.md")) else "member"
+
+
+def manifest_from(core, home, harnesses, adapter, adapter_vault, vaults, local):
+    return {"version": 1, "core": core, "home": home, "harnesses": list(harnesses),
+            "adapter": {"vault": adapter_vault, "path": adapter} if adapter else None,
+            "vaults": [{"path": v, "role": vault_role(v), "name": os.path.basename(v)} for v in vaults],
+            "local": local,
+            "updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+
 
 def cmd_discover(a):
     root = os.path.abspath(a.root)
     if not os.path.isdir(root):
         print(f"error: --root is not a directory: {root}", file=sys.stderr)
         return 2
+    home = os.path.abspath(a.home) if a.home else None
+    if a.write and not home:
+        print("error: --write needs --home: the manifest is written under it", file=sys.stderr)
+        return 2
     installed = None
-    if a.home:
+    if home:
         try:
-            state = load_state(os.path.abspath(a.home))
+            state = load_state(home)
         except Refusal:
             state = None
         installed = set(state["invocation"]["adapters"]) if state else set()
@@ -629,7 +701,7 @@ def cmd_discover(a):
     for d, dirs, files in os.walk(root):
         if ".git" in dirs or ".git" in files:
             repos.append(d)
-        if ".obsidian" in dirs:
+        if is_vault(d, dirs, files):
             vaults.append(d)
         if "AGENTS.md" in files:
             parts = [p for p in ("skills", "hooks", "domains", "settings") if p in dirs]
@@ -641,8 +713,227 @@ def cmd_discover(a):
         depth = d.rstrip(os.sep).count(os.sep) - base
         dirs[:] = sorted(x for x in dirs if not x.startswith(".") and x not in DISCOVER_SKIP) \
             if depth < a.max_depth else []
-    print(json.dumps({"root": root, "repos": repos, "vaults": vaults, "adapters": adapters}, indent=2))
+    out = {"root": root, "repos": repos, "vaults": vaults, "adapters": adapters}
+
+    if home:
+        adapter_vaults = [v for v in vaults if vault_role(v) == "adapter"]
+        harnesses = [h for h in HARNESSES if os.path.isdir(os.path.join(home, "." + h))] or ["claude"]
+        local = os.path.join(home, ".claude", "CLAUDE.local.md")
+        av = adapter_vaults[0] if len(adapter_vaults) == 1 else None
+        out["manifest"] = manifest_from(ROOT, home, harnesses, os.path.join(av, ADAPTER_DIR) if av else None,
+                                        av, vaults, local if os.path.isfile(local) else None)
+        out["manifest_path"] = os.path.join(home, MANIFEST)
+    print(json.dumps(out, indent=2))
+    if not a.write:
+        return 0
+    if len(adapter_vaults) != 1:
+        print("refused: the manifest records ONE adapter vault; found "
+              f"{len(adapter_vaults)}: {', '.join(adapter_vaults) or '(none)'}", file=sys.stderr)
+        return 2
+    os.makedirs(os.path.join(home, ADAPTER_DIR), exist_ok=True)
+    write_json(out["manifest_path"], out["manifest"])
+    print(f"manifest written: {out['manifest_path']}")
     return 0
+
+
+# --- reconcile ---------------------------------------------------------------------------------------
+
+def load_manifest(path):
+    if not os.path.isfile(path):
+        raise Refusal(f"no manifest at {path} — run discover --write first")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            m = json.load(fh)
+    except ValueError as e:
+        raise Refusal(f"cannot read {path}: {e}")
+    if not isinstance(m, dict) or m.get("version") != 1:
+        raise Refusal(f"{path}: unsupported manifest (version {m.get('version') if isinstance(m, dict) else '?'})")
+    for k in ("core", "home", "harnesses", "adapter", "vaults"):
+        if k not in m:
+            raise Refusal(f"{path}: manifest lacks `{k}`")
+    if not m["adapter"] or not m["adapter"].get("path"):
+        raise Refusal(f"{path}: manifest names no adapter — run discover --write with an adapter vault present")
+    return m
+
+
+def split_frontmatter(text):
+    """(frontmatter body without its fences, rest) — or (None, text) when there is no frontmatter.
+    '---\n' + fm + '---\n' + rest reproduces the input exactly."""
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 3)
+        if end != -1:
+            return text[4:end + 1], text[end + 5:]
+    return None, text
+
+
+def yaml_plain(v):
+    return v if re.match(r"\A[A-Za-z0-9_./-][^#:]*\Z", v) else json.dumps(v)
+
+
+def with_keys(fm, keys):
+    """Frontmatter text with each managed key set; unmanaged lines are kept as they are."""
+    lines = fm.split("\n")
+    for k, v in keys:
+        rx = re.compile(r"\A" + re.escape(k) + r":\s*(.*?)\s*\Z")
+        for i, line in enumerate(lines):
+            m = rx.match(line)
+            if m:
+                if m.group(1).strip("\"'") != v:
+                    lines[i] = f"{k}: {yaml_plain(v)}"
+                break
+        else:
+            lines.insert(len(lines) - 1 if lines and lines[-1] == "" else len(lines), f"{k}: {yaml_plain(v)}")
+    return "\n".join(lines)
+
+
+def with_block(body, block):
+    """Body with the managed block replaced in place, or appended after a blank line."""
+    b = body.find(MARK_BEGIN)
+    e = body.find(MARK_END, b) if b != -1 else -1
+    if b != -1 and e != -1:
+        e += len(MARK_END)
+        return body[:b] + block + body[e:]
+    if body and not body.endswith("\n"):
+        body += "\n"
+    return body + ("\n" if body else "") + block + "\n"
+
+
+def governance_md_text(old, keys, block):
+    if old is None:
+        return "---\n" + with_keys("", keys) + "---\n" + "\n" + block + "\n"
+    fm, rest = split_frontmatter(old)
+    if fm is None:
+        return "---\n" + with_keys("", keys) + "---\n" + with_block(old, block)
+    return "---\n" + with_keys(fm, keys) + "---\n" + with_block(rest, block)
+
+
+def pointer_block(core, adapter_ref, role):
+    return "\n".join([
+        MARK_BEGIN,
+        "This vault is governed by a layered instruction set. Only this block and the frontmatter keys",
+        "`type`, `canonical_home`, `adapter` and `role` are managed; edit anything else freely.",
+        "",
+        f"- core: `{core}` — the public `governance` repository (CORE), a pinned clone; never edit it in place",
+        f"- adapter: `{adapter_ref}` — the organisation's layer (ADAPTER), inside its vault, tracked by git",
+        f"- this vault's role: `{role}`" + (" — it carries the adapter" if role == "adapter" else " — it carries a pointer to it"),
+        "- render: `bin/governance reconcile --home \"$HOME\"` (in the core clone) rebuilds every harness home",
+        "  from CORE → ADAPTER → LOCAL and refreshes this block; safe to run any time, a noop when in state",
+        MARK_END])
+
+
+def read_text(p):
+    if not os.path.isfile(p):
+        return None
+    with open(p, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def write_text(p, text):
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    tmp = p + ".governance-tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.replace(tmp, p)
+
+
+def cmd_reconcile(a):
+    home = os.path.abspath(a.home)
+    path = os.path.abspath(a.manifest) if a.manifest else os.path.join(home, MANIFEST)
+    try:
+        m = load_manifest(path)
+    except Refusal as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if not os.path.isdir(home):
+        print(f"error: --home is not a directory: {home}", file=sys.stderr)
+        return 2
+    adapter = m["adapter"]["path"]
+    results = []
+
+    def report(item, status, detail=""):
+        results.append({"item": item, "status": status, "detail": detail})
+        if not a.json:
+            shown = {"fixed": "would fix" if a.dry_run else "fixed"}.get(status, status)
+            print(f"{shown:<9} {item}" + (f" — {detail}" if detail else ""))
+
+    def ensure_text(item, p, wanted):
+        old = read_text(p)
+        if old == wanted:
+            report(item, "ok")
+            return
+        if not a.dry_run:
+            write_text(p, wanted)
+        report(item, "fixed", "created" if old is None else "updated")
+
+    # a. adapter shape
+    agents = os.path.join(adapter, "AGENTS.md")
+    if os.path.isfile(agents):
+        report(f"adapter {agents}", "ok")
+    elif os.path.lexists(agents):
+        report(f"adapter {agents}", "refused", "exists but is not a regular file")
+    else:
+        if not a.dry_run:
+            with open(os.path.join(ROOT, "adapter-template", "AGENTS.md"), encoding="utf-8") as fh:
+                write_text(agents, fh.read())
+        report(f"adapter {agents}", "fixed", "created from adapter-template/AGENTS.md")
+    for part in ADAPTER_PARTS:
+        p = os.path.join(adapter, part)
+        if os.path.lexists(p) and not os.path.isdir(p):
+            report(f"adapter {p}", "refused", "exists but is not a directory")
+
+    # b. home
+    invocation = {"repo": m["core"], "adapters": [adapter], "local": m.get("local"), "harnesses": m["harnesses"]}
+    if invocation["local"] and not os.path.isfile(invocation["local"]):
+        invocation["local"] = None    # a local layer is optional; a missing one is not a fault
+    if any(r["status"] == "refused" and r["item"].startswith("adapter ") for r in results):
+        report(f"home {home}", "refused", "the adapter is not in shape")
+    else:
+        rc, n = install_home(home, invocation, a.dry_run, say=lambda _line: None)
+        if rc != 0:
+            report(f"home {home}", "refused", "install refused (see above)")
+        else:
+            report(f"home {home}", "fixed" if n else "ok", f"{n} change(s)" if n else "")
+
+    # c. GOVERNANCE.md and d. CLAUDE.md, per vault
+    for v in m["vaults"]:
+        vp, role = v["path"], v.get("role") or vault_role(v["path"])
+        if not os.path.isdir(vp):
+            report(f"vault {vp}", "refused", "not a directory")
+            continue
+        ref = os.path.relpath(adapter, vp)
+        keys = [("type", "governance"), ("canonical_home", "governance"), ("adapter", ref), ("role", role)]
+        gp = os.path.join(vp, GOV_MD)
+        ensure_text(f"vault {gp}", gp, governance_md_text(read_text(gp), keys, pointer_block(m["core"], ref, role)))
+        cp = os.path.join(vp, CLAUDE_MD)
+        old = read_text(cp)
+        n = sum(1 for line in (old or "").split("\n") if line.strip() == IMPORT_LINE)
+        if n == 1:
+            report(f"vault {cp}", "ok")
+        elif n > 1:
+            report(f"vault {cp}", "refused", f"`{IMPORT_LINE}` appears {n} times; it must appear once")
+        else:
+            text = IMPORT_LINE + "\n" if old is None else old + ("" if old.endswith("\n") or not old else "\n") + IMPORT_LINE + "\n"
+            ensure_text(f"vault {cp}", cp, text)
+
+    # e. drift
+    lines, drift, err = check_home(home)
+    if a.dry_run and any(r["status"] == "fixed" and r["item"].startswith("home ") for r in results):
+        report(f"drift {home}", "fixed", "would be re-installed")
+    elif err:
+        report(f"drift {home}", "refused", err)
+    elif drift:
+        report(f"drift {home}", "refused", "; ".join(line for line in lines if not line.startswith("in sync")))
+    else:
+        report(f"drift {home}", "ok", f"{len(lines)} output(s) in sync")
+
+    if a.json:
+        print(json.dumps({"home": home, "manifest": path, "dry_run": a.dry_run, "results": results}, indent=2))
+    refused = sum(1 for r in results if r["status"] == "refused")
+    fixed = sum(1 for r in results if r["status"] == "fixed")
+    if not a.json:
+        print(f"{'dry run: ' if a.dry_run else ''}{len(results)} item(s): {len(results) - refused - fixed} ok, "
+              f"{fixed} {'to fix' if a.dry_run else 'fixed'}, {refused} refused")
+    return 1 if refused else 0
 
 
 # --- command line -----------------------------------------------------------------------------------
@@ -669,6 +960,8 @@ def main():
     p.add_argument("--harness", action="append", choices=HARNESSES, help="repeatable; default: claude")
     p.add_argument("--repo", help="the governance checkout providing CORE; default: this repository")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--write-manifest", action="store_true",
+                   help="after installing, record core/home/harnesses/adapter/local in <home>/.governance/manifest.json")
     p = sub.add_parser("restore")
     p.add_argument("--home", required=True)
     p.add_argument("--backup", help="undo every install back to and including this one; default: the newest")
@@ -676,6 +969,12 @@ def main():
     p.add_argument("--root", required=True)
     p.add_argument("--home", help="mark which adapters the install in this home uses")
     p.add_argument("--max-depth", type=int, default=4)
+    p.add_argument("--write", action="store_true", help="write the proposed manifest under --home")
+    p = sub.add_parser("reconcile")
+    p.add_argument("--home", required=True)
+    p.add_argument("--manifest", help="default: <home>/.governance/manifest.json")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--json", action="store_true")
     a = ap.parse_args()
 
     if a.command == "check" and a.home:
@@ -685,7 +984,8 @@ def main():
         return cmd_check_home(a)
     if a.command in ("render", "check"):
         return cmd_render_or_check_out(a)
-    return {"install": cmd_install, "restore": cmd_restore, "discover": cmd_discover}[a.command](a)
+    return {"install": cmd_install, "restore": cmd_restore, "discover": cmd_discover,
+            "reconcile": cmd_reconcile}[a.command](a)
 
 
 if __name__ == "__main__":
