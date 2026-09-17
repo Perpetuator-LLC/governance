@@ -32,7 +32,10 @@
 
 set -o pipefail
 
-VALID='claude codex grok'
+# An adapter may DECLARE extra harness names (space-separated) without editing the core; a declared
+# name is accepted from GOVERNANCE_HARNESS only — the core has no detector for it, so it is never
+# inferred from a signal.
+VALID="claude codex grok${GOVERNANCE_EXTRA_HARNESSES:+ $GOVERNANCE_EXTRA_HARNESSES}"
 
 usage() {
     cat >&2 <<'EOF'
