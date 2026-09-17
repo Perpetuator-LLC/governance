@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# orphan-check — find commits stranded on a rolling integration branch.
+#
+# A commit pushed to merge/<agent> after a PR's merge SHA is captured but before the merge completes
+# is silently dropped: the default branch never gets it, the PR page still shows it in the branch
+# diff, and nothing anywhere goes red. The worst case is a batch of commits — migrations included —
+# with NO PR at all, so a release ships missing them.
+#
+# "Check after every merge" is the correct rule and it is not enough: it fires at the moment the
+# work FEELS finished, and every signal at that moment says success (PR merged, CI green, the branch
+# diff still lists the commit, so glancing at the PR page actively reassures you). This is the same
+# check, mechanised, so nobody has to remember it.
+#
+# WHAT THIS CANNOT DO, stated because the gap matters: it cannot tell whether an open PR covers what
+# it found. A shell script has no forge credentials. So it reports CANDIDATES and exits non-zero;
+# adjudication belongs to the caller (for example a scheduled agent that can list open PRs).
+# Reporting a covered branch as an orphan is the tolerable error; staying silent on an uncovered one
+# is not.
+#
+# Usage
+#   bin/orphan-check                     # the current repo
+#   bin/orphan-check <repo> [repo…]      # just these
+#   bin/orphan-check --repos-from FILE   # one repo path per line ('-' = stdin); empty list refuses
+#   bin/orphan-check --all DIR           # every git repo directly under DIR (slow: one fetch each)
+#   bin/orphan-check --no-fetch          # skip `git fetch` (fast, but reads stale refs)
+#
+# Exit: 0 nothing stranded · 1 candidates found · 2 usage/setup error
+
+set -uo pipefail
+
+FETCH=1
+ALL_DIR=""
+REPOS_FROM=""
+REPOS=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-fetch) FETCH=0; shift ;;
+    # Exit 1 means "candidates found", so a missing argument must not borrow it: explicit exit 2.
+    --repos-from) [ $# -ge 2 ] || { echo "--repos-from needs a file (or -)" >&2; exit 2; }
+                  REPOS_FROM="$2"; shift 2 ;;
+    --all) [ $# -ge 2 ] || { echo "--all needs a directory" >&2; exit 2; }
+           ALL_DIR="$2"; shift 2 ;;
+    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) echo "unknown flag: $1" >&2; exit 2 ;;
+    *) REPOS+=("$1"); shift ;;
+  esac
+done
+
+# A roster that resolves to nothing must ABORT. Falling back to a broader or narrower scan would
+# look exactly like a sweep that found nothing.
+if [ -n "$REPOS_FROM" ]; then
+  if [ "$REPOS_FROM" != "-" ] && [ ! -r "$REPOS_FROM" ]; then
+    echo "orphan-check: --repos-from '$REPOS_FROM' is not readable — refusing to guess a scope." >&2
+    exit 2
+  fi
+  n_before=${#REPOS[@]}
+  while IFS= read -r cand; do
+    cand="${cand#"${cand%%[![:space:]]*}"}"; cand="${cand%"${cand##*[![:space:]]}"}"
+    [ -n "$cand" ] && REPOS+=("$cand")
+  done < <(if [ "$REPOS_FROM" = "-" ]; then cat; else cat -- "$REPOS_FROM"; fi)
+  if [ ${#REPOS[@]} -eq "$n_before" ]; then
+    echo "orphan-check: --repos-from resolved ZERO repos — refusing to report a clean sweep." >&2
+    exit 2
+  fi
+fi
+
+if [ -n "$ALL_DIR" ]; then
+  [ -d "$ALL_DIR" ] || { echo "orphan-check: --all: not a directory: $ALL_DIR" >&2; exit 2; }
+  for d in "${ALL_DIR%/}"/*/; do
+    [ -e "$d/.git" ] && REPOS+=("${d%/}")
+  done
+  [ ${#REPOS[@]} -eq 0 ] && { echo "orphan-check: no git repos found under $ALL_DIR" >&2; exit 2; }
+fi
+
+[ ${#REPOS[@]} -eq 0 ] && [ -z "$REPOS_FROM" ] && [ -z "$ALL_DIR" ] && REPOS=("$PWD")
+
+found=0
+checked=0
+
+for repo in "${REPOS[@]}"; do
+  [ -e "$repo/.git" ] || continue
+  git -C "$repo" remote get-url origin >/dev/null 2>&1 || continue
+  checked=$((checked+1))
+
+  if [ "$FETCH" -eq 1 ]; then
+    # A stale ref makes this check silently pass — the very absence-as-health
+    # shape it exists to break. Fetch failures are reported, never swallowed.
+    if ! git -C "$repo" fetch -q --prune origin 2>/dev/null; then
+      echo "⚠️  $(basename "$repo"): fetch FAILED — result below may be stale"
+    fi
+  fi
+
+  # The default branch as origin sees it, not as this checkout is parked.
+  default="$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"
+  default="${default#origin/}"
+  if [ -z "$default" ]; then
+    for cand in main master; do
+      git -C "$repo" rev-parse --verify --quiet "origin/$cand" >/dev/null && { default="$cand"; break; }
+    done
+  fi
+  [ -z "$default" ] && { echo "⚠️  $(basename "$repo"): no default branch on origin — skipped"; continue; }
+
+  rolling="$(git -C "$repo" for-each-ref --format='%(refname:short)' 'refs/remotes/origin/merge/*' 2>/dev/null)"
+  [ -z "$rolling" ] && continue
+
+  while IFS= read -r branch; do
+    [ -z "$branch" ] && continue
+    commits="$(git -C "$repo" log --oneline "origin/$default..$branch" 2>/dev/null)"
+    [ -z "$commits" ] && continue
+
+    found=$((found+1))
+    n="$(printf '%s\n' "$commits" | wc -l | tr -d ' ')"
+    echo
+    echo "▸ $(basename "$repo"): $n commit(s) on ${branch#origin/} not on $default"
+    printf '%s\n' "$commits" | sed 's/^/    /'
+
+    # Ticket references in the stranded commits. A forge's closing keyword does not
+    # always fire on merge, so these are the tickets a human may have to close by
+    # hand — and the ones that stay wrongly OPEN if the commits never land at all.
+    refs="$(printf '%s\n' "$commits" | grep -oE '#[0-9]+' | sort -u | tr '\n' ' ')"
+    [ -n "$refs" ] && echo "    tickets referenced: $refs"
+    echo "    → check for an OPEN PR whose head is ${branch#origin/}; if none, open one now."
+  done <<< "$rolling"
+done
+
+echo
+if [ "$found" -eq 0 ]; then
+  echo "✅ $checked repo(s) checked — nothing stranded on a rolling branch"
+  exit 0
+fi
+echo "⚠️  $checked repo(s) checked — $found rolling branch(es) ahead of default"
+echo "   Not necessarily a defect: a branch with an OPEN PR is covered."
+echo "   A branch with NO open PR is the failure — its commits have no path to the default branch."
+exit 1

@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# detect-harness — name the agent harness this session is running in, or FAIL CLOSED.
+#
+# When several agent harnesses work the same stream of work (a "lane") side by side, each needs its
+# own identity record — a "seat" is `lane × harness` — so every registry write needs the harness.
+# Getting it WRONG is not a degraded answer: it claims ANOTHER SEAT'S ROW, which is exactly the
+# collision a per-harness seat exists to prevent. So this script never guesses. It prints a harness
+# only on positive evidence, and otherwise exits non-zero and tells the caller to state it explicitly.
+#
+# ── Why not the obvious detectors ────────────────────────────────────────────
+#   1. Marker directories. `~/.claude`, `~/.codex` and `~/.grok` can all exist on one machine,
+#      because installers create every overlay regardless of which harness is running. A
+#      `[ -d ~/.codex ]` test is true in all three sessions. That is the "selector matches too
+#      much" trap: it cannot tell the THING from a REFERENCE to the thing.
+#   2. A shared instruction file. A file that looks harness-specific is often linked into the
+#      other harnesses' overlays too, so a declaration placed there names the wrong harness in
+#      every session that reads it. The file that identifies a harness must be one ONLY that
+#      harness reads.
+#
+# ── The contract ─────────────────────────────────────────────────────────────
+# Precedence, highest first:
+#
+#   1. GOVERNANCE_HARNESS — an explicit DECLARATION. The primary path, not a fallback: each
+#      harness's own overlay (a file only it reads) tells its sessions to set it. A declaration
+#      is true by construction; a sniffed side effect is only correlated.
+#   2. Sniffed evidence, per harness, only where a signal is unique and was MEASURED from inside
+#      that harness.
+#   3. Nothing matched -> exit 3, print the remedy. Never a default.
+#
+# Adding a harness: add it to VALID, add its detector below AND a test asserting (a) it is detected
+# from its own signal and (b) it is NOT detected from another harness's signal.
+
+set -o pipefail
+
+VALID='claude codex grok'
+
+usage() {
+    cat >&2 <<'EOF'
+usage: detect-harness [--quiet] [--explain]
+
+Prints one of: claude | codex | grok
+
+  --quiet    print nothing; exit status only (0 = detected, 3 = unknown)
+  --explain  print the evidence that decided it, on stderr
+
+Exit: 0 detected · 2 invalid GOVERNANCE_HARNESS or argument · 3 undetermined
+EOF
+}
+
+quiet=0
+explain=0
+for arg in "$@"; do
+    case "$arg" in
+        --quiet)   quiet=1 ;;
+        --explain) explain=1 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "detect-harness: unknown argument: $arg" >&2; usage; exit 2 ;;
+    esac
+done
+
+say() { [ "$explain" -eq 1 ] && echo "detect-harness: $*" >&2; return 0; }
+
+emit() {
+    say "decided by $2"
+    [ "$quiet" -eq 1 ] || echo "$1"
+    exit 0
+}
+
+is_valid() {
+    case " $VALID " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
+# ── 1. Explicit declaration ──────────────────────────────────────────────────
+# Deliberately outranks every sniffed signal: a harness that states its own name is evidence, a
+# side effect that correlates with it is not.
+if [ -n "${GOVERNANCE_HARNESS:-}" ]; then
+    if is_valid "$GOVERNANCE_HARNESS"; then
+        emit "$GOVERNANCE_HARNESS" "GOVERNANCE_HARNESS declaration"
+    fi
+    # Set but nonsense: refuse LOUDLY rather than falling through to sniffing. Silently ignoring
+    # it would let a typo ('claude-code') read as an unset variable and get "corrected" to a
+    # sniffed answer the operator never chose.
+    echo "detect-harness: GOVERNANCE_HARNESS='$GOVERNANCE_HARNESS' is not one of: $VALID" >&2
+    exit 2
+fi
+
+# ── 2. Sniffed evidence ──────────────────────────────────────────────────────
+# claude — measured from inside Claude Code:
+#   CLAUDE_CODE_ENTRYPOINT=<entrypoint name>
+#   AI_AGENT=claude-code_<version>_agent
+# Both are set by the harness process itself, not by any installer, so neither appears in another
+# harness's session on the same machine.
+if [ -n "${CLAUDE_CODE_ENTRYPOINT:-}" ]; then
+    emit claude "CLAUDE_CODE_ENTRYPOINT"
+fi
+case "${AI_AGENT:-}" in
+    claude-code*) emit claude "AI_AGENT=$AI_AGENT" ;;
+esac
+
+# codex / grok — declaration-only until measured.
+#
+# Read this before adding a clever test here. The obvious candidates are the ones rejected above:
+# an installer variable such as CODEX_HOME is routinely set in a DIFFERENT harness's shell while it
+# runs the installer, so keying on it mis-detects that session, and `~/.grok/` exists on every
+# machine that ran an installer. Until a session actually running under those harnesses reports
+# what its process sets, they are detected by their DECLARATION (branch 1), which is stronger
+# evidence anyway. A plausible guess here produces a confident wrong answer, and a wrong answer
+# claims another seat's registry row.
+
+# ── 3. Fail closed ───────────────────────────────────────────────────────────
+say "no positive signal"
+if [ "$quiet" -eq 0 ]; then
+    cat >&2 <<'EOF'
+detect-harness: UNDETERMINED — refusing to guess.
+
+A wrong harness claims another seat's registry row, so there is no safe default.
+
+State it explicitly:
+    GOVERNANCE_HARNESS=codex <your command>     # one command
+    export GOVERNANCE_HARNESS=codex             # this session
+
+If you are in a harness that should detect itself, that is the bug: report what your session sets
+(`env | sort`) so a MEASURED signal can be added here.
+EOF
+fi
+exit 3

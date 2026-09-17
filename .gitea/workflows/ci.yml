@@ -12,17 +12,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Runner images differ in what they ship. Install what the suites import, then ASSERT it: a
+      # dependency step that "succeeds" without installing anything makes the next step fail with an
+      # unreadable error far from its cause.
+      - name: Install test dependencies
+        run: |
+          set -euo pipefail
+          if ! python3 -c 'import yaml' 2>/dev/null; then
+            if command -v apt-get >/dev/null 2>&1; then
+              SUDO=""; [ "$(id -u)" = 0 ] || SUDO="sudo"
+              $SUDO apt-get update -qq && $SUDO apt-get install -y -qq python3-yaml
+            elif command -v apk >/dev/null 2>&1; then
+              apk add --no-cache py3-yaml
+            fi
+          fi
+          python3 -c 'import yaml; print("PyYAML", yaml.__version__)'
+          command -v git >/dev/null || { echo "::error::git missing"; exit 1; }
+
       - name: Parse-check every script
         run: |
           set -euo pipefail
           n=0
           for f in tests/*.test.sh hooks/*.sh; do bash -n "$f"; n=$((n + 1)); done
+          # bin/ holds both bash and python. Choose the parser by SHEBANG: parsing a bash script as
+          # python fails, and skipping what is not python would pass having checked nothing. An
+          # unrecognised shebang is an error, never a silent skip.
           for f in bin/*; do
-            python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f"; n=$((n + 1))
+            [ -f "$f" ] || continue
+            head1="$(head -n 1 "$f")"
+            case "$head1" in
+              '#!'*python*) python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f" ;;
+              '#!'*bash*|'#!'*/sh|'#!'*' sh') bash -n "$f" ;;
+              *) echo "::error file=$f::no bash or python shebang; cannot choose a parser"; exit 1 ;;
+            esac
+            n=$((n + 1))
           done
           echo "parse-checked $n file(s)"
-          # An empty glob would pass having checked nothing.
-          [ "$n" -ge 11 ] || { echo "::error::only $n files parse-checked; discovery is broken"; exit 1; }
+          # An empty glob would pass having checked nothing. Raise when files are added; never lower.
+          [ "$n" -ge 28 ] || { echo "::error::only $n files parse-checked, expected >= 28; discovery is broken"; exit 1; }
 
       - name: Test suite
         run: |
@@ -32,8 +59,8 @@ jobs:
           echo "discovered ${#suites[@]} suite(s)"
           # ASSERT THE COUNT, NOT JUST THE EXIT CODE: a runner that discovers zero suites exits 0
           # forever. Raise the floor when suites are added; never lower it to make a run pass.
-          if [ "${#suites[@]}" -lt 4 ]; then
-            echo "::error::only ${#suites[@]} suites discovered, expected >= 4"
+          if [ "${#suites[@]}" -lt 11 ]; then
+            echo "::error::only ${#suites[@]} suites discovered, expected >= 11"
             exit 1
           fi
           fails=0

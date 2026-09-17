@@ -1,0 +1,489 @@
+#!/usr/bin/env python3
+"""check-frontmatter-paths — resolve every path value in vault frontmatter and fail on one that
+points at nothing. Report-only; it never writes to the vault.
+
+WHY THIS EXISTS
+---------------
+A vault reorganisation that rewrites `[[wikilinks]]` in document BODIES and leaves frontmatter
+untouched produces hundreds of values pointing at a layout that no longer exists — with no observer,
+because the half a human reads is correct and the half a program reads is broken.
+
+Worse, a completion field (`attachments_captured_at`) can sit green beside dead paths: the record
+certifying the work rots with its subject. A completion claim nothing dereferences is a comment with
+a colon in it — so this check is the dereferencer.
+
+THREE PROPERTIES IT IS BUILT AROUND
+-----------------------------------
+1. **It names the vault root it actually read, in the report.** A routine that reads a dead path,
+   falls back to defaults and emits a confident report is the failure. `iter_markdown` refuses a
+   missing root and refuses a root with no markdown.
+2. **Nothing leaves the denominator silently.** Every value is counted as resolved, baselined, or
+   FAILING; a frontmatter that will not parse is a FAILURE, never a skip. (A test can pass 0-mismatch
+   on a deliberately corrupted table when the affected entries move OUT of its population and count
+   as "skipped".)
+3. **Known-bad is BASELINED, not narrowed away.** Some values are prose in a path field
+   (`State/{A,B,C}.md`) or documents that genuinely moved. Without a baseline the check is born red,
+   and a permanently-red check gets silenced. The baseline is printed with its size every run, so it
+   cannot quietly grow.
+
+    check-frontmatter-paths --vault-root D [--vault-root D2] [--alias PREFIX=ROOT] \
+        [--baseline b.json] [--write-baseline] [--reasons r.json] [--json out.json] [--self-test]
+
+Requires PyYAML.
+Exit: 0 all good · 1 unresolvable path NOT in the baseline · 2 instrument fault.
+"""
+import argparse
+import json
+import os
+import shutil
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import frontmatter_paths as fp                                  # noqa: E402
+
+try:
+    import yaml
+except ImportError:
+    print("PyYAML required: python3 -m pip install pyyaml", file=sys.stderr)
+    sys.exit(2)
+
+
+def scan(roots, baseline, aliases=None):
+    report = {"roots": [], "resolved": 0, "cross_vault": [], "baselined": 0, "failing": [],
+              "unparseable": [], "unreadable": [], "files_scanned": 0,
+              "values_seen": 0}
+    for root in roots:
+        root = os.path.abspath(root)
+        n_files = n_vals = 0
+        unreadable = []
+        for path, fm_text, _body in fp.iter_markdown(root, unreadable):
+            n_files += 1
+            try:
+                fm = yaml.safe_load(fm_text)
+            except Exception as exc:                            # noqa: BLE001
+                # A frontmatter that will not parse is a FAILURE. Skipping it would
+                # remove an unknown number of path values from the denominator and
+                # the run would still print green.
+                report["unparseable"].append(
+                    {"file": os.path.relpath(path, root),
+                     "error": type(exc).__name__})
+                continue
+            if not isinstance(fm, dict):
+                continue
+            for keypath, value in fp.walk_values(fm):
+                if not fp.looks_like_path(value):
+                    continue
+                n_vals += 1
+                verdict = fp.resolve(root, value, aliases)
+                if verdict == "cross-vault":
+                    report["resolved"] += 1
+                    report["cross_vault"].append(
+                        {"file": os.path.relpath(path, root), "key": keypath,
+                         "value": value, "root": root})
+                elif verdict:
+                    report["resolved"] += 1
+                elif value in baseline:
+                    report["baselined"] += 1
+                else:
+                    report["failing"].append(
+                        {"file": os.path.relpath(path, root), "key": keypath,
+                         "value": value, "root": root})
+        for u in unreadable:
+            u["root"] = root
+        report["unreadable"] += unreadable
+        report["roots"].append({"root": root, "files": n_files,
+                                "path_values": n_vals,
+                                "unreadable": len(unreadable)})
+        report["files_scanned"] += n_files
+        report["values_seen"] += n_vals
+    return report
+
+
+def probable_cross_root(failing, roots):
+    """Failing values that would RESOLVE under another supplied root.
+
+    The stronger form of the alias lesson: prefer making full scope the DEFAULT
+    over a flag someone must remember, and where the tool cannot derive it,
+    OMISSION SHOULD FAIL rather than narrow silently. So instead of trusting the
+    operator to pass every --alias, look for the evidence that one is missing: a
+    "dead" value that resolves under a sibling root, as-is or after dropping
+    leading segments, is almost certainly a cross-vault reference being reported
+    dead.
+    """
+    hits = []
+    for f in failing:
+        v = f["value"]
+        if os.path.isabs(v) or v.startswith("~"):
+            continue
+        parts = v.split("/")
+        for other in roots:
+            if os.path.abspath(other) == os.path.abspath(f["root"]):
+                continue
+            for cut in range(0, min(4, len(parts))):
+                cand = "/".join(parts[cut:])
+                # Require a DIRECTORY component. Matching on a bare basename makes
+                # every `README.md` look like a cross-root reference, because some
+                # sibling vault always has one. A false "missing alias" would block
+                # --write-baseline permanently, which is worse than the problem it guards.
+                if "/" not in cand:
+                    continue
+                if cand and os.path.isfile(os.path.join(other, cand)):
+                    hits.append({**f, "resolves_under": other,
+                                 "implied_alias": "/".join(parts[:cut]) + "/" if cut else ""})
+                    break
+            else:
+                continue
+            break
+    return hits
+
+
+def unavailable_mounts(failing, containers=("/Volumes", "/mnt", "/media")):
+    """Failing values that are UNKNOWABLE right now because their volume is not mounted.
+
+    `os.path.exists` cannot tell a deleted file from a file on an unmounted disk — the two are
+    byte-identical to it. So a live reference to real media on a network share reads as DEAD the
+    moment the share is offline, and the number moves for a reason that has nothing to do with the
+    vault.
+
+    `resolved` / `dead` / **`unavailable`** are three answers, and collapsing the third into the
+    second is what makes a baseline dangerous. Baselining an unavailable value permanently records a
+    CORRECT reference as known-bad and then stops reporting it — the same irreversibility the
+    missing-alias refusal exists to prevent.
+
+    Detection is deliberately NARROW, because a false `unavailable` would suppress a real death:
+    only an absolute path whose FIRST MISSING COMPONENT is a direct child of a mount container
+    (macOS `/Volumes`, Linux `/mnt` and `/media`) counts. `/Volumes/share/x/y.md` with no
+    `/Volumes/share` is an unmounted volume; `~/notes/gone.md` is a deleted file.
+
+    `containers` is injectable ONLY so the self-test can run where /Volumes does not exist. A test
+    anchored to a literal /Volumes passes on a macOS developer machine and fails on a Linux runner —
+    a test that only works where the bug already reproduces is not a test.
+    """
+    hits = []
+    for f in failing:
+        v = os.path.expanduser(f["value"])
+        if not os.path.isabs(v):
+            continue
+        for c in containers:
+            if not v.startswith(c + "/"):
+                continue
+            rest = v[len(c) + 1:].split("/")
+            if not rest or not rest[0]:
+                continue
+            vol = os.path.join(c, rest[0])
+            # The container itself must exist, or we are not on a system that uses it and
+            # this says nothing. The VOLUME missing is the signal.
+            if os.path.isdir(c) and not os.path.exists(vol):
+                hits.append({**f, "missing_mount": vol})
+            break
+    return hits
+
+
+def self_test():
+    """KNOWN-NEGATIVE PROOF. A check that has only ever passed is not yet a check.
+
+    Builds a throwaway vault with one resolvable and one dead path and asserts the
+    checker goes RED on the dead one and counts the live one. Committed rather than
+    performed once, so a future edit that breaks detection fails here loudly.
+    """
+    skipped = []
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "Attachments"))
+        open(os.path.join(d, "Attachments", "real.png"), "wb").write(b"x")
+        open(os.path.join(d, "entry.md"), "w", encoding="utf-8").write(
+            "---\nid: t\nattachments:\n- path: Attachments/real.png\n"
+            "- path: Attachments/GONE.png\nrelated_state_doc: Old/Layout/State.md\n"
+            "---\n\nbody\n")
+        open(os.path.join(d, "broken.md"), "w", encoding="utf-8").write(
+            "---\nid: t2\nkey: [unclosed\n---\n\nbody\n")
+        r = scan([d], set())
+        fails = {f["value"] for f in r["failing"]}
+        checks = [
+            ("dead path detected", "Attachments/GONE.png" in fails),
+            ("dead path under a DIFFERENT key detected (shape, not roster)",
+             "Old/Layout/State.md" in fails),
+            ("live path counted as resolved", r["resolved"] == 1),
+            ("unparseable frontmatter is a FAILURE, not a skip",
+             len(r["unparseable"]) == 1),
+            ("root is named in the report", r["roots"][0]["root"] == os.path.abspath(d)),
+        ]
+        # UNAVAILABLE is a THIRD state, and the check that matters is that it is not
+        # confused with either neighbour: an unmounted volume must not read as a dead
+        # file, and an ordinary missing file must not read as unavailable. Both
+        # directions, because a false `unavailable` would SUPPRESS a real death.
+        with tempfile.TemporaryDirectory() as cont:
+            # `cont` stands in for /Volumes: it EXISTS, and the volume inside it does not.
+            fake = [{"value": os.path.join(cont, "not-mounted-xyz", "a", "b.md"),
+                     "file": "f", "key": "k", "root": "/"},
+                    {"value": os.path.join(d, "definitely-gone-xyz", "a", "b.md"),
+                     "file": "f", "key": "k", "root": "/"},
+                    {"value": "relative/not/absolute.md", "file": "f", "key": "k", "root": "/"}]
+            um = unavailable_mounts(fake, containers=(cont,))
+            checks.append(("an unmounted volume is UNAVAILABLE, not dead",
+                           any(h["value"].startswith(cont) for h in um)))
+            checks.append(("an ordinary missing file is NOT called unavailable",
+                           not any("definitely-gone-xyz" in h["value"] for h in um)))
+            checks.append(("a relative value is NOT called unavailable",
+                           not any(h["value"].startswith("relative") for h in um)))
+
+        # KNOWN-NEGATIVE for cross-vault: a reference into a SIBLING root reads
+        # as dead without an alias and resolves with one.
+        sib = tempfile.mkdtemp()
+        os.makedirs(os.path.join(sib, "State"))
+        open(os.path.join(sib, "State", "Doc.md"), "w").write("x")
+        open(os.path.join(d, "xref.md"), "w", encoding="utf-8").write(
+            "---\nid: x\nrelated: Other/State/Doc.md\n---\n\nb\n")
+        no_alias = scan([d], set())
+        with_alias = scan([d], set(), {"Other/": sib})
+        checks.append(("cross-vault ref reads DEAD without an alias",
+                       any(f["value"] == "Other/State/Doc.md"
+                           for f in no_alias["failing"])))
+        checks.append(("cross-vault ref RESOLVES with an alias",
+                       not any(f["value"] == "Other/State/Doc.md"
+                               for f in with_alias["failing"])))
+        os.remove(os.path.join(d, "xref.md"))
+        # KNOWN-NEGATIVE: a ~-path is HOME-relative, never vault-relative. HOME is pointed at a
+        # throwaway directory holding the file, so the check always RUNS instead of depending on
+        # what the machine's real home happens to contain.
+        fake_home = tempfile.mkdtemp()
+        open(os.path.join(fake_home, "dotfile.txt"), "w").write("x")
+        saved_home = os.environ.get("HOME")
+        os.environ["HOME"] = fake_home
+        try:
+            open(os.path.join(d, "tilde.md"), "w", encoding="utf-8").write(
+                "---\nid: t3\nrelated: ~/dotfile.txt\n---\n\nb\n")
+            rt = scan([d], set())
+            checks.append(("~-path resolved against HOME, not the vault root",
+                           not any(f["value"] == "~/dotfile.txt" for f in rt["failing"])
+                           and rt["resolved"] == 2))
+            os.remove(os.path.join(d, "tilde.md"))
+        finally:
+            if saved_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = saved_home
+            shutil.rmtree(fake_home, ignore_errors=True)
+        r2 = scan([d], {"Attachments/GONE.png", "Old/Layout/State.md"})
+        checks.append(("baseline suppresses known-bad", not r2["failing"]
+                       and r2["baselined"] == 2))
+        try:
+            fp.iter_markdown(os.path.join(d, "nope")).__next__()
+            checks.append(("missing root refuses", False))
+        except SystemExit:
+            checks.append(("missing root refuses", True))
+
+        # KNOWN-NEGATIVE: present but UNREADABLE. os.walk swallows permission errors by default, so an
+        # unreadable subtree silently shrinks the report instead of failing it.
+        locked = os.path.join(d, "locked")
+        os.makedirs(locked)
+        open(os.path.join(locked, "hidden.md"), "w").write("---\nid: h\n---\n")
+        os.chmod(locked, 0o000)
+        try:
+            r3 = scan([d], set())
+            if os.geteuid() == 0:
+                # ROOT DEFEATS THE PREMISE. chmod 000 does not make a path unreadable to uid 0,
+                # so this check cannot construct its own defect in a container that runs as root
+                # — which is exactly where CI often runs.
+                # Reported as SKIPPED, never as PASS: a check that could not be performed is a
+                # THIRD state, and folding it into "pass" is how a suite reports coverage it does
+                # not have. The assertion still runs for every non-root developer.
+                skipped.append("unreadable SUBTREE is surfaced, not skipped "
+                               "(running as root: chmod cannot make a path unreadable)")
+            else:
+                checks.append(("unreadable SUBTREE is surfaced, not skipped",
+                               len(r3["unreadable"]) >= 1))
+        finally:
+            os.chmod(locked, 0o755)
+        root_locked = tempfile.mkdtemp()
+        os.chmod(root_locked, 0o000)
+        try:
+            fp.iter_markdown(root_locked).__next__()
+            checks.append(("unreadable ROOT refuses", False))
+        except SystemExit:
+            checks.append(("unreadable ROOT refuses", True))
+        except StopIteration:
+            checks.append(("unreadable ROOT refuses", False))
+        finally:
+            os.chmod(root_locked, 0o755)
+            os.rmdir(root_locked)
+        ok = True
+        for name, passed in checks:
+            print("  %-62s %s" % (name, "PASS" if passed else "FAIL"))
+            ok = ok and passed
+        # SKIPPED is printed, never silently dropped. A suite that quietly stops running a check
+        # reports the same green as one that runs it — the difference is invisible exactly when
+        # it matters, so the count is stated on the verdict line.
+        for name in skipped:
+            print("  %-62s SKIP" % name[:62])
+        verdict = "PASS" if ok else "FAIL"
+        if skipped:
+            verdict += (" (%d SKIPPED — see above; coverage is not what a bare PASS implies)"
+                        % len(skipped))
+        print("SELF-TEST: %s" % verdict)
+        return 0 if ok else 2
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--vault-root", action="append", default=None)
+    ap.add_argument("--baseline")
+    ap.add_argument("--reasons", metavar="FILE",
+                    help="JSON {value: reason} merged into --write-baseline, so "
+                         "each suppressed finding records WHY it is permanent")
+    ap.add_argument("--write-baseline", action="store_true",
+                    help="record today's unresolvable values as known-bad")
+    ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--alias", action="append", default=None, metavar="PREFIX=ROOT",
+                    help="a path PREFIX that resolves in ANOTHER vault root, e.g. "
+                         "'Shared/=~/vaults/shared'. Without these, correct "
+                         "CROSS-VAULT references are reported dead.")
+    ap.add_argument("--json", help="write the full report here")
+    args = ap.parse_args()
+
+    if args.self_test:
+        return self_test()
+    if not args.vault_root:
+        raise SystemExit("--vault-root is required (naming it is the point)")
+
+    baseline, unexplained = set(), 0
+    if args.baseline and os.path.exists(args.baseline) and not args.write_baseline:
+        kb = json.load(open(args.baseline, encoding="utf-8"))["known_bad"]
+        # Accept the legacy list form, but the shape is value -> reason.
+        if isinstance(kb, list):
+            baseline, unexplained = set(kb), len(kb)
+        else:
+            baseline = set(kb)
+            unexplained = sum(1 for v in kb.values()
+                              if not v or str(v).startswith("UNEXPLAINED"))
+
+    aliases = {}
+    for a in (args.alias or []):
+        if "=" not in a:
+            raise SystemExit("--alias needs PREFIX=ROOT, got %r" % a)
+        pre, rt = a.split("=", 1)
+        rt = os.path.abspath(os.path.expanduser(rt))
+        if not os.path.isdir(rt):
+            raise SystemExit("--alias target is not a directory: %s\n"
+                             "An alias pointing nowhere silently resolves nothing "
+                             "and every cross-vault reference reads as dead." % rt)
+        aliases[pre] = rt
+    r = scan(args.vault_root, baseline, aliases)
+    r["aliases"] = {k: v for k, v in aliases.items()}
+    r["probable_cross_root"] = probable_cross_root(r["failing"], args.vault_root)
+    r["unavailable"] = unavailable_mounts(r["failing"])
+
+    if args.write_baseline:
+        if not args.baseline:
+            raise SystemExit("--write-baseline needs --baseline <file>")
+        # 🔴 The baseline is the IRREVERSIBLE step: a baselined finding stops being
+        # reported. Writing one while an alias is missing permanently records
+        # CORRECT cross-vault references as known-bad -- correctness enshrined as a
+        # defect, then silence. So this refuses rather than warns.
+        if r["probable_cross_root"]:
+            ex = r["probable_cross_root"][0]
+            raise SystemExit(
+                "REFUSING to write a baseline: %d failing value(s) RESOLVE under "
+                "another supplied root, i.e. an --alias is missing.\n"
+                "  e.g. %s\n       resolves under %s (implied alias %r)\n"
+                "Baselining them would permanently record correct cross-vault "
+                "references as known-bad and then stop reporting them.\n"
+                "Resolve deliberately: pass an --alias if the link is legitimate, "
+                "or sever it if it crosses a CUSTODY boundary — that is a "
+                "governance judgement, not a tooling one, and this refuses rather "
+                "than picking for you."
+                % (len(r["probable_cross_root"]), ex["value"][:70],
+                   ex["resolves_under"], ex["implied_alias"]))
+        # 🔴 Same irreversibility, different door: an UNAVAILABLE value is not known to be
+        # dead — its volume is simply offline — so baselining it records a correct reference
+        # as known-bad and silences it. Refuse, exactly as for a missing alias. Mount the
+        # volume and re-run, or sever the reference deliberately.
+        if r["unavailable"]:
+            ex = r["unavailable"][0]
+            raise SystemExit(
+                "REFUSING to write a baseline: %d failing value(s) are UNAVAILABLE, not dead "
+                "— their volume is not mounted.\n"
+                "  e.g. %s\n       needs %s\n"
+                "An unmounted disk and a deleted file are identical to os.path.exists, so these "
+                "are UNKNOWABLE right now. Baselining them would permanently record correct "
+                "references as known-bad and then stop reporting them.\n"
+                "Mount the volume and re-run, or sever the reference deliberately — this "
+                "refuses rather than guessing which."
+                % (len(r["unavailable"]), ex["value"][:70], ex["missing_mount"]))
+        # A known-bad with no stated REASON rots into "we decided to ignore this"
+        # with nobody remembering why — the same shape as a tombstone naming a
+        # supersedor nobody verified. So every entry carries a reason, and one that
+        # has none is written as UNEXPLAINED and counted loudly on every run
+        # rather than blending into the suppressed set.
+        reasons = {}
+        if args.reasons and os.path.exists(args.reasons):
+            reasons = json.load(open(args.reasons, encoding="utf-8"))
+        vals = sorted({f["value"] for f in r["failing"]})
+        kb = {v: reasons.get(v) or "UNEXPLAINED — state why this is permanently "
+                                   "unresolvable, or fix it" for v in vals}
+        json.dump({"note": "Values known unresolvable, each with a REASON. SHRINK "
+                           "this list; never add to it to quiet a real break. An "
+                           "UNEXPLAINED entry is suppressed but reported every run.",
+                   "known_bad": kb},
+                  open(args.baseline, "w", encoding="utf-8"), indent=1,
+                  ensure_ascii=False)
+        n_un = sum(1 for v in kb.values() if v.startswith("UNEXPLAINED"))
+        print("baseline written: %d values (%d UNEXPLAINED)" % (len(kb), n_un))
+        return 0
+
+    for pre, rt in sorted(aliases.items()):
+        print("ALIAS %s -> %s" % (pre, rt))
+    for row in r["roots"]:
+        print("READ %s  (%d md files, %d path values, %d unreadable)"
+              % (row["root"], row["files"], row["path_values"], row["unreadable"]))
+    print("resolved            : %d" % r["resolved"])
+    print("  of which CROSS-VAULT (resolved via an --alias): %d" % len(r["cross_vault"]))
+    print("baselined known-bad : %d%s" % (r["baselined"],
+          ("  ⚠️ %d of the baseline is UNEXPLAINED" % unexplained) if unexplained else ""))
+    print("unparseable frontmatter (counted as FAILING): %d" % len(r["unparseable"]))
+    print("UNREADABLE file/subtree (counted as FAILING) : %d" % len(r["unreadable"]))
+    print("FAILING             : %d" % len(r["failing"]))
+    if r.get("unavailable"):
+        print("  ⚠️  of which UNAVAILABLE, not dead (volume not mounted): %d"
+              % len(r["unavailable"]))
+        for u in r["unavailable"][:5]:
+            print("        %s\n          needs %s — UNKNOWABLE until it is mounted; "
+                  "refused for --write-baseline" % (u["value"][:78], u["missing_mount"]))
+    if r["probable_cross_root"]:
+        print("  ⚠️  of which PROBABLE CROSS-ROOT (an --alias is missing): %d"
+              % len(r["probable_cross_root"]))
+        for x in r["probable_cross_root"][:5]:
+            print("      %s  resolves under %s  (implied alias %r)"
+                  % (x["value"][:52], os.path.basename(x["resolves_under"]),
+                     x["implied_alias"]))
+    for f in r["failing"][:25]:
+        print("   DEAD %s :: %s :: %s" % (f["file"], f["key"], f["value"][:70]))
+    for u in r["unparseable"][:10]:
+        print("   UNPARSEABLE %s (%s)" % (u["file"], u["error"]))
+    for x in r["cross_vault"][:10]:
+        print("   XVAULT %s :: %s :: %s" % (x["file"][:40], x["key"][:24], x["value"][:50]))
+    for u in r["unreadable"][:10]:
+        print("   UNREADABLE %s %s (%s)" % (u["kind"], u["path"], u["error"]))
+    if args.json:
+        json.dump(r, open(args.json, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
+
+    total = r["resolved"] + r["baselined"] + len(r["failing"])
+    assert total == r["values_seen"], (
+        "denominator mismatch: %d accounted vs %d seen — a value left the "
+        "population silently" % (total, r["values_seen"]))
+    # An unreadable subtree is a FAILURE, not a smaller vault. It is the exact
+    # shape this tool hunts: fewer results, read as clean.
+    return 1 if (r["failing"] or r["unparseable"] or r["unreadable"]) else 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except SystemExit as exc:
+        # A refusal (missing root, bad alias, unsafe baseline) is an INSTRUMENT outcome, not a
+        # finding. `raise SystemExit("message")` would exit 1 — the same code as "dead paths found" —
+        # so a caller could not tell "the vault is broken" from "the check never ran".
+        if isinstance(exc.code, str):
+            print(exc.code, file=sys.stderr)
+            sys.exit(2)
+        raise
