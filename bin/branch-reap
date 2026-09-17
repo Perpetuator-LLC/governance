@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# branch-reap — delete LOCAL branches whose commits are already in the default branch.
+#
+# Why this exists: stale local branches accumulate silently, one per landed PR, and nobody notices
+# until a roster is printed for some other reason. They are harmless individually, which is exactly
+# why they are never cleaned.
+#
+# SAFETY, by construction rather than by care:
+#   - DRY RUN IS THE DEFAULT. Deleting requires --apply, typed on purpose.
+#   - `git branch -d` ONLY, never a force delete. git's own merged-check is the gate; anything it
+#     refuses is REPORTED and kept. The script has no opinion that can override git.
+#   - PROTECTED, never considered: the default branch, the current branch, every `merge/*`
+#     integration branch, any branch checked out in any worktree, and anything matching --protect.
+#   - Containment is asserted against the REMOTE default (origin/<default>), not a local copy,
+#     which can be stale.
+#   - Every deletion is logged as `<name> <sha>` BEFORE it happens, so each one is restorable with
+#     `git branch <name> <sha>`. That log is the undo path.
+#
+# A branch that `-d` refuses is the interesting case, not an error: it carries a patch git cannot
+# see in the default branch. That can mean genuinely unmerged work, OR a fix that landed as a
+# DIFFERENT patch (`git cherry` prints `+` for both). Deciding between those needs a human reading
+# the code — so this prints it and moves on.
+#
+# Usage:
+#   bin/branch-reap                      # dry run in the current repo
+#   bin/branch-reap --apply              # actually delete
+#   bin/branch-reap --repo <path> [...]  # other repos (repeatable)
+#   bin/branch-reap --repos-from <file>  # one repo path per line ('-' = stdin); empty list refuses
+#   bin/branch-reap --protect 'wip/*'    # extra protected globs (repeatable)
+#   bin/branch-reap --log <path>         # where to append the undo log
+
+set -uo pipefail
+
+APPLY=0; REPOS=(); PROTECT=(); LOG=""; REPOS_FROM=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --apply)      APPLY=1; shift ;;
+    --repo)       REPOS+=("${2:?--repo needs a path}"); shift 2 ;;
+    --repos-from) REPOS_FROM="${2:?--repos-from needs a file (or -)}"; shift 2 ;;
+    --protect)    PROTECT+=("${2:?--protect needs a glob}"); shift 2 ;;
+    --log)        LOG="${2:?--log needs a path}"; shift 2 ;;
+    -h|--help)    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "branch-reap: unknown argument '$1'" >&2; exit 1 ;;
+  esac
+done
+# A roster that resolves to nothing must ABORT, never fall back to "$PWD": a reap that quietly
+# narrows to one repo looks exactly like a multi-repo sweep that found nothing.
+if [ -n "$REPOS_FROM" ]; then
+  if [ "$REPOS_FROM" != "-" ] && [ ! -r "$REPOS_FROM" ]; then
+    echo "branch-reap: --repos-from '$REPOS_FROM' is not readable — refusing to fall back to the" >&2
+    echo "  current directory, which would look like a sweep that found nothing." >&2
+    exit 2
+  fi
+  n_before=${#REPOS[@]}
+  while IFS= read -r cand; do
+    cand="${cand#"${cand%%[![:space:]]*}"}"; cand="${cand%"${cand##*[![:space:]]}"}"
+    [ -n "$cand" ] && REPOS+=("$cand")
+  done < <(if [ "$REPOS_FROM" = "-" ]; then cat; else cat -- "$REPOS_FROM"; fi)
+  if [ ${#REPOS[@]} -eq "$n_before" ]; then
+    echo "branch-reap: --repos-from resolved ZERO repos — aborting rather than reporting a clean sweep." >&2
+    exit 2
+  fi
+fi
+
+[ ${#REPOS[@]} -eq 0 ] && REPOS=("$PWD")
+
+total_del=0; total_kept=0; rc=0
+for repo in "${REPOS[@]}"; do
+  if ! git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "branch-reap: not a git repo: $repo" >&2; rc=1; continue
+  fi
+  name=$(basename "$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null || echo "$repo")")
+
+  # The default branch is READ from the remote, never assumed to be "main".
+  def=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+  def=${def#origin/}
+  [ -z "$def" ] && def=$(git -C "$repo" remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p' | head -1)
+  if [ -z "$def" ]; then
+    echo "  $name: cannot determine origin's default branch — skipping (a guess here deletes real work)" >&2
+    rc=1; continue
+  fi
+  if ! git -C "$repo" rev-parse --verify --quiet "origin/$def" >/dev/null; then
+    echo "  $name: origin/$def missing locally — run a fetch first; skipping" >&2; rc=1; continue
+  fi
+
+  cur=$(git -C "$repo" branch --show-current 2>/dev/null)
+  # A branch checked out in ANY worktree is off-limits, not just the current one.
+  # `git branch -d` refuses these anyway, but PROPOSING them inflates the dry-run
+  # count and invites someone to reach for -D to "fix" the refusal.
+  checked_out=$(git -C "$repo" worktree list --porcelain 2>/dev/null | sed -n 's|^branch refs/heads/||p')
+  del=(); kept=()
+  while IFS= read -r b; do
+    [ -z "$b" ] && continue
+    [ "$b" = "$def" ] && continue
+    [ "$b" = "$cur" ] && continue
+    case "$b" in merge/*) continue ;; esac
+    if printf '%s\n' "$checked_out" | grep -qxF "$b"; then continue; fi
+    skip=0
+    for g in ${PROTECT+"${PROTECT[@]}"}; do case "$b" in $g) skip=1 ;; esac; done
+    [ "$skip" -eq 1 ] && continue
+    if [ -z "$(git -C "$repo" log --oneline "origin/$def..$b" 2>/dev/null)" ]; then
+      del+=("$b")
+    else
+      kept+=("$b")
+    fi
+  done < <(git -C "$repo" branch --format='%(refname:short)' 2>/dev/null)
+
+  echo "  $name (default: $def) — ${#del[@]} reapable, ${#kept[@]} kept"
+  for b in ${kept+"${kept[@]}"}; do
+    n=$(git -C "$repo" log --oneline "origin/$def..$b" 2>/dev/null | wc -l | tr -d ' ')
+    echo "      KEPT  $b ($n commit(s) not in $def — a human decides: unmerged, or landed as a different patch?)"
+  done
+  for b in ${del+"${del[@]}"}; do
+    sha=$(git -C "$repo" rev-parse "$b" 2>/dev/null)
+    if [ "$APPLY" -eq 1 ]; then
+      # Log BEFORE deleting: a log written after a delete is missing exactly the
+      # entries that mattered if the delete is what went wrong.
+      [ -n "$LOG" ] && printf '%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$name" "$b" "$sha" >> "$LOG"
+      if out=$(git -C "$repo" branch -d "$b" 2>&1); then
+        echo "      reaped $b ($(printf '%.9s' "$sha"))"
+        total_del=$((total_del+1))
+      else
+        echo "      REFUSED $b — git says: ${out##*: }"
+        total_kept=$((total_kept+1)); rc=1
+      fi
+    else
+      echo "      would reap $b ($(printf '%.9s' "$sha"))"
+      total_del=$((total_del+1))
+    fi
+  done
+done
+
+echo
+if [ "$APPLY" -eq 1 ]; then
+  echo "branch-reap: deleted $total_del; $total_kept refused by git."
+  [ -n "$LOG" ] && echo "  undo log: $LOG   (restore: git branch <name> <sha>)"
+else
+  echo "branch-reap: DRY RUN — $total_del branch(es) would be deleted. Re-run with --apply."
+fi
+exit $rc
