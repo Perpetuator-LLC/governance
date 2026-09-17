@@ -51,6 +51,34 @@ jobs:
           # An empty glob would pass having checked nothing. Raise when files are added; never lower.
           [ "$n" -ge 28 ] || { echo "::error::only $n files parse-checked, expected >= 28; discovery is broken"; exit 1; }
 
+      # REDACTION GATE. Two legs. The SHAPE leg needs no secret and always runs. The PRIVATE-NAME leg
+      # needs the maintainers' inventory of instance names, supplied as an Actions secret; it is
+      # deliberately NOT available to pull_request runs (a PR author controls the code that would
+      # read it), so on a PR the leg reports NOT CHECKED (exit 3) and the push-to-main run is the
+      # one that must pass it. A missing secret on main is a FAILURE, never a clean scan.
+      - name: Redaction gate (shape leg on every run; private-name leg on main)
+        env:
+          GOVERNANCE_PRIVATE_PATTERNS_CONTENT: ${{ secrets.GOVERNANCE_PRIVATE_PATTERNS }}
+        run: |
+          # The runner executes this under `bash -e`: a bare `cmd; rc=$?` aborts before rc is read.
+          set -uo pipefail
+          files=$(git ls-files | grep -vE '^tests/redaction-check\.test\.sh$' | grep -E '\.(md|sh|py|json|ya?ml)$|^bin/|^hooks/')
+          if [ -n "${GOVERNANCE_PRIVATE_PATTERNS_CONTENT:-}" ]; then
+            umask 077; tmp=$(mktemp); printf '%s\n' "$GOVERNANCE_PRIVATE_PATTERNS_CONTENT" > "$tmp"
+            rc=0; python3 bin/redaction-check --enforce --private-patterns "$tmp" $files || rc=$?; rm -f "$tmp"
+          else
+            rc=0; python3 bin/redaction-check --enforce $files || rc=$?
+          fi
+          echo "redaction-check exit $rc (0 clean · 1 findings · 2 cannot run · 3 private leg not checked)"
+          case "$rc" in
+            0) ;;
+            3) if [ "${{ github.event_name }}" = "push" ]; then
+                 echo "::error::private-name leg NOT CHECKED on main — the GOVERNANCE_PRIVATE_PATTERNS secret is missing or unreadable"; exit 1
+               else
+                 echo "::notice::private-name leg not checked on a pull request (by design); it runs on the push to main"; fi ;;
+            *) exit 1 ;;
+          esac
+
       - name: Test suite
         run: |
           set -euo pipefail
