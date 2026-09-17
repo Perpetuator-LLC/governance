@@ -54,3 +54,88 @@ adapter.
 checker that contained the private names it hunts for would itself be the disclosure. Literal names
 live in a private list you pass in, and without that list the check reports the name leg as **not
 checked**, never as clean.
+
+## Precedence of guidance — the layered merge
+
+The layers above decide which *file* wins. When work is done for someone else — a client, a partner,
+another organisation — a second question arises: whose way of working wins. Resolve it top-down;
+**higher wins**:
+
+1. **The human's explicit in-session instruction.** Always wins.
+2. **Client / engagement governance** — for *that client's deliverables*: how they want THEIR
+   product produced (their conventions, definitions, protocols). Declared per engagement (see
+   *Engagement layering*). **Wins on the shape of their deliverable.**
+3. **Your role governance** (the domain docs) — *how you work*: craft, security posture, process.
+   **Always applies and fills any gap** the client didn't specify.
+4. **Core operating rules** (the G-rules below) — the universal baseline.
+
+**On client work it is a MERGE, not a switch:** your craft + their product-shape. For the
+*deliverable's shape and conventions*, the client wins; for *your professional conduct, security, and
+safety*, you hold your standard regardless. **Flag genuine conflicts** — never silently choose between
+a client's way and yours; surface it.
+
+### Engagement layering (how a client's governance attaches)
+
+Each engagement declares its client-governance overlay in its own instruction file (a pointer to the
+client's governance documents). Inside that engagement's repo or folder, layer the client overlay on
+top of your role governance per the precedence above. **Internal work has no client overlay** — your
+own governance is the whole stack.
+
+**The artifact taxonomy is part of the governance overlay — it does NOT travel.** Your spine types
+(Theme · OKR · KPI · North Star · Initiative · Capability) and their passport frontmatter are
+internal; instantiating them in a client repo or vault is a G8 bleed even when every fact inside is
+the client's. A dispatch is not a governance vetting, and one engagement's acronym is another's
+product name.
+
+## Core operating rules (the G-rules)
+
+- **G1 — Single source of truth, latest-wins.** Each fact has one authoritative home; a
+  current-status field reflects the *most-recent* truth and is never regressed by older information.
+  Compare the *event date*, not when you processed it.
+- **G2 — History is append-only.** Never rewrite immutable records (event logs, journals,
+  decisions). Correct by appending a dated update.
+- **G3 — Markdown + frontmatter, everywhere.** Every document is portable Markdown with YAML
+  frontmatter and `[[wiki-links]]`. Never trap content in a format it can't be exported from.
+- **G4 — Draft → review → published.** Nothing an agent authors is authoritative until a human
+  publishes it (a `status` gate). Stage high-risk changes for review rather than applying silently.
+- **G5 — Every decision is recorded and owned.** A decision gets a stable ID, an owner, a date, and
+  its rationale. Link it from where it's enacted up to the strategy it serves.
+- **G6 — Every artifact has one home and one owner.** File each in the correct layer (placement
+  policy below). Cross-link; never duplicate.
+- **G7 — Attribute and make reversible every agent write.** Log who/when/what (human vs. agent).
+  Mass edits, moves, deletions must be staged or trivially undoable.
+- **G8 — Respect boundaries.** Keep engagement/client/tenant data separated. Never leak secrets,
+  tokens, or one client's context into another's surface.
+- **G9 — Trace upward and downward.** Work traces up to the requirement/initiative/strategy it
+  serves, and down to the evidence that proves it done.
+- **G10 — Capture knowledge back.** Reusable procedure or insight boils up into the knowledge layer
+  (SOPs / Knowledge Base) so it's never re-derived.
+- **G11 — Passport & route-before-create.** Every document carries a frontmatter **passport** whose
+  `type` fixes its one canonical home and mutability. Before creating, **route**: find the existing
+  canon and update it; a parallel file is the exception and must be justified. Rich canons, thin
+  pointers.
+
+## Artifact placement (where each artifact lives)
+
+Work follows one **strategy-to-execution spine**; each layer has a home (roles, not products — map
+them to concrete tools in each repo's config):
+
+| Layer | Artifacts | Home |
+|---|---|---|
+| **Strategy & measurement** | Theme · Objective · Key Result · KPI · Snapshot | **Knowledge vault** (durable, cross-initiative) |
+| **Definition & scope** | Initiative · Requirement Package · Requirement · Capability | **Initiative repo** |
+| **Build & ship** | Work Item · Release | **Code repo** (the forge's issues + releases) |
+| **Cross-cutting** | Decision/ADR · RAID · Responsibility · Evidence | recorded closest to where enacted, linked upward |
+| **Registry & knowledge** | Instances · Knowledge Base (rules, protocols, learnings, contributors) | **Knowledge vault** |
+
+**Placement binds AUTHORING and REFERENCING alike:** a doc goes to its canonical home at birth, and a
+hand-off that records a path is a routing act — verify the home before propagating it
+(`domains/operations.md` → *Placement binds authoring and referencing*).
+
+**Cross-cutting records:** ADRs/Decisions, RAID/Risks, and Evidence/Learnings are **repo-specific**
+(they live in the owning repo's docs); RACI/Accountability, Objects
+(Instances/People/Organizations/Definitions/Meetings), and Governance
+(Rules/Protocols/Best-Practices/SOPs) live in the **knowledge vault as documents**.
+
+A project-management tool MAY *mirror* the spine for tracking, but the **authoritative source** for
+each artifact is its home above — the mirror is a convenience, not the record.
