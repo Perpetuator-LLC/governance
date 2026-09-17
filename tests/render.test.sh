@@ -66,6 +66,18 @@ mkdir -p "$TMP/empty"
 rc="$(gov render --out "$TMP/E.md" --core "$TMP/empty")"
 check "layers with no Markdown ⇒ refuse to render an empty file (exit 2)" "[ '$rc' = '2' ] && [ ! -f '$TMP/E.md' ]"
 
+mkdir -p "$TMP/adapter2"
+echo "# second adapter"      > "$TMP/adapter2/AGENTS.md"
+M=(--core "$TMP/core" --adapter "$TMP/adapter" --adapter "$TMP/adapter2" --local "$TMP/local.md")
+rc="$(gov render --out "$TMP/MULTI.md" "${M[@]}")"
+order="$(grep -E '^# ' "$TMP/MULTI.md" | tr '\n' '|')"
+check "--adapter repeats: adapters render in the order given, between core and local" \
+  "[ '$rc' = '0' ] && [ '$order' = '# core rules|# core extra|# adapter rules, amended|# adapter nested|# second adapter|# local override|' ]"
+rc="$(gov check --out "$TMP/MULTI.md" "${M[@]}")"
+check "…and check with the same adapters is in sync" "[ '$rc' = '0' ]"
+rc="$(gov check --out "$TMP/MULTI.md" --core "$TMP/core" --adapter "$TMP/adapter2" --adapter "$TMP/adapter" --local "$TMP/local.md")"
+check "…while the same adapters in another order are drift" "[ '$rc' = '1' ]"
+
 # --- this repository's own core renders and checks ------------------------------------
 rc="$(gov render --out "$TMP/SELF.md")"
 check "THIS core renders" "[ '$rc' = '0' ]"
