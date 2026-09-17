@@ -353,6 +353,24 @@ see `security.md` → *Pick the rung from the CONSUMER*.
   both spellings (retag the survivors, or pin `image:`/`container_name:` explicitly so the name stops
   depending on the compose version).
 
+## The promotion gate is a walked STAGE, and a deploy is fully automated
+
+**Nothing is promoted until the release's headline flows have been walked end to end on the staging
+environment, on the EXACT artifact pair being promoted.** The walk record names that pair (every
+artifact's build identifier); a re-cut of either side invalidates the walk, and it is repeated on the
+new pair. Each lane's own green is a **precondition** for starting the walk, never evidence for the
+promotion: each lane proves its half, and the defect lives where the halves meet. A cut receipt links
+one walk record — who walked, environment, the artifact pair, steps, observed — and whoever declares
+readiness across lanes owns scheduling the walk and may not write *ready* without that link.
+*"Unwalked"* in a readiness line is a block, not a caveat.
+
+**A deploy is fully automated: the release pipeline alone sets the planned good state.** Every
+post-deploy seed, sync or catalog step lives in the pipeline's post-deploy hook or in infrastructure
+code, never as a block a human runs by hand. A hand-run command in a deploy hand-off is a defect to
+ticket, not a step to perform: it can only exist on the new build, so it fails on the old one — and
+that is exactly when it gets run. The deploy flow is documented as code so it is repeatable and never
+depends on one person's memory.
+
 ## A dependent repo's CI must PROVE its API is deployed before it deploys
 
 **The rule.** Where one repo ships against another's live API — any FE→BE pair, any service calling
