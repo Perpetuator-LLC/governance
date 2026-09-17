@@ -353,6 +353,27 @@ see `security.md` → *Pick the rung from the CONSUMER*.
   both spellings (retag the survivors, or pin `image:`/`container_name:` explicitly so the name stops
   depending on the compose version).
 
+## An integration that MIRRORS external state ships a push handler AND a pull reconcile
+
+**Any code path that copies state owned by an external system into the local store ships three
+things in the same change, or it is not done:** a **push handler** (webhook or callback) that applies
+the provider's events; a **pull reconcile** — a committed command that re-reads the provider and
+repairs local state, **idempotent by the provider's own id**, safe to re-run at any time, runnable per
+entity and for all, with a dry-run that reports the diff; and **two tests** — the same push event
+delivered twice produces one state change, and the reconcile repairs a missed event (drop the event,
+run the reconcile, assert convergence). Whether the reconcile is scheduled is a product decision;
+that it *exists* is not.
+
+**Idempotency is keyed on the external id, never on arrival order or local timestamps.** Store the
+provider's event id under a unique constraint so a redelivery is a no-op by construction.
+
+**Review rule:** a push path with no pull path is a **defect, not a follow-up**. The reviewer asks:
+*if the callback was misrouted, dropped, or the endpoint was down for an hour, which committed command
+makes the local store converge?* No answer → request changes. Push-only mirrors fail silently — the
+provider believes the change happened, the local store never hears of it, and the absence has no
+error state — and the pull path is also what lets every environment converge from the provider by
+command instead of by re-firing events.
+
 ## The promotion gate is a walked STAGE, and a deploy is fully automated
 
 **Nothing is promoted until the release's headline flows have been walked end to end on the staging
