@@ -7,6 +7,26 @@ that layers an organisation's own rules on top, and the checks that keep both ho
 being extracted from a working system and generalised section by section. Licensed under the MIT
 License — see `LICENSE`.
 
+## Use it, build on it, give back
+
+**Use it directly.** Install this repository as it is and pin it. Put everything your organisation
+needs in your own adapter layer (below). Staying on the shared core, rather than a copy you edit, is
+what keeps improvements arriving. Every rule, gate and fix that anyone lands here reaches you on your
+next update.
+
+**Borrow freely.** The ideas are yours to take into your own systems and to build new ones from:
+layered rules, instruction files rendered rather than linked, safety as gates rather than prose, a
+rule kept apart from the incident behind it, and redaction checked by shape. The license is MIT.
+
+**Give a little back.** When your agents learn a lesson that would hold for anyone, send it upstream.
+A commit or two every now and then is plenty. So is an extension: a new domain, a gate, support for
+another harness, a template. See `CONTRIBUTING.md`.
+
+**Why it compounds.** Every team running AI agents pays, in incidents and tokens, to find the same
+failures. Alone, each team pays for every lesson itself. On a shared core, a lesson is paid for once
+and reaches everyone. Your contributions help every other team, and theirs help you. That pooled
+effort is far larger than any single team's rules could be.
+
 ## How it fits together
 
 Four layers. They are read in order, and the later layer wins — except the floor:
