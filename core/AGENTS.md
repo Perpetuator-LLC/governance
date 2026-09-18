@@ -19,6 +19,9 @@ has to be generous enough that nobody is tempted to edit CORE.
 
 **Self-improvement writes to ADAPTER and LOCAL.** An agent that learns something records it there,
 freely. A lesson that would hold for anyone is proposed upstream (*Contributing a rule upstream*).
+Proposing it is part of the work, not a favour: a lesson landed in CORE is paid for once and reaches
+every installation on its next update, and this one receives everyone else's the same way. When a
+session produces such a lesson, draft the upstream change and offer it to your human.
 
 ## Precedence
 
