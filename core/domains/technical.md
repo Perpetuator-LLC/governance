@@ -472,6 +472,20 @@ ticket, not a step to perform: it can only exist on the new build, so it fails o
 that is exactly when it gets run. The deploy flow is documented as code so it is repeatable and never
 depends on one person's memory.
 
+## A merge-ready claim covers EVERY CI run for the head, queried by the full id
+
+**"Green" is a claim about every run the forge made for that exact commit** — typically a push run
+and a pull-request run, sometimes more than one workflow — found by querying the **full** commit id,
+never a branch name or an abbreviated id (an exact-match filter returns nothing for a short id, which
+reads as "no runs"). **A split verdict on one commit is red.** A green push run beside a red
+pull-request run on the same commit is not "mostly green"; the red one is the answer until it is
+explained.
+
+**A green that queries a live feed ages.** Gates that consult an external, changing source — a
+dependency or vulnerability audit, a licence database — can pass and then fail on the same commit
+minutes apart, so a green observed earlier is not a current green. For those gates, the merge-ready
+claim names the run and its time, and is re-checked at merge.
+
 ## A dependent repo's CI must PROVE its API is deployed before it deploys
 
 **The rule.** Where one repo ships against another's live API — any FE→BE pair, any service calling
