@@ -142,6 +142,11 @@ the agent reads the artifact, never asks for the scrollback.
   this commit") rather than as a bad query. Resolve the full id with the tool that mints it
   (`git rev-parse`) in the same step that uses it; before believing an empty answer, re-run it
   unfiltered and match on the result side.
+  **The mechanical cause is almost always PARALLELISM:** the call that mints the id (create a PR, an
+  issue, a comment) and the message that cites it go out in the same batch of tool calls, so the
+  message is written before the id exists and the author fills the gap with the number they expect.
+  Hedging ("confirm the number") does not help — the reader acts on the number. **Never batch an
+  id-minting call with anything that cites its result;** send the citing message in the next step.
 - **A FILE link resolves only for a path UNDER the working directory, written relative.** Absolute
   paths outside it, `file://` URLs, and symlinks inside it all fail to open.
 
