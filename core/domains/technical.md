@@ -347,6 +347,15 @@ Do the split **when you create the config**, not when you decide to publish — 
 means rewriting history. Scope of a *policy* is a separate question from location of its *config*;
 see `security.md` → *Pick the rung from the CONSUMER*.
 
+## A local checkout names its organisation when repo names collide
+
+A forge namespaces repositories by organisation (`org-a/secrets`, `org-b/secrets`); a local disk does
+not. Two same-named repos cloned side by side either collide or are told apart by path accident, and
+an agent standing in `~/projects/secrets` will confidently act on whichever org's repo happens to be
+there. **Keep the plain name in the forge; prefix the local directory with the organisation**
+(`org-a-secrets`, `org-b-secrets`). Never infer which organisation a checkout belongs to from its
+directory name: read its remote.
+
 ## Deploys & health — pull-based
 
 - **Boxes deploy themselves** (webhook, HMAC-verified, + catch-up timer gated on CI-green
