@@ -30,7 +30,7 @@ lesson travels upstream — is `core/AGENTS.md` → *Layers*.
 | `hooks/` | the floor: pre-tool gates that refuse destructive and secret-exposing calls, plus audit and lint hooks |
 | `agents/` | reusable sub-agent definitions (review, exploration, investigation) |
 | `bin/` | render, check, scaffold, and the repository's own gates |
-| `templates/` | starting layouts for new repositories — `stack-repo/` is a deployable stack with its CI gate, contracts stub and lints |
+| `templates/` | starting layouts for new repositories — `stack-repo/` is a deployable stack: a generic `module/`, a private `overlay/`, its CI gate, contracts and lints |
 
 ## Checks
 

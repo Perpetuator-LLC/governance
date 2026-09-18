@@ -1,10 +1,11 @@
-# Deploy parameters for THIS repository, as data. Copy to the deploy vars file the deployer reads and
-# replace every CHANGE-ME. Nothing here may fall back to a shared role's defaults: a default names some
-# other repository, and the deployer then watches, checks out or records the wrong thing — silently.
+# Deploy parameters for THIS repository, as data — the organisation's, so they live in the overlay.
+# Copy to the deploy vars file the deployer reads and replace every CHANGE-ME. Nothing here may fall back
+# to a shared role's defaults: a default names some other repository, and the deployer then watches,
+# checks out or records the wrong thing — silently.
 # The no-checkout-paths lint exempts the deploy vars files: the target dir is data here, by design.
 
 repo_slug: CHANGE-ME/CHANGE-ME                       # owner/name on the forge
-watch_path: services/                                # a change under this path triggers a deploy
+watch_path: module/services/                         # a change under this path triggers a deploy
 target_dir: /srv/stacks/CHANGE-ME                    # where the deployer checks this repository out
 state_file: /var/lib/pull-deployer/CHANGE-ME.state   # the last deployed commit, written by the deployer
 unit_name: pull-deployer-CHANGE-ME                   # the timer/service unit that runs the deployer

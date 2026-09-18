@@ -13,9 +13,14 @@ repos:
         entry: bash tests/no-checkout-paths.test.sh
         language: system
         pass_filenames: false
+      - id: module-lint
+        name: module/ names nothing of the organisation
+        entry: bash tests/module-lint.test.sh
+        language: system
+        pass_filenames: false
       - id: shellcheck
         name: shellcheck
-        entry: shellcheck
+        entry: shellcheck -x
         language: system
         types: [shell]
       - id: yamllint

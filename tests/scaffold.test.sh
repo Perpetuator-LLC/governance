@@ -33,15 +33,19 @@ for d, dirs, files in os.walk(root):
 PY
 }
 
-# The stack-repo layout. YAML names are assembled from a suffix so that this list does not read as
-# concrete config filenames to the redaction gate.
+# The stack-repo layout: the generic module, the private overlay, the repository's gates. YAML names are
+# assembled from a suffix so that this list does not read as concrete config filenames to the redaction gate.
 Y=yml; YA=yaml
 EXPECTED=(
-  README.md AGENTS.md services/.gitkeep "deploy/vars.example.$Y" scripts/README.md
-  tests/no-checkout-paths.test.sh tests/secret-scan.test.sh
+  README.md AGENTS.md
+  "module/services/example/compose.$Y" module/services/example/env.defaults module/deploy/.gitkeep
+  module/scripts/README.md module/tests/empty-inputs.test.sh
+  overlay/README.md "overlay/deploy/vars.example.$Y" overlay/lint-denylist.example.txt
+  tests/lib/lint.sh tests/no-checkout-paths.test.sh tests/secret-scan.test.sh tests/module-lint.test.sh
   docs/decisions/0001-record-architecture-decisions.md
   ".gitea/workflows/ci.$Y" .gitleaks.toml ".pre-commit-config.$YA"
 )
+SUITES=(tests/no-checkout-paths.test.sh tests/secret-scan.test.sh tests/module-lint.test.sh module/tests/empty-inputs.test.sh)
 N="${#EXPECTED[@]}"
 
 echo "governance scaffold — refusals before anything is written"
@@ -86,7 +90,11 @@ for f in "${EXPECTED[@]}"; do
   cmp -s "$TPL/$f" "$S/$f" || same=0
 done
 check "every other file is a byte-for-byte copy of the template" "[ '$same' = '1' ]"
-check "the test scripts keep their executable bit" "[ -x '$S/tests/no-checkout-paths.test.sh' ] && [ -x '$S/tests/secret-scan.test.sh' ]"
+notx=""
+for t in "${SUITES[@]}"; do [ -x "$S/$t" ] || notx="$notx $t"; done
+check "every test suite keeps its executable bit${notx:+ (not executable:$notx)}" "[ -z '$notx' ]"
+check "no organisation file is rendered: the denylist ships only as an example" \
+  "[ ! -e '$S/overlay/lint-denylist.txt' ] && [ -f '$S/overlay/lint-denylist.example.txt' ]"
 rc="$(gov scaffold --template stack-repo --out "$TMP/named" --name billing-stack)"
 check "--name overrides the directory name" "[ '$rc' = '0' ] && head -1 '$TMP/named/README.md' | grep -qx '# billing-stack'"
 
@@ -111,22 +119,26 @@ check "a pre-existing README.md is reported ok and kept byte for byte" \
 check "…while every other missing file is still created" "[ \"\$(count_status created)\" = '$((N - 1))' ]"
 
 echo "governance scaffold — refuses a path of the wrong type"
-W="$TMP/wrong-type"; mkdir -p "$W/AGENTS.md"
-printf 'not a directory\n' > "$W/services"
-cp "$W/services" "$TMP/services.orig"
+W="$TMP/wrong-type"; mkdir -p "$W/AGENTS.md" "$W/module"
+printf 'not a directory\n' > "$W/module/services"
+cp "$W/module/services" "$TMP/services.orig"
 rc="$(gov scaffold --template stack-repo --out "$W")"
-check "a file where a directory is expected ⇒ that file refused, exit 1" \
-  "[ '$rc' = '1' ] && status_of refused 'services/\.gitkeep'"
-check "…the blocking file is untouched" "cmp -s '$W/services' '$TMP/services.orig'"
+check "a file where a directory is expected ⇒ every file under it refused, exit 1" \
+  "[ '$rc' = '1' ] && status_of refused 'module/services/example/compose\.$Y' && status_of refused 'module/services/example/env\.defaults'"
+check "…the blocking file is untouched" "cmp -s '$W/module/services' '$TMP/services.orig'"
 check "a directory where a file is expected ⇒ refused" "status_of refused AGENTS.md && [ -d '$W/AGENTS.md' ]"
-check "…and the rest is still created: $((N - 2)) created, 2 refused" \
-  "[ \"\$(count_status created)\" = '$((N - 2))' ] && [ \"\$(count_status refused)\" = '2' ]"
+check "…and the rest is still created: $((N - 3)) created, 3 refused" \
+  "[ \"\$(count_status created)\" = '$((N - 3))' ] && [ \"\$(count_status refused)\" = '3' ]"
 
 echo "the scaffolded repository's own suites, run inside it"
 git init -q "$S" && (cd "$S" && git add -- "${EXPECTED[@]}")
-for t in "$S"/tests/*.test.sh; do
-  name="tests/$(basename "$t")"
-  (cd "$S" && bash "$t") >"$TMP/suite.out" 2>&1; rc=$?
+(cd "$S" && bash tests/module-lint.test.sh) >"$TMP/suite.out" 2>&1; rc=$?
+check "a fresh scaffold's module lint is NOT CHECKED (exit 3) until the overlay supplies its denylist — never clean" \
+  "[ '$rc' = '3' ] && grep -q 'NOT CHECKED' '$TMP/suite.out'"
+[ "$rc" = 3 ] || sed 's/^/      /' "$TMP/suite.out"
+cp "$S/overlay/lint-denylist.example.txt" "$S/overlay/lint-denylist.txt" && (cd "$S" && git add -- overlay/lint-denylist.txt)
+for name in "${SUITES[@]}"; do
+  (cd "$S" && bash "$name") >"$TMP/suite.out" 2>&1; rc=$?
   if [ "$rc" = 0 ]; then
     ok "$name passes inside the scaffolded repository"
   elif [ "$rc" = 3 ] && ! command -v gitleaks >/dev/null 2>&1 && grep -q 'NOT CHECKED' "$TMP/suite.out"; then

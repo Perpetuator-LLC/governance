@@ -80,20 +80,24 @@ jobs:
           mapfile -t yaml_files < <(git ls-files '*.yml' '*.yaml')
           [ "${#shell_files[@]}" -ge 1 ] || { echo "::error::no shell files found; discovery is broken"; exit 1; }
           [ "${#yaml_files[@]}" -ge 1 ] || { echo "::error::no YAML files found; discovery is broken"; exit 1; }
-          shellcheck "${shell_files[@]}"
+          shellcheck -x "${shell_files[@]}"
           yamllint -d relaxed "${yaml_files[@]}"
           echo "linted ${#shell_files[@]} shell and ${#yaml_files[@]} YAML file(s)"
 
-      - name: Tests
+      # The repository's gates and the module's own tests. Among them the MODULE LINT (module/ names
+      # nothing from overlay/lint-denylist.txt, no checkout path, no path into overlay/ — NOT CHECKED,
+      # exit 3, until that denylist exists) and the EMPTY-INPUTS test (the module starts with no core
+      # input set). NOT CHECKED fails this step: it is never a pass.
+      - name: Tests (gates, module lint, module tests)
         run: |
           set -euo pipefail
           shopt -s nullglob
-          suites=(tests/*.test.sh)
+          suites=(tests/*.test.sh module/tests/*.test.sh)
           echo "discovered ${#suites[@]} suite(s)"
           # ASSERT THE COUNT, NOT JUST THE EXIT CODE: a runner that discovers zero suites exits 0
           # forever. Raise the floor when suites are added; never lower it to make a run pass.
-          if [ "${#suites[@]}" -lt 2 ]; then
-            echo "::error::only ${#suites[@]} suite(s) discovered, expected >= 2"
+          if [ "${#suites[@]}" -lt 4 ]; then
+            echo "::error::only ${#suites[@]} suite(s) discovered, expected >= 4"
             exit 1
           fi
           fails=0

@@ -1,0 +1,14 @@
+# Module-lint denylist — EXAMPLE, with synthetic entries only.
+# Copy to lint-denylist.txt beside this file and replace every entry with this organisation's own terms.
+# One extended regular expression per line (escape the dots); a line starting with # is a comment.
+# The lint searches module/ only: these terms belong under overlay/, never in the publishable module.
+
+# the organisation's domains
+acme-internal\.example
+acme\.example
+
+# its private network names
+acme-edge-net
+
+# its secret-store path prefixes
+kv/acme/

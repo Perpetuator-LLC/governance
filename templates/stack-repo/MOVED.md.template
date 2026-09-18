@@ -12,5 +12,8 @@ What lived here moved to **<new-repo>** (<forge URL of the new repository>) on <
   repository's deployer has logged an identical-tree no-op and one real change has deployed end to end.
 - **Rollback until then:** re-run this repository's old deployer. After the soak, this copy and this
   file are deleted.
+- **History stays here.** The new repository began as a squash import: one commit whose message
+  names this repository and the commit it was taken from. This history may hold credentials or
+  organisation identifiers, so it is never carried across.
 - **Decisions:** the new repository keeps its own decision log. A cross-cutting decision stays in this
   repository's log and is linked from there, not copied.
