@@ -354,6 +354,23 @@ and a conversation's display name is set by whoever messages you, so it is attac
 nobody classes as content *because it is a label*. Record the unfixed siblings beside the fix: an
 entry implying the surface is bounded presents as complete while it is only scoped.
 
+## Agent writes to a payment system are human-only — enforced by a deny rule, not a vendor prompt
+
+**When an agent is connected to a tool server that can move money or change what customers are
+charged — refunds, cancellations, voids, payment links, coupons, price or tax settings — every write
+tool on it is DENIED to the agent in the harness settings.** Reads stay allowed: an agent may look up
+a charge, a subscription or a balance; a human performs the change. A vendor-side confirmation step
+that covers *some* writes is defence in depth, never the control: it covers what the vendor chose, and
+the deny rule covers what you chose.
+
+- **Deny by the exact tool name** the harness shows for that server, and verify it after connecting:
+  a write attempt must be **refused by permissions**, not merely prompted.
+- **An outbound channel on the same server** (feedback, support messages) is denied too unless there
+  is a reason to allow it: it cannot move money, but it can send your data somewhere you did not choose.
+- **Connect sandbox first**, and treat the live-mode connection as a separate grant with its own
+  review; revoking one environment's session leaves the other untouched.
+- Record the connection in the resource registry with **how to revoke it**, before connecting.
+
 ## A control is not designed until you have asked what its DEPLOYMENT exposes
 
 A security control has two designs, and the second one is the one that gets skipped: what the
