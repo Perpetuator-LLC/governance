@@ -29,7 +29,8 @@ lesson travels upstream — is `core/AGENTS.md` → *Layers*.
 | `core/domains/` | rules, one domain per file, as they are generalised |
 | `hooks/` | the floor: pre-tool gates that refuse destructive and secret-exposing calls, plus audit and lint hooks |
 | `agents/` | reusable sub-agent definitions (review, exploration, investigation) |
-| `bin/` | render, check, and the repository's own gates |
+| `bin/` | render, check, scaffold, and the repository's own gates |
+| `templates/` | starting layouts for new repositories — `stack-repo/` is a deployable stack: a generic `module/`, a private `overlay/`, its CI gate, contracts and lints |
 
 ## Checks
 
@@ -41,6 +42,12 @@ lesson travels upstream — is `core/AGENTS.md` → *Layers*.
 
 Each check is tested against a known-good and a known-bad input in the same pass (`tests/`), and CI
 runs every suite plus the first two checks against this tree.
+
+## Starting a new repo
+
+`bin/governance scaffold --template stack-repo --out <dir>` creates every missing file of the layout,
+never overwrites one, and is a noop on a repository already in shape; the rules it serves are
+`technical.md` → *A deployable repo stands alone — the stack-repo properties*.
 
 ## Starting an adapter
 

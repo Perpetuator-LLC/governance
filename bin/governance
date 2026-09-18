@@ -9,6 +9,7 @@
   governance restore  --home DIR [--backup TIMESTAMP]
   governance discover --root DIR [--home DIR] [--max-depth N] [--write]
   governance reconcile --home DIR [--manifest FILE] [--dry-run] [--json]
+  governance scaffold --template NAME --out DIR [--name NAME] [--dry-run] [--json]
 
 RENDER. Layers are concatenated CORE → ADAPTER(s), in the order given → LOCAL, so on conflict the later
 layer is the one a model reads last. Within a directory layer, AGENTS.md comes first, then every other
@@ -78,9 +79,17 @@ Running it again when everything is in state changes nothing — no backup, no r
 what would change and writes nothing. `install --write-manifest` seeds the manifest from its arguments so
 the first install is the last command that needs any.
 
-Exit: 0 done / in sync · 1 drift, or reconcile refused an item · 2 cannot run (a named layer or source
-      is missing, the output is absent or has no header, the install was refused, there is nothing to
-      restore, or there is no manifest)
+SCAFFOLD creates, in --out, every file of templates/<NAME>/ that is missing there, and NEVER overwrites:
+one line per file, `ok` (exists; untouched, whatever it holds) / `created` / `refused` (the path, or a
+directory on the way to it, exists with the wrong type). Re-running it on a scaffolded repository is a
+noop. --name (default: the --out directory's name) fills `{{name}}` in the template's top-level
+README.md and AGENTS.md only; every other file is copied byte for byte, with its mode. Files named
+*.template are never rendered: they belong in a different repository (a donor's MOVED.md) and are
+copied there by hand. --dry-run reports what would be created and writes nothing.
+
+Exit: 0 done / in sync · 1 drift, or reconcile or scaffold refused an item · 2 cannot run (a named layer
+      or source is missing, the output is absent or has no header, the install was refused, there is
+      nothing to restore, there is no manifest, or there is no such template)
 """
 import argparse, datetime, hashlib, json, os, re, shutil, sys
 
@@ -936,6 +945,94 @@ def cmd_reconcile(a):
     return 1 if refused else 0
 
 
+# --- scaffold ----------------------------------------------------------------------------------------
+
+TEMPLATES = os.path.join(ROOT, "templates")
+TEMPLATE_SKIP = {".DS_Store", "__pycache__"}
+NAMED = ("README.md", "AGENTS.md")                    # the only files {{name}} is filled in
+NAME_RX = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def template_files(tdir):
+    """Every file of a template, relative and sorted. `*.template` files are left out: they are for a
+    different repository and are never rendered into this one."""
+    out = []
+    for d, dirs, files in os.walk(tdir):
+        dirs[:] = [x for x in dirs if x not in TEMPLATE_SKIP]
+        out += [os.path.relpath(os.path.join(d, f), tdir) for f in files
+                if f not in TEMPLATE_SKIP and not f.endswith(".template")]
+    return sorted(out)
+
+
+def blocked(out, rel):
+    """The first path from OUT down to OUT/REL that exists with the wrong type, or None. A directory on
+    the way must be a real directory (never a link: scaffold does not write through one); the file itself
+    must be absent or a regular file."""
+    parts = rel.split("/")
+    for i in range(1, len(parts)):
+        p = os.path.join(out, *parts[:i])
+        if os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p)):
+            return f"{'/'.join(parts[:i])} exists and is not a directory"
+    p = os.path.join(out, rel)
+    if os.path.lexists(p) and not os.path.isfile(p):
+        return f"{rel} exists and is not a regular file"
+    return None
+
+
+def cmd_scaffold(a):
+    tdir = os.path.join(TEMPLATES, a.template)
+    if not os.path.isdir(tdir):
+        have = sorted(d for d in os.listdir(TEMPLATES) if os.path.isdir(os.path.join(TEMPLATES, d))) \
+            if os.path.isdir(TEMPLATES) else []
+        print(f"error: no template named {a.template!r}; available: {', '.join(have) or '(none)'}", file=sys.stderr)
+        return 2
+    out = os.path.abspath(a.out)
+    if os.path.lexists(out) and not os.path.isdir(out):
+        print(f"error: --out exists and is not a directory: {out}", file=sys.stderr)
+        return 2
+    name = a.name or os.path.basename(out)
+    if not NAME_RX.match(name):
+        print(f"error: --name must be letters, digits, '.', '_' or '-': {name!r}", file=sys.stderr)
+        return 2
+    files = template_files(tdir)
+    if not files:
+        print(f"error: template {a.template!r} holds no files — refusing to report an empty scaffold", file=sys.stderr)
+        return 2
+
+    results = []
+    for rel in files:
+        src, dst = os.path.join(tdir, rel), os.path.join(out, rel)
+        why = blocked(out, rel)
+        if why:
+            status, detail = "refused", why
+        elif os.path.lexists(dst):
+            status, detail = "ok", ""
+        else:
+            status, detail = "created", ""
+            if not a.dry_run:
+                with open(src, "rb") as fh:
+                    data = fh.read()
+                if rel in NAMED:
+                    data = data.replace(b"{{name}}", name.encode("utf-8"))
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                with open(dst, "xb") as fh:           # exclusive: never replaces a file that appeared meanwhile
+                    fh.write(data)
+                os.chmod(dst, os.stat(src).st_mode & 0o777)
+        results.append({"path": rel, "status": status, "detail": detail})
+        if not a.json:
+            shown = "would create" if status == "created" and a.dry_run else status
+            print(f"{shown:<12} {rel}" + (f" — {detail}" if detail else ""))
+
+    counts = {s: sum(1 for r in results if r["status"] == s) for s in ("ok", "created", "refused")}
+    if a.json:
+        print(json.dumps({"template": a.template, "out": out, "name": name, "dry_run": a.dry_run,
+                          "results": results}, indent=2))
+    else:
+        print(f"{'dry run: ' if a.dry_run else ''}{len(results)} file(s): {counts['ok']} ok, "
+              f"{counts['created']} {'to create' if a.dry_run else 'created'}, {counts['refused']} refused")
+    return 1 if counts["refused"] else 0
+
+
 # --- command line -----------------------------------------------------------------------------------
 
 def main():
@@ -975,6 +1072,12 @@ def main():
     p.add_argument("--manifest", help="default: <home>/.governance/manifest.json")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--json", action="store_true")
+    p = sub.add_parser("scaffold")
+    p.add_argument("--template", required=True, help="a directory under templates/, e.g. stack-repo")
+    p.add_argument("--out", required=True, help="the repository to scaffold into; created if missing")
+    p.add_argument("--name", help="fills {{name}} in README.md and AGENTS.md; default: the --out directory's name")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--json", action="store_true")
     a = ap.parse_args()
 
     if a.command == "check" and a.home:
@@ -985,7 +1088,7 @@ def main():
     if a.command in ("render", "check"):
         return cmd_render_or_check_out(a)
     return {"install": cmd_install, "restore": cmd_restore, "discover": cmd_discover,
-            "reconcile": cmd_reconcile}[a.command](a)
+            "reconcile": cmd_reconcile, "scaffold": cmd_scaffold}[a.command](a)
 
 
 if __name__ == "__main__":

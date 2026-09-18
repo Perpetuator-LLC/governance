@@ -1,0 +1,20 @@
+# EXAMPLE service: replace it with the module's real services, one directory each. It shows the pattern
+# module/tests/empty-inputs.test.sh enforces: every core input is a parameter with a default, so the
+# service starts from its plain env file alone:  docker compose --env-file env.defaults up
+# Binding the inputs to one organisation's values (and marking the edge network external) is the
+# overlay's job, never this file's.
+services:
+  app:
+    image: ${APP_IMAGE}
+    environment:
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}           # unset: local accounts, no SSO
+      SECRET_STORE_ADDR: ${SECRET_STORE_ADDR:-}       # unset: secrets come from the plain env file
+      SECRET_STORE_PREFIX: ${SECRET_STORE_PREFIX:-}
+      BUS_URL: ${BUS_URL:-}                           # unset: no events are published
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    networks: [edge]
+
+networks:
+  edge:
+    name: ${EDGE_NETWORK:-example-local}             # unset: a private network of its own
