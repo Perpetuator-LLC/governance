@@ -1,0 +1,25 @@
+# Local hooks only. Each runs a tool already installed from its official channel, so this file fetches
+# nothing and installs nothing. A missing tool fails its hook by name — it is never skipped.
+repos:
+  - repo: local
+    hooks:
+      - id: secret-scan
+        name: secret scan (staged changes)
+        entry: gitleaks git --pre-commit --staged --redact --no-banner --config .gitleaks.toml
+        language: system
+        pass_filenames: false
+      - id: no-checkout-paths
+        name: no hard-coded checkout or home-directory paths
+        entry: bash tests/no-checkout-paths.test.sh
+        language: system
+        pass_filenames: false
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck
+        language: system
+        types: [shell]
+      - id: yamllint
+        name: yamllint
+        entry: yamllint -d relaxed
+        language: system
+        types: [yaml]

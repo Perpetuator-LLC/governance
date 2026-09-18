@@ -18,7 +18,7 @@ Forms recognised:
   `doc.md → Target text`            (the whole pointer inside one code span)
 
 Usage:  heading-pointer-check [--json] [--root DIR] [PATHS...]
-        default PATHS: README.md core adapter-template agents
+        default PATHS: README.md core adapter-template agents templates
 Exit:   0 all resolved · 1 dangling pointer(s) · 2 cannot run, or no pointers found
 """
 import argparse, json, os, re, sys
@@ -27,7 +27,7 @@ DOC = r"(?P<prefix>[\w./~-]*/)?(?P<doc>[A-Za-z][\w-]*\.md)"
 ARROW = r"\s*(?:→|->)\s*"
 FORM_A = re.compile(DOC + r"`?\)?" + ARROW + r"(?P<targets>\*[^*\n]{2,160}\*(?:\s*·\s*\*[^*\n]{2,160}\*)*)")
 FORM_B = re.compile(r"`" + DOC + ARROW + r"(?P<target>[^`\n*]{2,160})`")
-DEFAULT_PATHS = ["README.md", "core", "adapter-template", "agents"]
+DEFAULT_PATHS = ["README.md", "core", "adapter-template", "agents", "templates"]
 
 
 def norm(text):

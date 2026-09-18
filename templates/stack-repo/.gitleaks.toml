@@ -1,0 +1,12 @@
+# Secret-scan rules for this repository: the scanner vendor's default rules, EXTENDED — never replaced.
+# A config that loads no rules scans clean forever, which is why tests/secret-scan.test.sh proves named
+# rules fire with THIS file. Add a repository-specific rule below with an `id`, and add a positive
+# fixture for that id to the test in the same change, or nothing proves it fires.
+#
+# Allowlist nothing by path: a real secret in an allowlisted example file would pass. Env and template
+# shapes (empty values, ${VAR} placeholders) do not match the rules; the test's negative fixture proves it.
+
+title = "stack repo secret scan"
+
+[extend]
+useDefault = true

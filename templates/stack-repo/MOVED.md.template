@@ -1,0 +1,16 @@
+# Moved
+
+<!-- DONOR REPOSITORY ONLY. When a stack is extracted, copy this file to the donor's directory that
+held it, as MOVED.md, and fill in every <placeholder>. Delete it (with the donor's copy) when the soak
+ends. `governance scaffold` never renders this file into a new repository. -->
+
+What lived here moved to **<new-repo>** (<forge URL of the new repository>) on <YYYY-MM-DD>.
+
+- **Change it in the new repository only.** A change made here is not deployed, and is lost when this
+  copy is deleted.
+- **Why this copy still exists:** the soak. It stays, unchanged and undeployed, until the new
+  repository's deployer has logged an identical-tree no-op and one real change has deployed end to end.
+- **Rollback until then:** re-run this repository's old deployer. After the soak, this copy and this
+  file are deleted.
+- **Decisions:** the new repository keeps its own decision log. A cross-cutting decision stays in this
+  repository's log and is linked from there, not copied.

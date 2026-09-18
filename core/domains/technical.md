@@ -353,6 +353,46 @@ see `security.md` → *Pick the rung from the CONSUMER*.
   both spellings (retag the survivors, or pin `image:`/`container_name:` explicitly so the name stops
   depending on the compose version).
 
+## A deployable repo stands alone — the stack-repo properties
+
+A repository that something deploys from carries everything needed to deploy it, gate it and find it
+**without its former siblings**. Each property below is implicit in a monorepo and breaks silently when
+a stack is extracted, so each is a review check. `templates/stack-repo/` is the layout (properties 1–3
+and 6 ship in it as working files), and `governance scaffold --template stack-repo --out DIR` creates
+whatever a repository is missing without overwriting anything.
+
+1. **CI reports a status on the default branch before anything deploys from the repo.** A status-gated
+   pull deployer reads "no status" as "not green" and waits forever, so a new repo without CI is a
+   silent deploy stop.
+2. **The secret-scan gate proves its rules fire**: a positive fixture caught by a named rule id, and a
+   negative fixture of env and template shapes (empty values, `${VAR}` placeholders) that nothing
+   catches. A clean scan alone cannot tell "no secrets" from "rules that match nothing".
+3. **The README has a `Contracts` section**, one line per cross-repo runtime edge: external networks
+   joined (and their owner), hostnames resolved that another repo's containers own, ports exposed to
+   others, secret-store path *prefixes* read — names only. Splitting repositories does not split the
+   runtime fabric, and this list is the only place that coupling stays visible.
+4. **Deploy parameters are data in the repo's own deploy vars**: repo slug, watch path, target dir,
+   state file, unit name. A shared role's defaults name some other repository, so inheriting them
+   deploys the wrong thing or nothing.
+5. **Shared substrate is vendored under drift detection, never hand-copied**: every file copied from a
+   shared home is listed in a manifest, and CI fails on unexplained divergence. A hand-copy diverges the
+   first time either side changes — and the second hand-carry is the trigger to automate.
+6. **No hard-coded checkout paths, home directories or sibling-repo slugs**; a script derives its repo
+   root from its own location. Such a path works only on the machine that wrote it, which is why the
+   template's lint fails the build on one.
+7. **The registry row exists before the repository does** (what / where / why / status), and the
+   deploy credential's scope is verified by a read against the new repository, never assumed. A
+   credential still scoped to the old repository fails at the first deploy, when nobody is watching.
+8. **Extraction is copy → gate → re-point → prove no-op → delete.** The donor keeps its copy (behind a
+   thin `MOVED.md` pointer) and rollback stays "re-run the old deployer" until the new repository's
+   deployer has logged an identical-tree no-op and one real change has deployed end to end.
+9. **A retire pass precedes any move**: artifacts with no deploy path, roles nothing references and
+   decommission playbooks for things already gone are deleted in place first, never migrated. A move
+   gives dead weight a new home and the look of being owned.
+10. **One decision log per repository**, holding only the decisions it owns; a cross-cutting decision
+    stays in the donor's or the platform's log and is linked, not copied — two copies drift, and each
+    reads as the authoritative one.
+
 ## An integration that MIRRORS external state ships a push handler AND a pull reconcile
 
 **Any code path that copies state owned by an external system into the local store ships three
