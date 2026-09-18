@@ -309,6 +309,21 @@ Rules:
 
 Copy the repo's existing end-to-end enum (there is usually one) rather than inventing a new pattern.
 
+## An invariant with more than one SOURCE is answered by ONE choke-point function
+
+**Money (an allowance pool plus a paid balance), a quota, a permission: when an invariant can be
+satisfied from more than one source, exactly one function answers it, and every caller uses that
+function.** Adding a source means adding it *inside* that function, and shipping a test that fails
+when any caller reads a source directly. The guard is on the **call shape**, not the import: a caller
+that imports the helper and then reads a balance itself passes every "does it use the helper?" grep
+while bypassing it — calling a shared helper is not using it.
+
+**A feature that adds a source without the choke point is not done.** Its done-when names the
+choke-point function and the bypass test **by name**, and its walk exercises the **consuming** path
+(spend from the new source), not only the acquiring one (grant or buy it). The failure it prevents is
+quiet: the new source is acquired correctly, shown correctly, and never spent, because one consumer
+still reads the old source directly.
+
 ## Public engine, private config
 
 An IaC repo has two kinds of content, and only one of them can ever go public:
