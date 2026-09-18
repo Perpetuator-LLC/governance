@@ -137,5 +137,23 @@ hand-off that records a path is a routing act — verify the home before propaga
 (Instances/People/Organizations/Definitions/Meetings), and Governance
 (Rules/Protocols/Best-Practices/SOPs) live in the **knowledge vault as documents**.
 
+**A document that spans initiatives has no initiative repo to live in.** Architecture that explains
+how several repos compose into one system, a roadmap across them, an analysis that chooses between
+them: none belongs to any single repo, and filing it in the most-related one hides it from the others
+and lets it rot there. It belongs in the **knowledge vault, attached under the Strategy Theme it
+serves and expressed as Objectives, Key Results or KPIs.** That layer is what *infers* the
+initiatives (each one a repo), so a cross-initiative claim is either a strategy statement or a
+measure of one. Everything that defines a single initiative (its Capabilities, Requirements
+Documents, Requirement Packages, ADRs) lives in that initiative's repo. Routing test: *would a
+second repo need this document to make sense?* Yes → knowledge vault, under a Theme. No → the one
+repo.
+
+**Before a product's documents move into its repo, extract the rules that bind every project.** A
+design doc written for one product often carries a lesson all future work needs: an accessibility
+bar, a data-handling constraint, a review practice. Moving the doc wholesale buries that lesson in the
+one repo the next project will never open. Split first: the generic rule → governance; the
+organisation-specific rule → the knowledge vault; only the product-specific remainder → the product
+repo.
+
 A project-management tool MAY *mirror* the spine for tracking, but the **authoritative source** for
 each artifact is its home above — the mirror is a convenience, not the record.
