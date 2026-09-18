@@ -156,6 +156,25 @@ never argv. A ceremony that PRINTS a secret is worse than one that asks for it.
 - **Authenticated probes emit a status code and nothing else:** `-s -o /dev/null -w '%{http_code}'`.
   A response body is where the credential comes back.
 
+⚠️ **CODE that prints a secret — and the day its output gains a reader.** The rules above bind what an
+agent does and the commands it hands a human; they say nothing about **code that prints a secret at
+runtime**, and the exposure that matters is usually created by a change that prints nothing new.
+1. **Automation reports a secret's PRESENCE, never its value or any part of it.** Print
+   `present / missing`, a length, or a verification result. A masked prefix-and-suffix is still a
+   fragment. A step that holds a raw value suppresses its own output (for example a task-level
+   no-log flag), because verbose modes and failure dumps print task results.
+2. **Widening who can read an output is a secret-exposure change.** Terminal → file → agent-read
+   file → transcript → export → backup: each step outlives and out-reaches the one before. The change
+   that widens a channel must, **in the same change**, audit every producer that writes to it and add
+   a CI gate that fails on a print/log/debug/assert statement interpolating a secret-named variable,
+   proven to fire on a known-bad control. This is *type-changing invalidates old detectors* applied to
+   **readership**: a scanner of committed content never sees code that prints a value, nor the runtime
+   stores agents read.
+3. **A gate is not a detector.** Also schedule a **shape scan** (a secret scanner run over non-git
+   directories) of every agent-readable store — run logs, agent transcripts, knowledge-base exports,
+   backups — so an exposure that slips past the gate is found in a day, not by luck. A hit is a
+   disclosure: rotate, then purge.
+
 ## Found a hardcoded secret — rotation order matters
 
 1. Verify it's **live** (dead = no rotation). 2. Find every runtime consumer. 3. **Mint the
