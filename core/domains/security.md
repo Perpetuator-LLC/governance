@@ -156,6 +156,25 @@ never argv. A ceremony that PRINTS a secret is worse than one that asks for it.
 - **Authenticated probes emit a status code and nothing else:** `-s -o /dev/null -w '%{http_code}'`.
   A response body is where the credential comes back.
 
+⚠️ **CODE that prints a secret — and the day its output gains a reader.** The rules above bind what an
+agent does and the commands it hands a human; they say nothing about **code that prints a secret at
+runtime**, and the exposure that matters is usually created by a change that prints nothing new.
+1. **Automation reports a secret's PRESENCE, never its value or any part of it.** Print
+   `present / missing`, a length, or a verification result. A masked prefix-and-suffix is still a
+   fragment. A step that holds a raw value suppresses its own output (for example a task-level
+   no-log flag), because verbose modes and failure dumps print task results.
+2. **Widening who can read an output is a secret-exposure change.** Terminal → file → agent-read
+   file → transcript → export → backup: each step outlives and out-reaches the one before. The change
+   that widens a channel must, **in the same change**, audit every producer that writes to it and add
+   a CI gate that fails on a print/log/debug/assert statement interpolating a secret-named variable,
+   proven to fire on a known-bad control. This is *type-changing invalidates old detectors* applied to
+   **readership**: a scanner of committed content never sees code that prints a value, nor the runtime
+   stores agents read.
+3. **A gate is not a detector.** Also schedule a **shape scan** (a secret scanner run over non-git
+   directories) of every agent-readable store — run logs, agent transcripts, knowledge-base exports,
+   backups — so an exposure that slips past the gate is found in a day, not by luck. A hit is a
+   disclosure: rotate, then purge.
+
 ## Found a hardcoded secret — rotation order matters
 
 1. Verify it's **live** (dead = no rotation). 2. Find every runtime consumer. 3. **Mint the
@@ -163,6 +182,33 @@ replacement BEFORE revoking** (keeps a fallback). 4. Update consumers (push to s
 verify health). 5. **Verify end-to-end.** 6. **Then revoke** the old. 7. Scrub the repo to the
 env-var pattern in one auditable commit. 8. Document where/when/new posture. Can't do 4–6 without an
 admin token? **Stop and surface it** — never harvest an admin token from a remote `.env`.
+Steps 3–6 are what the one-command rotation below automates; run by hand, they are the ceremony.
+
+## Rotation is a routine, not a ceremony
+
+⚠️ **A credential without a one-command, exercised rotation is a standing incident: build the
+rotation before arguing about severity.** When rotating is cheap, "was this exposed, and could the
+fragment be exploited?" stops mattering: you rotate on suspicion and move on. When it is expensive,
+every exposure becomes a severity debate and a backlog item.
+
+- **Every credential has a ONE-COMMAND rotation, committed in its owning repo.** It mints the new
+  value, verifies it through the consumer's own network path, pushes it to the store blind, restarts
+  or re-renders the consumer, verifies the consumer is healthy, then revokes the old value and
+  verifies the old value is **rejected**. It stores nothing when a check fails, it is idempotent and
+  safe to re-run, and the value never reaches a human or an agent. It is infrastructure: when the
+  topology drifts it gets fixed, not worked around, and its header names symptom → root cause →
+  knobs so the next failure is diagnosable from the error text alone.
+- **An inventory:** each credential → its consumers, its rotate command and its last-rotated date.
+  Alert on any credential nobody has rotated within its class's cadence.
+- **Exercise it on a cadence, like a restore drill.** A rotation path that has never run is broken on
+  the day you need it; a routine rotation proves the path and shrinks every exposure window at once.
+- **Post-disclosure cleanup is scripted too:** one command takes a secret *shape* and a list of
+  stores, and deletes or redacts matches. After rotation the copies are harmless, so cleanup is
+  hygiene, not an emergency.
+- **Decision rule: a suspected exposure of a credential means rotate first, measure later.**
+  Measurement scopes the cleanup; it does not decide whether to rotate. This does not override
+  *rotate nothing until "is this a credential?" has an answer* above: that question decides what is
+  a credential, and this rule decides what happens once one may be exposed.
 
 ## What NEVER leaves the machine
 
