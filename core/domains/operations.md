@@ -388,3 +388,31 @@ confirm the path is the artifact's canonical home before propagating it, because
 wrong path makes the move more expensive and the misplacement more authoritative. Measured: a redesign
 spec was authored into the knowledge vault instead of the initiative repo, and its path was copied
 into an epic and two hand-off blocks before a human caught it.
+
+## A record's coverage ends at its LAST CITED EVENT, not at when it was WRITTEN
+
+**"The record is recent" is not evidence that it is current.** A hand-off, status or summary is
+written from a read of its sources, and that read finishes before the writing does. Anything that
+arrives in the gap is absent from the record and *looks covered*, because the record's own timestamp
+is newer than the event's. So recency is not a weaker form of currency — it actively **defeats** the
+check a successor would otherwise run, which is to ask how old the record is.
+
+**Measured:** a hand-off written *after* new messages had already landed on a source channel still
+missed them. Nothing about the document looked wrong — it was hours old, thorough, and every item in
+it was true.
+
+⚠️ **The tell: a reader can date the RECORD but cannot date its COVERAGE.** Those are two different
+timestamps — when the record was written, and the newest event it actually consumed — and only the
+first one is visible. A record carrying just the first is unfalsifiable about what it missed, which
+is why this survives review: there is nothing in it to catch.
+
+| side | obligation |
+|---|---|
+| **author** | per source channel, cite the last event consumed — an id, a timestamp, a message ref. That citation is the **watermark**, and it is the only thing that makes the record's coverage falsifiable. |
+| **consumer** | before acting on the record, re-read each source channel for the window **since that watermark** — not since the record's write time. A channel with no watermark is re-read in full for the plausible window, and the missing watermark is reported back to the author. |
+
+**This is a third distinct cause in the hand-off family, and the other two cannot catch it.**
+Staleness — the artifact moved while the record stood still — is defeated by the record being
+recent. A dropped precondition — the record was incomplete at birth — is defeated by the record
+being complete as far as it read. **A freshness check that asks only *"how old is this?"* passes
+this case every time.**
