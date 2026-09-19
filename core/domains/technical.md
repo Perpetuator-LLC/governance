@@ -880,3 +880,32 @@ per-device configuration:
 Litmus: if the fix would have to be repeated on the next device, it's at the wrong layer.
 Measured: an internal DNS name resolved on the LAN but died on the VPN; the answer was VPN
 split-DNS + DHCP, and the hand-made per-machine resolver file became removable.
+
+## Configure the GENERATOR, never the artifact it generates
+
+**A service manager that generates its unit file will regenerate it, and a hand-edit disappears with
+no error.** The edit appears to work — the service picks it up, the behaviour changes, the check
+passes. Then the next restart, upgrade or reconfigure re-renders that file from the manager's own
+inputs, and everything the inputs do not describe is silently gone. Nothing fails. The service comes
+back up without the setting.
+
+⚠️ **The whole danger is that the FIRST test passes.** A hand-edited unit file is indistinguishable
+from a correctly configured one right up until the regeneration event — which may be weeks later and
+triggered by something unrelated, an unattended upgrade or a reboot. By then nobody connects the
+missing behaviour to the edit, because the edit is no longer there to find. This is absence-as-health
+with a delay fuse: the evidence of the cause is destroyed by the same event that causes the symptom.
+
+**Measured:** environment variables hand-added to a generated service definition vanished on the next
+restart. The durable path was the manager's own per-service environment input — a file the generator
+reads and re-renders *from* — not the definition it writes.
+
+**So establish, before editing any service definition, whether it is authored or generated.** A
+generated file usually says so in a header, lives under a path the manager owns, or has an mtime that
+tracks package operations rather than your edits. If it is generated, find the input. **If the manager
+exposes no input for what you need, that is the finding** — the setting cannot be expressed durably
+there, and a wrapper or a hand-authored unit kept outside the manager is the honest fix, not an edit
+that will be reverted without telling anyone.
+
+The same shape covers any rendered configuration — templated config, generated container manifests,
+rendered dotfiles. **An artifact that has a generator has exactly one durable edit point, and it is
+not the artifact.**
