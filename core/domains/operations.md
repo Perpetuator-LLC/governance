@@ -280,6 +280,15 @@ Measured in this same incident, by the agent writing this entry.
 message, hand-off — because each one is now a durable wrong reason that reads as settled. This is why
 "name the source" is not bookkeeping.
 
+⚠️ **And the chase can only reach copies that already exist.** A draft authored *after* a correction
+is **not downstream of it** — nothing links the two, so the sweep that caught every existing copy
+cannot reach a document written next month from the same stale recollection. **Authoring order is not
+knowledge order**, and a late draft looks *more* current than the correction it contradicts. So a new
+draft that restates a mechanism **cites the correction it post-dates**; where the drafter can find no
+such citation, that is the signal to re-read the source rather than the memory. Measured: a filing
+written three weeks after a mechanism had been retracted *three separate times* led with that
+mechanism, and nothing in the authoring caught it.
+
 ## Routines are infrastructure — they migrate, or they silently die
 
 **Every scheduled task and skill is migration payload, equal to threads and tickets.** A migration
