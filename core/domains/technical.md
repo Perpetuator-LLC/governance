@@ -486,6 +486,35 @@ dependency or vulnerability audit, a licence database — can pass and then fail
 minutes apart, so a green observed earlier is not a current green. For those gates, the merge-ready
 claim names the run and its time, and is re-checked at merge.
 
+## Agent attribution lives in the BODY — the author field is one shared identity
+
+**Write side.** Every agent-authored commit, PR body, review and forge comment carries its own
+provenance *in the text*: the **harness** (a closed enum), the **precise model identifier**, and the
+**human who initiated the work**. Take each from runtime evidence at the time of the write; where a
+value is genuinely unavailable, write `unavailable` rather than a plausible one. **Never infer
+identity from a task title, an inherited transcript, a configured default, or an example** — an
+identity you did not observe is not one you may assert, and a field that always reports the same
+value records nothing while looking like an audit trail. `Initiated-By` is **provenance, not
+authorization**: a run a human started does not mean that human approved each later action.
+
+⚠️ **Attribution is not signing.** Trailers describe provenance; a signature proves possession of a
+key. Never use a human's signing key, or weaken signing policy, to satisfy an attribution
+requirement. A required signature with no authorised agent key is a commit *gate* — preserve the
+reviewed patch and report it, never bypass the check.
+
+**Read side, and this is the half that gets skipped.** Where agents reach a forge through one
+gateway account, **every post they make carries that account as its author**. The author field then
+distinguishes nothing — and it fails in the expensive direction, because it still reads as an
+answer. **Any audit concluding "X never commented" or "nobody responded" from the author field is
+void by construction**, not merely unreliable. Attribute from the provenance in the body; where the
+body carries none, the honest finding is **unattributable**, never **absent**. Measured: a comment
+was reported missing two hours after it was posted, because every comment on that forge reads as the
+same author.
+
+**The two halves are one rule, because the write side is what makes the read side possible.**
+Provenance dropped "to save tokens" does not cost a nicety — it removes the last way to tell who did
+the work, on a surface where the author field has already been collapsed by design.
+
 ## A dependent repo's CI must PROVE its API is deployed before it deploys
 
 **The rule.** Where one repo ships against another's live API — any FE→BE pair, any service calling
