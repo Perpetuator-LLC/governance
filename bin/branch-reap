@@ -11,8 +11,11 @@
 #     refuses is REPORTED and kept. The script has no opinion that can override git.
 #   - PROTECTED, never considered: the default branch, the current branch, every `merge/*`
 #     integration branch, any branch checked out in any worktree, and anything matching --protect.
-#   - Containment is asserted against the REMOTE default (origin/<default>), not a local copy,
-#     which can be stale.
+#   - Containment is asserted against `origin/<default>` — which is a LOCAL, CACHED ref, not the
+#     forge. This script does NOT fetch, so its basis is only as fresh as the last fetch in that
+#     repo. The failure direction is conservative: a stale (behind) cache contains fewer commits,
+#     so branches look LESS contained and are KEPT rather than reaped. Run a fetch first if you
+#     want the counts to mean anything. Never restate this as "asserted against the remote".
 #   - Every deletion is logged as `<name> <sha>` BEFORE it happens, so each one is restorable with
 #     `git branch <name> <sha>`. That log is the undo path.
 #

@@ -909,3 +909,31 @@ that will be reverted without telling anyone.
 The same shape covers any rendered configuration — templated config, generated container manifests,
 rendered dotfiles. **An artifact that has a generator has exactly one durable edit point, and it is
 not the artifact.**
+
+## A fleet audit measures against the FORGE, never against `refs/remotes/*` as found
+
+**`origin/<default>` is a local file.** It is a pointer cached by the last fetch, and its *spelling*
+is the trap: it reads as "the remote's default branch", so it gets the trust owed to a server answer.
+Nothing about a stale one looks stale — no warning, no age, no error — and every comparison built on
+it (`origin/<default>..<branch>`, `git show origin/<default>:<path>`, "is this branch contained?")
+returns a confident, well-formed, wrong answer.
+
+So a cross-repository audit **fetches first, or asks the server** — `git fetch` before reading any
+`refs/remotes/*`, or `git ls-remote`, which consults the forge and touches no local ref at all.
+Reading a **working tree** is the coarser form of the same mistake: a working tree carries
+uncommitted and unpushed state, a remote-tracking ref carries state that is merely old. An audit
+wants what the forge holds *now*, and only those two commands answer that question.
+
+⚠️ **Any "not on a remote ⇒ discard it" step is VOID until the fetch is PROVEN.** This is where a
+stale ref stops being a reporting error and starts destroying work: the recipe reads *"absent from
+the remote, therefore local junk, therefore delete"*, and **a fetch that failed, was skipped, or was
+never run produces exactly the same observation as a branch that genuinely does not exist.** One of
+those two authorises a delete. Assert the fetch succeeded before acting on what it did not return —
+and prefer a check whose failure mode is *keep*, because the cost of wrongly keeping a branch is a
+line in a report and the cost of wrongly deleting one is unpushed work.
+
+**The tell that a tool has this bug is a guarantee written in the vocabulary of remoteness** —
+*"asserted against the remote default, not a local copy, which can be stale"* — sitting directly
+above code that reads `refs/remotes/origin/<default>`. The comment and the code contradict each
+other, and the comment is the one that gets believed, because it is the one written in the language
+of the thing the reader wanted to be true.
