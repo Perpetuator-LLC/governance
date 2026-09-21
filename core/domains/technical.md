@@ -510,6 +510,18 @@ reads as "no runs"). **A split verdict on one commit is red.** A green push run 
 pull-request run on the same commit is not "mostly green"; the red one is the answer until it is
 explained.
 
+⚠️ **Zero runs can be produced BY CONSTRUCTION, and that is the dangerous form of "no runs".**
+A push made by automation using the CI system's own job token typically starts no workflow — most
+platforms suppress it deliberately, to stop a job re-triggering itself. So a bot push to a gated ref
+arrives **un-gated**, and the head then has no run at all: not a failure, not a pending, nothing to
+read. It looks identical to a query typo, and to a head whose run has not been scheduled yet.
+
+**Two consequences.** Any automated push to a ref that is supposed to be gated must use a credential
+that actually triggers the gate — a user token — or dispatch the workflow explicitly in the same
+action; and **a merge-ready claim on a head with zero runs is void**, never "green by absence". Assert
+that a run EXISTS for the exact head before assessing its conclusion; treat *no run* as a third
+state alongside passed and failed, and say which of the three you observed.
+
 **A green that queries a live feed ages.** Gates that consult an external, changing source — a
 dependency or vulnerability audit, a licence database — can pass and then fail on the same commit
 minutes apart, so a green observed earlier is not a current green. For those gates, the merge-ready
