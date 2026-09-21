@@ -472,6 +472,35 @@ ticket, not a step to perform: it can only exist on the new build, so it fails o
 that is exactly when it gets run. The deploy flow is documented as code so it is repeatable and never
 depends on one person's memory.
 
+## "Merged" is not "the reviewed code merged" — a verdict pins a HEAD, a click picks a MOMENT
+
+**A review verdict names a commit. A merge names an instant. Nothing in a forge binds the two.**
+Between the approval and the click the branch can move — a fix can land, or fail to — and the merge
+takes whatever the request's head is when the button is pressed. It then reports `merged: true`,
+closes, and looks exactly like a merge of the reviewed code.
+
+**Measured:** an approval was pinned to a head, and the merge happened **two minutes before that
+commit existed**. The fix the approval was conditional on never entered the merge. The request's
+head ref was *correct* at click time — this is a race, not a stale cache — and three independent
+checks all said merged: the API's `merged: true`, the closed state, and an ancestry check against
+the merge's own head. Only reading the merged FILE found the pre-fix line still sitting there.
+
+⚠️ **`merged: true` answers a different question than the reviewer's.** The reviewer asked *did the
+code I approved land?* Answer that by comparing **the merged head against the head the verdict was
+pinned to**, and where they differ, by content — the behaviour the review was about, not the diff.
+
+| who | obligation |
+|---|---|
+| **reviewer** | pin the verdict to a head **and say it is void at any other**. An approval with no head is un-auditable; an approval with a head and no void clause reads as approval of whatever merges. |
+| **whoever confirms the merge** | compare merged head to pinned head *before* reporting it landed. Equal ⇒ done. Different ⇒ the review has not happened yet, whatever the request says. |
+
+**This is the reader-side twin of the branch-freeze rule**, and the gap between them is where this
+lives: a freeze binds the **pusher** not to move a branch under a posted claim, and says nothing to
+the **merger**, who is the one holding the race. The merger is often a human clicking a button who
+cannot see a claim that has not been posted yet. **A freeze the other party never saw is not a
+freeze** — which is why the check has to run after the merge, by content, and not rely on either
+side having been disciplined.
+
 ## A merge-ready claim covers EVERY CI run for the head, queried by the full id
 
 **"Green" is a claim about every run the forge made for that exact commit** — typically a push run
@@ -480,6 +509,18 @@ never a branch name or an abbreviated id (an exact-match filter returns nothing 
 reads as "no runs"). **A split verdict on one commit is red.** A green push run beside a red
 pull-request run on the same commit is not "mostly green"; the red one is the answer until it is
 explained.
+
+⚠️ **Zero runs can be produced BY CONSTRUCTION, and that is the dangerous form of "no runs".**
+A push made by automation using the CI system's own job token typically starts no workflow — most
+platforms suppress it deliberately, to stop a job re-triggering itself. So a bot push to a gated ref
+arrives **un-gated**, and the head then has no run at all: not a failure, not a pending, nothing to
+read. It looks identical to a query typo, and to a head whose run has not been scheduled yet.
+
+**Two consequences.** Any automated push to a ref that is supposed to be gated must use a credential
+that actually triggers the gate — a user token — or dispatch the workflow explicitly in the same
+action; and **a merge-ready claim on a head with zero runs is void**, never "green by absence". Assert
+that a run EXISTS for the exact head before assessing its conclusion; treat *no run* as a third
+state alongside passed and failed, and say which of the three you observed.
 
 **A green that queries a live feed ages.** Gates that consult an external, changing source — a
 dependency or vulnerability audit, a licence database — can pass and then fail on the same commit
