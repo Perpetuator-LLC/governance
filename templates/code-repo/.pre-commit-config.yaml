@@ -12,6 +12,23 @@ repos:
     hooks:
       - id: gitleaks
 
+  # The CI gate runs shellcheck and yamllint. If they do not ALSO run here, a finding
+  # can only be learned by pushing and waiting — and a local gate weaker than the remote
+  # one is not a gate, it is a delay. Measured in the first repo scaffolded from this
+  # template: a shellcheck finding was fixed in one script, reintroduced in another, and
+  # caught by CI rather than by the author, because the local hooks could not see it.
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.10.0
+    hooks:
+      - id: shellcheck
+        args: [-x]
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: [-d, relaxed]
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:

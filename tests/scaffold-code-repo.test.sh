@@ -102,6 +102,12 @@ check "the CI scanner is version-pinned" \
   "grep -q 'GITLEAKS_VERSION' '$S/$CI' && grep -q 'GITLEAKS_SHA256' '$S/$CI'"
 check "…and verifies a checksum against BOTH the vendor's file and a pinned digest" \
   "grep -q 'sha256sum' '$S/$CI' && grep -q 'checksums file' '$S/$CI' && grep -q 'pinned in this workflow' '$S/$CI'"
+# The local gate must not be weaker than the CI gate — that gap is a delay, not a gate.
+check "the local hooks run the SAME linters as the CI gate (shellcheck + yamllint)" \
+  "grep -q 'shellcheck' '$S/$PC' && grep -q 'yamllint' '$S/$PC' && grep -q 'shellcheck' '$S/$CI' && grep -q 'yamllint' '$S/$CI'"
+check "…and both local linters are pinned to a rev, never a moving ref" \
+  "grep -A1 'shellcheck-precommit' '$S/$PC' | grep -qE 'rev: v[0-9]+' && grep -A1 'adrienverge/yamllint' '$S/$PC' | grep -qE 'rev: v[0-9]+'"
+
 check "…and fetches only from the vendor's own release URL" \
   "grep -q 'github.com/gitleaks/gitleaks/releases/download' '$S/$CI'"
 check "the CI gate reports an empty test/lint discovery instead of passing silently" \
