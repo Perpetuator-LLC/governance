@@ -511,10 +511,17 @@ pull-request run on the same commit is not "mostly green"; the red one is the an
 explained.
 
 ⚠️ **Zero runs can be produced BY CONSTRUCTION, and that is the dangerous form of "no runs".**
-A push made by automation using the CI system's own job token typically starts no workflow — most
-platforms suppress it deliberately, to stop a job re-triggering itself. So a bot push to a gated ref
-arrives **un-gated**, and the head then has no run at all: not a failure, not a pending, nothing to
-read. It looks identical to a query typo, and to a head whose run has not been scheduled yet.
+**An event raised by the CI system's own identity is typically not treated as a trigger** — most
+platforms suppress it deliberately, to stop a job re-triggering itself. The event does not have to
+be a push: a branch pushed by the job token raises no push run, and a pull request *opened* by the
+job token raises no pull-request run either. Either way the head arrives **un-gated** and has no run
+at all: not a failure, not a pending, nothing to read. It looks identical to a query typo, and to a
+head whose run has not been scheduled yet.
+
+⚠️ **Do not read that as "do not let a bot push."** The rule is about the identity that raised the
+event, not the verb — two lanes hit this on different verbs, and the second nearly escaped the first
+lane's write-up because it named only pushes. Whenever automation creates the event that is supposed
+to gate a head, check that the event actually started a run.
 
 **Two consequences.** Any automated push to a ref that is supposed to be gated must use a credential
 that actually triggers the gate — a user token — or dispatch the workflow explicitly in the same
