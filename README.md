@@ -80,9 +80,13 @@ output directory's name and is substituted into `README.md` and `AGENTS.md`.
 `.cursor/rules/` and `.continue/rules/` are pointers to it. That shape is the point, not tidiness: a
 second full copy of the conventions drifts from the first within a month and **both files go on
 looking maintained**, so the next agent obeys whichever one it happened to read. The template also
-ships the secret gate — a scanner config plus the pre-commit hook that runs it, pinned to the same
-scanner version CI uses, because a local pass that CI then fails teaches the author to distrust the
-hook — and `ADR-0001`, which establishes that decisions are recorded rather than remembered.
+ships the secret gate in **both** its layers — the pre-commit hook that catches a secret before it
+enters history, and the CI gate that catches what was pushed anyway (a bypassed hook, a hook nobody
+installed, a commit from another machine). Shipping only the first would leave a defence-in-depth
+story with a hole where its second layer belongs. The CI installer takes the scanner from the
+vendor's own release, pinned by version and verified against both the vendor's checksums file and a
+digest pinned in the workflow. Also `ADR-0001`, which establishes that decisions are recorded rather
+than remembered.
 
 A harness discovers these files by its own convention — each reads the file named for it, and a
 session-start hook may additionally probe for the others and list what it found. That is why the

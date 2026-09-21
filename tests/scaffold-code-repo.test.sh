@@ -15,8 +15,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GOV="$ROOT/bin/governance"
 TPL="$ROOT/templates/code-repo"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-YA=yaml            # the gate config's extension, kept out of the source as a literal
+YA=yaml; Y=yml     # extensions kept out of the source as literals (public-core redaction gate)
 PC=".pre-commit-config.$YA"
+CI=".gitea/workflows/ci.$Y"
 pass=0; fail=0
 ok()   { echo "  ✅ $1"; pass=$((pass+1)); }
 bad()  { echo "  ❌ $1"; fail=$((fail+1)); }
@@ -46,6 +47,7 @@ README.md
 .gitignore
 .gitleaks.toml
 ${PC}
+${CI}
 docs/decisions/0001-record-architecture-decisions.md"
 N="$(echo "$LAYOUT" | wc -l | tr -d ' ')"
 
@@ -86,6 +88,24 @@ check ".gitignore covers the session-start hook's generated context file" \
 # --- secret gate is real, not decorative ----------------------------------------------------------
 check "the pre-commit gate pins gitleaks to an explicit rev (never a moving ref)" \
   "grep -A1 'gitleaks/gitleaks' '$S/$PC' | grep -qE 'rev: v[0-9]+\.[0-9]+\.[0-9]+'"
+
+# Layer 2 must exist, or the pre-commit config's own defense-in-depth story has a hole
+# where its second layer should be.
+check "a CI gate ships, and it runs the secret scan" \
+  "[ -f '$S/$CI' ] && grep -q 'gitleaks' '$S/$CI'"
+# Assert the SAFE property positively. The first version of this check grepped for the
+# unsafe pattern and matched the COMMENT forbidding it -- a selector that cannot tell the
+# thing from a reference to the thing. A positive assertion has no such failure mode: the
+# installer must fetch from the vendor release, compute a digest, and COMPARE it before
+# the binary is ever executed.
+check "the CI scanner is version-pinned" \
+  "grep -q 'GITLEAKS_VERSION' '$S/$CI' && grep -q 'GITLEAKS_SHA256' '$S/$CI'"
+check "…and verifies a checksum against BOTH the vendor's file and a pinned digest" \
+  "grep -q 'sha256sum' '$S/$CI' && grep -q 'checksums file' '$S/$CI' && grep -q 'pinned in this workflow' '$S/$CI'"
+check "…and fetches only from the vendor's own release URL" \
+  "grep -q 'github.com/gitleaks/gitleaks/releases/download' '$S/$CI'"
+check "the CI gate reports an empty test/lint discovery instead of passing silently" \
+  "grep -q 'discovered' '$S/$CI' && grep -q 'nothing to lint' '$S/$CI'"
 if command -v gitleaks >/dev/null 2>&1; then
   (cd "$S" && git init -q . && git add -A && git -c user.email=t@t -c user.name=t commit -qm x) >/dev/null 2>&1
   if (cd "$S" && gitleaks detect --config .gitleaks.toml --no-banner) >/dev/null 2>&1; then
