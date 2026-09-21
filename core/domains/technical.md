@@ -486,6 +486,42 @@ dependency or vulnerability audit, a licence database — can pass and then fail
 minutes apart, so a green observed earlier is not a current green. For those gates, the merge-ready
 claim names the run and its time, and is re-checked at merge.
 
+## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
+
+**`git diff main..branch` shows what REPLACING main with the branch would do. A merge does not do
+that.** It shows every commit main gained since the branch forked as a *deletion*, because it is
+comparing two endpoints rather than asking what the branch adds. The number is real; the question it
+answers is not the one being asked.
+
+**Measured:** a branch was judged to "revert ~568 lines of live content" on merge, and a cherry-pick
+was performed to avoid it. A test-merge into the same head gave **exit 0, no conflicts, 2 files,
++35/−8, and no file touched outside the intended directory** — identical to the cherry-pick's own
+delta. The 568 was the two-dot figure. Two lanes then reproduced it independently, one with
+`git merge-tree --write-tree`, before it was corrected.
+
+**The damage is the belief, not the wasted PR.** *"A branch behind the default branch reverts the
+newer content when merged"* is false, and it is sticky: it makes every long-lived branch look
+radioactive and drives cherry-picks nobody needs. Where a repository takes automated commits — a
+sync timer, a bot, a generated artifact — **every** branch is behind within the hour, so the false
+rule fires constantly and always looks confirmed.
+
+⚠️ **The replacement PR usually has the same property**, which is what makes the diagnosis stick: the
+cherry-pick raised to replace that branch reported *92 deletions* against the same head when read
+two-dot. A rule that "explains" both the suspect and its replacement is not discriminating between
+them.
+
+| to answer | use |
+|---|---|
+| what does merging this bring? | `git diff <base>...<branch>` (three-dot), or merge it in a scratch worktree and diff against the base |
+| would it conflict? | `git merge-tree --write-tree <base> <branch>`, or the scratch merge's exit code |
+| what is on the branch that is not on the base? | `git log <base>..<branch>` |
+| **nothing a reviewer normally asks** | `git diff <base>..<branch>` (two-dot) |
+
+**Same family as the cheap-view failures elsewhere in this file:** the reading that is one character
+cheaper answers a neighbouring question, agrees with the right answer most of the time, and diverges
+exactly when the branch is old — which is when someone is most likely to be nervous and least likely
+to re-check.
+
 ## Agent attribution lives in the BODY — the author field is one shared identity
 
 **Write side.** Every agent-authored commit, PR body, review and forge comment carries its own
