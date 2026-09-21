@@ -116,6 +116,27 @@ hand-off defect — the human can't tell hung from working; measured: a migratio
 nothing until done and the human asked whether it was hung); prints an explicit end-state summary;
 the agent reads the artifact, never asks for the scrollback.
 
+⚠️ **The terse form of the same defect is a step written as a NOUN PHRASE plus a citation.**
+*"Store prerequisites (see comment N, step ①): the API keys, the limit value, the sample ids."*
+passes every test above by accident — it sits under the human's section, it is numbered, it is
+short — and **it is not a step, because nothing in it is a verb the human can type or click.** It
+is the agent's index of two documents, compressed to one line by a message-length budget; the
+human reads it as *"what needs to be done"* and asks *"what do you want ME to do?"*, which is the
+entire cost of the rule paid again.
+
+Two tests, applied to every line in the human's section before sending:
+
+1. **Does the line contain a VERB with an OBJECT the human can act on now** — a command in a
+   fence, a menu path, a field and a value? A citation (a comment id, a step number, a document
+   name) is never that object.
+2. **If the line names a value the human must supply** — a key, an id, a secret — **does it say
+   WHERE that value comes from** (which dashboard, which page), and **which of them are actually
+   still missing**? A store the agent can read for key NAMES (never values) is read first; the
+   human fills only what that read reported missing, never a list the agent assumed.
+
+Sending the citation form is not concision. It moves the synthesis the rule exists to do back onto
+the human, and it looks compliant while doing it.
+
 ## Git refs in human-facing text
 
 - ⚠️ **The test is ACTIONABILITY, not FORMAT: not "is this ref a link?" but "can the reader reach
