@@ -409,6 +409,28 @@ it. Relation to the spine: a North Star sits at the Theme/Objective (strategy) l
 spine (`core/AGENTS.md` → *Artifact placement*) — lighter than full OKR machinery, but the same "trace
 work upward" intent (G9).
 
+## A procedure document holds its WHOLE current flow — a delta version forks the identifier
+
+**One state, one file.** A procedure — an SOP, a runbook, a playbook — is a document that someone
+follows end to end, so it carries the whole flow as it stands today. **A version that records only
+what CHANGED is not a shorter procedure; it is a second document wearing the same name.** The
+reader who finds it follows half a flow and has no way to know which half is missing, because a
+delta is silent about everything it did not touch.
+
+This is worse than ordinary duplication. Two full copies disagree visibly — a reader who opens both
+can see the conflict. A full copy and a delta look *complementary*, so a reader who opens both still
+cannot assemble the procedure without knowing which is authoritative and what order they compose in,
+and a reader who opens only one gets no signal at all.
+
+⚠️ **On a shared identifier, FOLD — do not reconcile and do not keep both.** When two documents
+claim the same procedure id, the answer is one document containing the current flow, not a pointer
+between them and not a merge note explaining their relationship. **The identifier is what consumers
+resolve**, so two files answering to it means the id no longer names a single thing, which is the
+defect regardless of how good either file is.
+
+Corrections to a procedure are edits to it. The history of *why* it changed belongs in the version
+control or the decision record, never in a sibling document the follower might land on instead.
+
 ## Placement binds authoring and referencing
 
 **A doc goes to its canonical home at BIRTH.** A requirements or spec doc drafted mid-flight — by
