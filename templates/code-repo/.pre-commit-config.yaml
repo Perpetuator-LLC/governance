@@ -1,0 +1,23 @@
+# Install (one-time per checkout):
+#   pre-commit install
+# Run over everything:
+#   pre-commit run --all-files
+#
+# Pin gitleaks to the SAME version CI runs. A local pass that CI then fails is
+# worse than no local gate: it teaches the author to distrust the hook.
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=512]

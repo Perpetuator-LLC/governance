@@ -50,7 +50,7 @@ lesson travels upstream — is `core/AGENTS.md` → *Layers*.
 | `hooks/` | the floor: pre-tool gates that refuse destructive and secret-exposing calls, plus audit and lint hooks |
 | `agents/` | reusable sub-agent definitions (review, exploration, investigation) |
 | `bin/` | render, check, scaffold, and the repository's own gates |
-| `templates/` | starting layouts for new repositories — `stack-repo/` is a deployable stack: a generic `module/`, a private `overlay/`, its CI gate, contracts and lints |
+| `templates/` | starting layouts for new repositories — `code-repo/` is any repository that holds source (agent instruction files, secret gate, ADR-0001); `stack-repo/` is a deployable stack: a generic `module/`, a private `overlay/`, its CI gate, contracts and lints |
 
 ## Checks
 
@@ -65,9 +65,36 @@ runs every suite plus the first two checks against this tree.
 
 ## Starting a new repo
 
-`bin/governance scaffold --template stack-repo --out <dir>` creates every missing file of the layout,
-never overwrites one, and is a noop on a repository already in shape; the rules it serves are
-`technical.md` → *A deployable repo stands alone — the stack-repo properties*.
+```bash
+bin/governance scaffold --template code-repo  --out <dir> [--name <n>]   # a repository that holds source
+bin/governance scaffold --template stack-repo --out <dir> [--name <n>]   # a deployable stack
+```
+
+Scaffold creates every **missing** file of the layout, never overwrites one, and is a noop on a
+repository already in shape — so it is safe to re-run on an existing repository to pick up what a
+later version of the template added. `--dry-run` reports without writing; `--name` defaults to the
+output directory's name and is substituted into `README.md` and `AGENTS.md`.
+
+**`code-repo`** answers *"what do I put in a new repository so every agent harness behaves?"*
+**One file is canonical — `AGENTS.md`** — and `CLAUDE.md`, `.github/copilot-instructions.md`,
+`.cursor/rules/` and `.continue/rules/` are pointers to it. That shape is the point, not tidiness: a
+second full copy of the conventions drifts from the first within a month and **both files go on
+looking maintained**, so the next agent obeys whichever one it happened to read. The template also
+ships the secret gate in **both** its layers — the pre-commit hook that catches a secret before it
+enters history, and the CI gate that catches what was pushed anyway (a bypassed hook, a hook nobody
+installed, a commit from another machine). Shipping only the first would leave a defence-in-depth
+story with a hole where its second layer belongs. The CI installer takes the scanner from the
+vendor's own release, pinned by version and verified against both the vendor's checksums file and a
+digest pinned in the workflow. Also `ADR-0001`, which establishes that decisions are recorded rather
+than remembered.
+
+A harness discovers these files by its own convention — each reads the file named for it, and a
+session-start hook may additionally probe for the others and list what it found. That is why the
+pointers exist at all: a harness that reads only `.cursor/rules/` must still be told where the real
+instructions are.
+
+**`stack-repo`** is for a deployable stack; the rules it serves are `technical.md` → *A deployable
+repo stands alone — the stack-repo properties*.
 
 ## Starting an adapter
 

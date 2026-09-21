@@ -1,0 +1,17 @@
+# Agent session context, generated per session by the session-start hook
+.claude/workspace-context.md
+.claude/settings.local.json
+.claude/worktrees/
+
+# Harness-local, machine-specific (absolute paths) — never committed
+.codex/config.toml
+
+# Secrets — never committed
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.idea/
+*.swp
