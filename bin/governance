@@ -320,7 +320,8 @@ def build_plan(repo, adapters, local, harnesses):
     if len(providers) > 1:
         raise Refusal("scheduled-tasks is provided by more than one adapter ("
                       + ", ".join(f"{n}: {p}" for n, p in providers) + ") — at most one may provide it")
-    parts = LINKED_PARTS if "claude" in harnesses else ("skills",) if "grok" in harnesses else ()
+    grok_parts = ("skills", "agents")
+    parts = LINKED_PARTS if "claude" in harnesses else grok_parts if "grok" in harnesses else ()
     links = {part: link_sources(layers, part, plan.notes) for part in parts}
 
     for h in harnesses:
@@ -349,6 +350,26 @@ def build_plan(repo, adapters, local, harnesses):
             plan.dir(".grok/skills")
             for entry, src in links["skills"].items():
                 plan.link(f".grok/skills/{entry}", src)
+            # Agents are shared across harnesses, but a harness may override one or add its own
+            # under harness/<h>/agents/. Without this the entries are simply never installed —
+            # and a path the installer does not own is a path the archive census finds still
+            # pointing at the old repo.
+            grok_agents = dict(links["agents"])
+            for name, parts_root, _ in layers:
+                d = os.path.join(parts_root, "harness", "grok", "agents")
+                if not os.path.isdir(d):
+                    continue
+                for entry in sorted(os.listdir(d)):
+                    src = os.path.join(d, entry)
+                    if entry.startswith(".") or not os.path.isfile(src):
+                        continue
+                    if entry in grok_agents:
+                        plan.notes.append(f"COLLISION  agents/{entry}: shared overridden by {name} grok ({src})")
+                    grok_agents[entry] = src
+            if grok_agents:
+                plan.dir(".grok/agents")
+                for entry, src in sorted(grok_agents.items()):
+                    plan.link(f".grok/agents/{entry}", src)
     return plan
 
 

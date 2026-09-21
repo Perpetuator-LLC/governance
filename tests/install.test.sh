@@ -58,6 +58,8 @@ put "$A1/skills/shared/SKILL.md"     "adapter shared skill"
 put "$A1/skills/a1-only/SKILL.md"    "adapter skill"
 put "$A1/hooks/extra.sh"             "echo extra"
 put "$A1/agents/helper.md"           "helper"
+put "$A1/harness/grok/agents/worker.md"  "grok worker"
+put "$A1/harness/grok/agents/helper.md"  "grok helper override"
 put "$A1/bin/orgtool"                "orgtool"
 put "$A1/scheduled-tasks/daily/SKILL.md" "daily"
 put "$A1/settings/claude.json" '{"permissions": {"deny": ["Bash(adapter-deny*)"], "allow": ["Bash(ls*)"]},
@@ -252,6 +254,10 @@ check "codex: AGENTS.md rendered core → adapter" \
   "[ -f '$HG/.codex/AGENTS.md' ] && [ ! -L '$HG/.codex/AGENTS.md' ] && [ \"\$(grep -E '^# ' '$HG/.codex/AGENTS.md' | tr '\n' '|')\" = '# core rules|# adapter one rules|' ]"
 check "grok: rules/00-governance.md rendered, skills/ a real directory of symlinks" \
   "[ -f '$HG/.grok/rules/00-governance.md' ] && [ -d '$HG/.grok/skills' ] && [ ! -L '$HG/.grok/skills' ] && [ -L '$HG/.grok/skills/a1-only' ]"
+check "grok: agents/ installed — shared from core+adapter, plus harness-specific" \
+  "[ -d '$HG/.grok/agents' ] && [ ! -L '$HG/.grok/agents' ] && [ -L '$HG/.grok/agents/reviewer.md' ] && [ -L '$HG/.grok/agents/worker.md' ]"
+check "grok: harness/grok/agents OVERRIDES the shared agent of the same name" \
+  "[ \"\$(cat '$HG/.grok/agents/helper.md')\" = 'grok helper override' ]"
 check "…and no claude output" "[ ! -e '$HG/.claude' ]"
 rc="$(gov check --home "$HG")"
 check "…in sync" "[ '$rc' = '0' ]"
