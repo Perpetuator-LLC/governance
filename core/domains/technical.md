@@ -1309,6 +1309,34 @@ is the fact and the comment is an artifact with a date on it; treat a confident 
 a hypothesis to re-measure, particularly when it is the reason you were about to skip reading
 something.
 
+## Cite a STABLE identifier — a branch tip is not one
+
+**A pointer to a moving reference is stale the moment the thing it points at improves.** A branch tip
+is unstable by definition: every improvement to the source invalidates every citation of it, and the
+citing document cannot tell, because nothing about a stale SHA looks stale. Measured: one exhibit's
+tip moved **three times** while it was being cited, each move costing the citing side a verification
+that produced no new information.
+
+**So cite by the thing that is not moving.** While work is in progress that is the **branch plus a
+reachability note** — it says exactly what is true and does not rot. **The first SHA worth pinning is
+the MERGE commit**, because it is the first identifier that is both *stable* and *reachable from the
+default branch*. Those are two different properties and a citation needs both: a tip is reachable and
+unstable, an abandoned commit is stable and unreachable.
+
+⚠️ **The obligation runs the other way too: an artefact under active citation is FROZEN.** Once
+someone has quoted your document, improving it silently breaks their quote — the same contract as a
+posted merge-ready claim freezing a branch. Freeze it, or tell the citing side **which field changed
+and why it mattered**, because a bare new identifier makes them update a string without knowing
+whether what they took from the source is still true.
+
+**Two properties make a correction cheap, and both belong in the pointer:**
+
+- **Say what you TOOK from the source** — the quote, the number, the claim — so a change can be
+  matched against it rather than re-derived.
+- **Keep a superseded identifier, marked as superseded, rather than deleting it.** History is
+  append-only, and a reader arriving with the old reference should land on an explanation instead of
+  a dead end.
+
 ## An expected value copied from the OUTPUT pins the defect
 
 **A test whose expected value was taken from what the code currently produces is not a test — it is a
