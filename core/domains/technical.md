@@ -1134,6 +1134,13 @@ accident — so the defect cannot appear in them. Two properties that do it:
 - **Structure-preserving.** The input is perturbed in a way that leaves the property under test
   intact — a transformation that looks dramatic while conserving exactly the invariant the defect
   would violate.
+- **Window-missing, and probably the commonest of the three.** The fixture sets up the right
+  condition but applies it *outside the interval where the code is vulnerable* — before the operation
+  starts, or after it finishes. Nothing is wrong with the input; the timing of the perturbation means
+  the vulnerable path is never entered. Measured on a deliberately broken read-with-a-cursor: a
+  mutation landing **between** the two reads exposes it (a row silently never returned), while the
+  identical mutation applied **before** or **after** them passes **20/20 against the same broken
+  code**. Nothing in the fixture looks wrong, because nothing is.
 
 ⚠️ **"Make it maximally different" is the instinct that produces an unfalsifiable test.** An extreme
 input feels like a strong test and is chosen for that reason, but extremity is not the same as
