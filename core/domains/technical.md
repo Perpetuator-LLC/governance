@@ -1034,6 +1034,13 @@ a control that was removed months ago — both of which read as authoritative pr
 are written in the codebase's own voice. **A statement inside the repository is evidence about when it was written and about what its author INTENDED — never about
 what shipped.
 
+⚠️ **Read the artefact that DEFINES a surface, never the one that DESCRIBES it.** Source describes
+intent; a generated schema, an executed query, a deployed revision, the code itself — those are the
+surface. The pairings recur: executed query over resolver, deployed revision over default branch,
+code over the ticket about the code, and a peer's summary over the thing they summarised. **In every
+one of them the defining artefact was available and cheaper to read than the describing one.** The
+generated-schema case below is the sharpest instance, not the whole rule.
+
 ⚠️ **Where an artefact is GENERATED, the generated artefact is the thing; the source that generates
 it is not.** For an API, the schema callers see *is* the surface. A declarative framework synthesises
 arguments from a field list, so they appear **nowhere in the class body** and the source
@@ -1055,13 +1062,16 @@ by the person who wrote it, indefinitely. **Re-measure a blocking claim against 
 before repeating it** — that single step turned four scattered tickets into one pattern in the
 exhibit behind this rule.
 
-**The general move: read the artefact that DEFINES the surface, not the one that DESCRIBES it** — the
-executed query over the resolver, the deployed revision over the default branch, the code over the
-ticket about the code. In each pairing the defining artefact was available and *cheaper* to read.
+⚠️ **Make it mechanical, not a thing a careful reader remembers.** The reviewer above had written
+this rule one section earlier in the same document and then broke it — so an acceptance step that
+depends on remembering will not hold.
 
-⚠️ **Make it mechanical, not a thing a careful reader remembers.** The reviewer above had written this
-rule one section earlier in the same document and then broke it. Stating a rule is not applying it,
-and the gap between the two is exactly where a check belongs.
+**The step: a claim must QUOTE the defining artefact, and the quote is what a reviewer checks the
+absence of.** A claim about an API surface quotes the exported schema line, not the class. A claim
+about what merged quotes the content at that revision, not the request's state. A claim about a query
+count quotes the executed statement, not the resolver. **An unquoted claim is not a weaker claim, it
+is an unreviewable one** — and absence is far easier to spot than a wrong quote, which is the property
+that makes this enforceable at all.
 it was written, not about what the code does now.** Where a comment and the code disagree, the code
 is the fact and the comment is an artifact with a date on it; treat a confident assertion in prose as
 a hypothesis to re-measure, particularly when it is the reason you were about to skip reading
