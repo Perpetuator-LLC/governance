@@ -33,6 +33,19 @@ call. The safety gate blocks decoding straight into an interpreter, decode-then-
 file, and piping stdin into an interpreter — and deliberately **allows plain decoding to a file**,
 because inspecting a payload is how you review one.
 
+⚠️ **That allowance is the rule, not an exception: scope a guard to the thing it defends, not to
+everything near it.** An over-broad guard is *deleted by the next person*, so over-breadth costs you
+the guard itself — not merely some friction. Measured elsewhere the same night: a commit guard that
+refused to run on **any** dirty worktree blocked immediately on a legitimate untracked output file,
+which is the normal working state of that lane; narrowed to **tracked** changes it defends what it
+was written for and stops obstructing the job.
+
+This is the third face of a failure already named twice here — a permanently-red gate trains everyone
+to ignore red, and a checker that fires is not a checker that is right. The new face: **a guard can be
+correct and still too wide, and the wide one does not survive to be correct later.** A gate that
+blocked decoding for inspection would have pushed people to skip inspection, which is precisely the
+behaviour it exists to prevent.
+
 ## Secrets in code (mandatory)
 
 Never hardcode a credential in **any** repo file (incl. throwaway/test). Source from, in order:
