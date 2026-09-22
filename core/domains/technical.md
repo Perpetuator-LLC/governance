@@ -1079,7 +1079,22 @@ on another — so a low observed rate is never evidence of immunity.
 cannot race certifies broken code as clean.** Piping a small file through `cat` into the same guard
 returns success **0/10 in every shell, with and without `pipefail`** — it cannot exhibit the failure
 at any size, because a single fast write finishes before the consumer exits. A self-test built on
-that fixture passes on genuinely broken code, and it does so *confidently*. **The fixture must be a
+that fixture passes on genuinely broken code, and it does so *confidently*.
+
+⚠️ **In a SCANNER the failure inverts into a fail-open, which is why this is not merely a flaky
+guard.** `if producer | grep -q SECRET; then alarm; fi` treats the 141 as *pattern not found*, so the
+scan reports **clean while the thing it hunts is present**. Measured on a producer that emits a
+credential on its first line and keeps writing: **5/5 runs printed "clean"**, the credential there
+every time. A guard that refuses to proceed announces itself; a scanner that fails this way is
+silent, and its silence is the success signal everyone downstream is waiting for.
+
+**The mirror of "reproduce before filing" is the trap behind every wrong answer here: a PASSING
+fixture proves nothing about a gate unless that fixture can make the gate FAIL.** Core already
+requires a detector to be proven against a known-bad control; this aims the same requirement at the
+*fixture*. A scan certified safe on a two-line fixture failed 5/5 on a realistic input of the same
+kind. **Before trusting a green self-test, confirm the fixture can produce a red one.**
+
+**The fixture must be a
 real, slow, multi-write producer** — one that pauses between writes, as a network call, a lock or a
 subprocess does. Three independent investigations of this hazard reached three different conclusions,
 and the fixture is why: each was measuring a construct that raced differently, or did not race at
