@@ -1071,7 +1071,19 @@ can stall between bytes.
 **And the discriminator is `pipefail`, not the shell.** The same construct returns 0 without it and
 141 with it, in bash and zsh alike — measured 0/0/0 versus 141/141/141 in each. A probe that looks
 shell-dependent is really pipefail-dependent, so **switching shells does not fix it and a check run
-without `pipefail` gives a false all-clear** regardless of which shell ran it.
+without `pipefail` gives a false all-clear** regardless of which shell ran it. The **rate** varies —
+the same class of producer missed 10/10 on one machine and roughly a third to two-thirds of the time
+on another — so a low observed rate is never evidence of immunity.
+
+⚠️ **The fixture is where this goes wrong, and it is the most reusable lesson here: a producer that
+cannot race certifies broken code as clean.** Piping a small file through `cat` into the same guard
+returns success **0/10 in every shell, with and without `pipefail`** — it cannot exhibit the failure
+at any size, because a single fast write finishes before the consumer exits. A self-test built on
+that fixture passes on genuinely broken code, and it does so *confidently*. **The fixture must be a
+real, slow, multi-write producer** — one that pauses between writes, as a network call, a lock or a
+subprocess does. Three independent investigations of this hazard reached three different conclusions,
+and the fixture is why: each was measuring a construct that raced differently, or did not race at
+all.
 
 **The strongest remedy is to remove the pipe, not to mitigate it.** Where the producer can be asked
 for a bounded result directly — a `--count=1`-style flag, a query that returns one row — there is no
