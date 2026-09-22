@@ -1116,6 +1116,37 @@ lives in the syntax, the fix is syntax: show the line.
 about a timing-dependent check — run it enough times to see the distribution, and make that repetition
 part of the test rather than something a person does once by hand.
 
+## A fixture that cannot EXPRESS the failure certifies it clean
+
+**A passing test proves nothing about a gate until that gate has been seen to fail.** A fixture is
+not a sample of realistic input; it is an instrument, and an instrument that cannot register the
+defect reports *clean* on broken code — confidently, repeatably, and in exactly the place where
+someone will later cite the green run as evidence.
+
+**The failure mode is that the fixture is PLAUSIBLE.** Nobody writes an obviously useless one. They
+are built by careful people, they look like the real thing, and they are shaped — usually by
+accident — so the defect cannot appear in them. Two properties that do it:
+
+- **Size-bounded.** The input is small enough that the mechanism never engages. Measured instance: a
+  guard whose failure requires a producer still writing when its consumer exits passes **0/10** on a
+  small fast fixture and fails **5/5** on a realistic input of the same kind. The fixture was correct
+  in shape and wrong in scale, and scale was the whole mechanism.
+- **Structure-preserving.** The input is perturbed in a way that leaves the property under test
+  intact — a transformation that looks dramatic while conserving exactly the invariant the defect
+  would violate.
+
+⚠️ **"Make it maximally different" is the instinct that produces an unfalsifiable test.** An extreme
+input feels like a strong test and is chosen for that reason, but extremity is not the same as
+*exercising the mechanism*, and a symmetric extreme can conserve the very thing being probed.
+**Construct the fixture from the DEFECT'S MECHANISM, not from a plausible extreme**: ask what
+condition must hold for the bug to appear, then build the smallest input that makes it hold.
+
+**So the acceptance step is one line: show the fixture producing a RED result before trusting its
+green one.** Core already requires a detector to be proven against a known-bad control; this is the
+same requirement aimed at the fixture rather than the detector, and it is the one that is routinely
+skipped — because a green test looks like success, and a fixture that cannot fail looks exactly like
+a fixture that passes.
+
 ## An expected value copied from the OUTPUT pins the defect
 
 **A test whose expected value was taken from what the code currently produces is not a test — it is a
