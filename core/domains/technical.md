@@ -343,6 +343,25 @@ Enumerate every consumer before tightening it — and have the owning lane confi
 than accepting your reading of their code. That check costs minutes and is what separates narrowing
 from breaking.
 
+⚠️ **PARTIAL compliance on one object is a stronger smell than total absence.** Where nothing is
+typed you can believe the rule was never applied. Where two fields of four are typed and two ship the
+closed vocabulary as a plain string — with the correct vocabulary already defined server-side and
+simply not exposed — somebody applied the rule, stopped, and nothing noticed. Measured on a single
+type carrying four plan-related fields: two enum-typed and correct, two closed-but-untyped, inches
+apart. **Look for the half-done object, not the untouched one.**
+
+⚠️ **And the cost GROWS, which is the argument for urgency this rule otherwise lacks: a closed
+vocabulary shipped as a string teaches consumers to PARSE it.** Downstream code starts taking the
+value apart — splitting on a delimiter, matching a prefix — and that parsing works only because the
+current serialisation happens to suit it. **Typing the field later then breaks those consumers
+silently**, because the wire format changes to the vocabulary's member names: no error, no empty
+state, just a value that never matches again. Measured instance sat on a billing indicator.
+
+**So fixing a loose vocabulary is not a free correction — check how consumers CONSUME it first.** The
+remediation and the defect have the same root: the loose type invited parsing where mapping belonged.
+Typing the field is still right; doing it without reading the consumers is how a correctness fix
+becomes an outage.
+
 ⚠️ **A commented-out attempt is evidence somebody sketched, not evidence it cannot work.** It reads
 as *"this was tried and failed"* and is treated as a closed question. Measured on one such block:
 across all history **no commit ever carried it uncommented** — it was never live, so there was no
