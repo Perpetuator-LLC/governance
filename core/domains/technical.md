@@ -128,6 +128,15 @@ live host (inline `python`/`sed` heredocs against live files, `docker` CLI state
 clicks, hand-edited on-box configs) is a VIOLATION even when it "works" and even for a one-off — it
 creates drift the IaC can't see and a step no audit can replay. If the IaC doesn't exist yet, WRITING
 it (playbook/role/script, committed and merged) IS the task; then hand over its one-line invocation.
+**Establish the absence before you author** — list the committed surface (the playbooks, scripts or
+command directory) and search it for the VERB, not for your phrasing of it. "I have not seen one" is
+not evidence that none exists, and a mature repo often already has the thing under a name you did not
+guess. Writing a second one costs twice: the duplicate itself, and the review that now has to decide
+which is canonical. **A safety gate's refusal of your hand-authored version is evidence you should
+re-run this search, not evidence of a capability boundary.** Inline credential handling is exactly
+what such gates match on, and it is exactly what the existing surface already abstracts behind a
+reviewed include — so the refusal usually means *you wrote the wrong thing*, not *you may not do
+this*. Read the refusal as a routing signal before you report it upward as a blocker.
 **Litmus:** if the recipe contains inline SQL or a `python -c` against a prod service, stop and write
 the command/script instead. Verification counts as interaction — "check how many rows are expired" is
 a management command, not a paste-block of SQL. Ad-hoc commands are for read-only diagnosis only.
