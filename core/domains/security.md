@@ -6,6 +6,46 @@ Unlike most domains, **security holds its line even on client work** — a clien
 preference never overrides these (`core/AGENTS.md` → *Precedence of guidance*: your safety and
 security always apply). Flag, don't bypass.
 
+## A step handed to a human must be READABLE by the human who runs it
+
+**An encoded or compressed payload is not a command — it is an opaque binary that will execute with
+that person's credentials.** Compression that defeats review is not incidental to the delivery
+mechanism; it **is** the defect. The reviewer is the human, the review happens at the moment they
+paste, and an argument they cannot read has removed the only check in the chain.
+
+Measured: a seat that could not push from its own environment produced eleven dashboard items asking
+a human to paste base64 chunks into a file and decode-and-run them — roughly 11 KB of compressed code
+that patched files, committed, and pushed to a repository. Nobody decoded it, it never ran, and the
+same work landed by the ordinary branch-and-pull-request route.
+
+Three corollaries, each of which was violated by that one hand-off:
+
+- **If a payload must be CHUNKED to fit a transport, the transport is the wrong mechanism.** Chunking
+  is the signal to stop, not a packaging problem to solve with a smaller encoding. The remedy is a
+  commit.
+- **A file edit is agent work and does not become a human step by being encoded.** Encoding changes
+  who can read it, not who should do it.
+- **The blast radius is not the human's machine — it is everything their credentials reach.** Here
+  that was the repository the payload pushed to.
+
+⚠️ **This belongs to the floor, not to prose.** A rule asks a seat to refrain; a gate refuses the
+call. The safety gate blocks decoding straight into an interpreter, decode-then-execute across a
+file, and piping stdin into an interpreter — and deliberately **allows plain decoding to a file**,
+because inspecting a payload is how you review one.
+
+⚠️ **That allowance is the rule, not an exception: scope a guard to the thing it defends, not to
+everything near it.** An over-broad guard is *deleted by the next person*, so over-breadth costs you
+the guard itself — not merely some friction. Measured elsewhere the same night: a commit guard that
+refused to run on **any** dirty worktree blocked immediately on a legitimate untracked output file,
+which is the normal working state of that lane; narrowed to **tracked** changes it defends what it
+was written for and stops obstructing the job.
+
+This is the third face of a failure already named twice here — a permanently-red gate trains everyone
+to ignore red, and a checker that fires is not a checker that is right. The new face: **a guard can be
+correct and still too wide, and the wide one does not survive to be correct later.** A gate that
+blocked decoding for inspection would have pushed people to skip inspection, which is precisely the
+behaviour it exists to prevent.
+
 ## Secrets in code (mandatory)
 
 Never hardcode a credential in **any** repo file (incl. throwaway/test). Source from, in order:
