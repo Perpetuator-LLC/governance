@@ -1134,7 +1134,15 @@ accident — so the defect cannot appear in them. Two properties that do it:
 - **Structure-preserving.** The input is perturbed in a way that leaves the property under test
   intact — a transformation that looks dramatic while conserving exactly the invariant the defect
   would violate.
-- **Window-missing, and probably the commonest of the three.** The fixture sets up the right
+- **Scope-bounded — sized right, scoped wrong.** The input is large enough for the mechanism to
+  engage, but the test only *observes* part of it, and the effect lands in the part it never looks
+  at. Measured on the same broken read-with-a-cursor: **30 rows with only 20 observed passes 20/20**,
+  while **20 rows with 20 observed fails 10/20 with ten duplicates** — same page size, same mutation,
+  same code. The perturbation pushed the first page's rows past the observation window onto a third
+  page the test never read. ⚠️ **The loud version of the defect existed and the fixture hid it**, so
+  a bigger fixture is not automatically a better one. State the mechanism first, then size **and
+  scope** to it: the test must observe the whole range the effect can move things into.
+- **Window-missing, and probably the commonest of these.** The fixture sets up the right
   condition but applies it *outside the interval where the code is vulnerable* — before the operation
   starts, or after it finishes. Nothing is wrong with the input; the timing of the perturbation means
   the vulnerable path is never entered. Measured on a deliberately broken read-with-a-cursor: a
