@@ -1016,6 +1016,46 @@ attributed to anything except its cause.
 Same refusal as *a service isn't deployed until its backups are PROVEN*: **a suite that passes while
 mutating production is not a passing suite — it is an unmeasured side effect wearing a tick.**
 
+## Under `pipefail`, an early-exiting consumer makes a SUCCESSFUL search report failure
+
+**`set -o pipefail` makes a pipeline fail if ANY stage fails — and a consumer that stops reading
+early kills its producer with a broken pipe.** `grep -q`, `head -n`, `jq -e` and friends exit the
+moment they have their answer; the producer, still writing, dies on `SIGPIPE` and exits `141`; the
+pipeline reports `141`. **So the guard reports failure precisely because the search SUCCEEDED
+quickly.** The data was found. The check says it was not.
+
+⚠️ **The intermittency is what carries it through review.** It only fires when the producer is still
+writing at the moment the consumer quits, so it depends on output size and pipe-buffer timing: small
+inputs pass, the developer's test passes, and it fails on the larger real input some fraction of the
+time. Measured — the same pipeline, five runs each:
+
+| pipeline | `pipefail` | exit |
+|---|---|---|
+| early match, long tail, `… \| grep -q` | on | **141, 141, 141, 141, 141** |
+| the same pipeline | off | 0, 0, 0 |
+| `… \| head -n 1` | on | **141, 141, 141** |
+
+**Remedies, measured rather than assumed — and the obvious one does not work:**
+
+| approach | exit |
+|---|---|
+| capture to a variable, then `printf '%s' "$out" \| grep -q` | **141, 141, 141 — still broken** |
+| `[[ $out == *MATCH* ]]` (no pipe at all) | 0, 0, 0 |
+| `grep -q MATCH <<<"$out"` (here-string) | 0, 0, 0 |
+| consume the whole stream: `n=$(… \| grep -c …)`, then test `n` | 0, 0, 0 |
+
+**Capturing first is not the fix; removing the early exit from a pipe is.** Capturing and then
+piping the captured value into `grep -q` rebuilds the identical hazard one line later, which is the
+trap in the obvious advice: it looks like it addresses the cause and it only moves it.
+
+`|| true` also returns 0, and it is the wrong tool here: it suppresses **every** failure in that
+pipeline, including the ones you want to hear about. Reserve it for where an empty match is a
+genuine expected outcome, not to silence a signal.
+
+**And a probe that can fail by RACE needs a repeat-N self-test.** One green run is not evidence
+about a timing-dependent check — run it enough times to see the distribution, and make that repetition
+part of the test rather than something a person does once by hand.
+
 ## An expected value copied from the OUTPUT pins the defect
 
 **A test whose expected value was taken from what the code currently produces is not a test — it is a
