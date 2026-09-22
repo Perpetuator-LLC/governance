@@ -1131,9 +1131,6 @@ accident — so the defect cannot appear in them. Two properties that do it:
   guard whose failure requires a producer still writing when its consumer exits passes **0/10** on a
   small fast fixture and fails **5/5** on a realistic input of the same kind. The fixture was correct
   in shape and wrong in scale, and scale was the whole mechanism.
-- **Structure-preserving.** The input is perturbed in a way that leaves the property under test
-  intact — a transformation that looks dramatic while conserving exactly the invariant the defect
-  would violate.
 - **Scope-bounded — sized right, scoped wrong.** The input is large enough for the mechanism to
   engage, but the test only *observes* part of it, and the effect lands in the part it never looks
   at. Measured on the same broken read-with-a-cursor: **30 rows with only 20 observed passes 20/20**,
@@ -1159,11 +1156,17 @@ accident — so the defect cannot appear in them. Two properties that do it:
   identical mutation applied **before** or **after** them passes **20/20 against the same broken
   code**. Nothing in the fixture looks wrong, because nothing is.
 
-⚠️ **"Make it maximally different" is the instinct that produces an unfalsifiable test.** An extreme
-input feels like a strong test and is chosen for that reason, but extremity is not the same as
-*exercising the mechanism*, and a symmetric extreme can conserve the very thing being probed.
-**Construct the fixture from the DEFECT'S MECHANISM, not from a plausible extreme**: ask what
-condition must hold for the bug to appear, then build the smallest input that makes it hold.
+**One sentence subsumes every shape above: state the property of the REAL input that makes the defect
+appear, and show the fixture has it.** Both halves carry weight. Naming the property is what stops
+you reaching for a plausible extreme instead — and *"make it maximally different"* is exactly the
+instinct that produces an unfalsifiable test, because extremity is not the same as exercising the
+mechanism. Showing the fixture has the property is what catches the four failures above, each of
+which was a fixture nobody had checked against the property it was supposed to embody.
+
+⚠️ **The shapes are not a checklist to run down.** They are what "lacks the property" happened to
+look like four times; the next one will look like something else. The property is the invariant, and
+it has to be written down before the fixture is built, because afterwards every fixture looks like it
+has it.
 
 **So the acceptance step is one line: show the fixture producing a RED result before trusting its
 green one.** Core already requires a detector to be proven against a known-bad control; this is the
