@@ -339,6 +339,33 @@ runnable, and reviewable, while the private half stays a small diffable set of d
 The split is what makes "should this repo be public?" answerable at all — otherwise a single
 internal hostname anywhere in the tree vetoes publishing the whole thing forever.
 
+**The same split governs the repo's WRITING, and there the divider is AUDIENCE, not polish.** Two
+top-level directories: **`docs/`** is the published manual — architecture, API reference, runbooks,
+decision records, guides — readable by anyone who gets the repo, including a customer, a
+contributor or a future owner. **`notes/`** is internal: working notes, investigations, scratch
+analysis, session and hand-off records, and anything naming internal hosts, engagement specifics or
+unshipped plans.
+
+⚠️ **Do not split it by draft-versus-finished.** That is a lifecycle property, it already has a
+`status` field, and a draft can be perfectly publishable while a polished internal analysis never
+is. Audience is the property that decides whether a file can be shipped, open-sourced, handed to a
+client or attached to a proposal — and it has to be answerable **from the path, before anyone opens
+the file.** A tree that mixes the two turns "can we publish this?" into a per-file review every
+single time.
+
+What follows immediately:
+
+- **Publishing, or handing the repo to someone else, becomes one reviewable operation** — remove
+  the internal directory — instead of a file-by-file audit. **If that operation would not be safe,
+  the split is already broken, and that is the bug to fix** rather than a reason to audit.
+- **A redaction sweep starts in the published directory.** An internal hostname or ticket reference
+  there is the finding; the same string in the internal directory is expected and is not.
+- **Internal is not unreviewed.** Those files are committed and reviewed like any others — they are
+  in the repo because the next person working here needs them, and separate because the next
+  *reader* may not be one of us.
+- **Session records and hand-off exports are always internal**, whatever they contain: they name
+  people, seats and systems by construction.
+
 **Private is not a licence to commit secrets.** The overlay is *lower-sensitivity*, not
 *safe*; the same secret-scanning gate and the same store-everything-else rule apply. If a value
 would burn on disclosure, it belongs in the store even in the private repo.
