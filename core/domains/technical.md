@@ -1052,6 +1052,26 @@ trap in the obvious advice: it looks like it addresses the cause and it only mov
 pipeline, including the ones you want to hear about. Reserve it for where an empty match is a
 genuine expected outcome, not to silence a signal.
 
+⚠️ **The hazard needs TWO conditions, so the SHAPE alone is not a defect.** The consumer must exit
+early **and** the producer must still be writing when it does. A match that lands near the END of a
+long stream returns 0 every time, because the consumer reads to the end before it has an answer and
+nobody exits early — measured 0/3 on streams of 200 KB and 3 MB. So a pipeline containing
+`| grep -q` is a candidate, never a finding: **reproduce it before filing one.** A scan whose real
+producer emits only a few lines is not affected, however alarming the grep looks.
+
+**Do not reduce the second condition to a byte threshold.** It is tempting to say "safe below one
+pipe buffer", and measurement does not support it: with a two-process producer the failure appeared
+**intermittently at a tail of about 1 KB**, and with a single-process producer it was clean at 100
+lines, intermittent at 1,000, and deterministic by 20,000. There is a gradient, its boundary moves
+with how the producer is built, and **the intermittent band is the dangerous part** — a check that
+passes three times there is not fixed. Treat any early-exiting consumer on a stream you do not
+control as exposed.
+
+**The strongest remedy is to remove the pipe, not to mitigate it.** Where the producer can be asked
+for a bounded result directly — a `--count=1`-style flag, a query that returns one row — there is no
+second process to kill and the condition cannot arise: measured 0/3. The pipe-free forms above are
+the fallback for when the producer cannot be bounded.
+
 ⚠️ **Generalise the near-miss: a remedy stated as INTENT must show its SYNTAX whenever the obvious
 completion re-creates the defect.** *"Capture once and match against that"* is a true sentence and an
 unusable instruction — the natural way to finish it is to pipe the captured value into the same
