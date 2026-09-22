@@ -309,6 +309,45 @@ Rules:
 
 Copy the repo's existing end-to-end enum (there is usually one) rather than inventing a new pattern.
 
+### A FILTER argument is a boundary too, and the failure there is matching SEMANTICS
+
+The shape above is an argument that is *untyped*. A filter can be typed and still wrong: **a filter
+over a closed vocabulary must match EXACTLY.** A substring lookup there accepts values the vocabulary
+does not contain and answers with a **superset** of the intended rows. Two failure modes, one
+invariant — keep them together, because a reviewer who fixes one and not the other has fixed nothing:
+
+- **the exact option is absent or unusable**, so a caller reaches for the loose one; and
+- **the argument looks exact and is not** — the dangerous half, because a careful reader is not warned.
+
+⚠️ **The grep shape: two arguments for the SAME field that disagree on matching semantics.** One
+enum-typed and exact, one string-typed and loose, over the same closed set — **one of them is wrong
+by construction.** Searching for loose lookups alone is noise: substring matching is correct and
+intended on a display name or a description. What makes it a defect is the field ranging over a
+**closed set**.
+
+**Take the inventory from the GENERATED SCHEMA, not the filter class.** Frameworks generate arguments
+from a declarative field list, so they appear nowhere in the source you are reading and the class
+body systematically under-reports what the API exposes. A reviewer grepping only the source sees the
+hand-written half and concludes the surface is smaller than it is.
+
+**The consequence class is not "a wrong row" — it is a wrong row that biases a DECISION.** Nothing
+errors, nothing is empty, so nothing is ever filed. Measured instance: a vocabulary value annotated
+in source as deprecated in favour of three successors **over-matches exactly those three**, so a query
+asking *"how much is the deprecated thing still used?"* returns four times its true value — a
+measurement that lies in the direction of inaction, about the very migration it was run to check. A
+wrong number nobody acts on is a bug; a wrong number that argues against finishing a migration gets
+acted on.
+
+**Narrowing a shipped filter is a semantic change to a contract, so price the blast radius first.**
+Enumerate every consumer before tightening it — and have the owning lane confirm its own side rather
+than accepting your reading of their code. That check costs minutes and is what separates narrowing
+from breaking.
+
+⚠️ **A commented-out attempt is evidence somebody sketched, not evidence it cannot work.** It reads
+as *"this was tried and failed"* and is treated as a closed question. Measured on one such block:
+across all history **no commit ever carried it uncommented** — it was never live, so there was no
+failure to learn from. Check the history before inheriting the conclusion.
+
 ## An invariant with more than one SOURCE is answered by ONE choke-point function
 
 **Money (an allowance pool plus a paid balance), a quota, a permission: when an invariant can be
