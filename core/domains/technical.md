@@ -366,6 +366,18 @@ What follows immediately:
 - **Session records and hand-off exports are always internal**, whatever they contain: they name
   people, seats and systems by construction.
 
+⚠️ **The published half lives IN the repository, not in the forge's wiki.** A wiki is a **separate
+git repository** — its own URL, its own refs — so moving a directory in the code repo never
+populates it and nothing holds the two in step. Measured on one forge: a repo's wiki URL resolved
+successfully with **zero refs** while the code repo listed dozens of branches, so the wiki looked
+available and was simply a different, empty repository. Its pages are also a flat namespace of
+names rather than paths, which means it **cannot carry the audience boundary this rule depends on**:
+there is no directory to remove and no path to read the answer from.
+
+The deciding property is the same one that makes the split work at all: **documentation kept beside
+the code changes in the same commit and is reviewed in the same pull request.** A wiki drifts
+because nothing ties a page to the change that invalidated it.
+
 **Private is not a licence to commit secrets.** The overlay is *lower-sensitivity*, not
 *safe*; the same secret-scanning gate and the same store-everything-else rule apply. If a value
 would burn on disclosure, it belongs in the store even in the private repo.
