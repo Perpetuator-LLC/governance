@@ -1362,11 +1362,11 @@ pre-fix system.
 
 They are opposites, and the difference decides what you look for:
 
-| | *Absence-as-health* | **This rule** |
-|---|---|---|
-| What happens | a check that matches nothing goes **green** | a check that is now mistyped goes **permanently red** |
-| Why it survives | silence reads as success | noise reads as a broken monitor |
-| How it is "fixed" | nobody notices | someone widens or mutes it — converting the detector into the blind spot it existed to catch |
+| | *Absence-as-health* | **This rule** | **Guard stops selecting** |
+|---|---|---|---|
+| What happens | a check that matches nothing goes **green** | a check that is now mistyped goes **permanently red** | the check's guard no longer matches, so it emits **nothing at all** |
+| Why it survives | silence reads as success | noise reads as a broken monitor | there was never any output to miss |
+| How it is "fixed" | nobody notices | someone widens or mutes it — converting the detector into the blind spot it existed to catch | it is not fixed; nothing records that it stopped |
 
 The failure mode here is **not** that the alarm is ignored by accident. It is that a permanently-red
 detector invites the obvious repair — silence it — and silencing it is indistinguishable from fixing
@@ -1401,6 +1401,50 @@ in its lifecycle, and diagnosing the system is time spent on a claim nobody has 
 
 Same family as the mistyped check above, arrived at from the opposite direction: there the check
 stopped matching its subject, here the subject stopped existing on either side of the check.
+
+### The third shape: a guard written for the OLD type makes the check VANISH
+
+A detector for a representation is almost always *gated* on that representation — `if it is a
+symlink…`, `if the response is JSON…`, `if the file exists…`. **Change the representation and the
+guard simply stops selecting. The check does not pass and does not fail: it does not run, and no
+output anywhere says so.** Red and green both prove a check executed. Silence proves nothing, which
+is why this shape outlives the other two — there is no noisy row to investigate and no green badge
+to distrust.
+
+**So the migration that changes the type is exactly the moment the old detector goes quiet, and it
+is the only moment anyone would have thought about it.** Move the detector in the same change that
+moves the mechanism. A detector left behind is not deprecated, it is invisible.
+
+Two things make the shape findable afterwards:
+
+1. **Make the guard TOTAL.** A branch per representation the mechanism can now be in, plus an
+   explicit `else` that reports *"this check did not recognise what it was pointed at"*. An
+   unrecognised type is a finding, never a silent skip.
+2. **Positive-control it in BOTH directions before shipping** — perturb the system and see the
+   finding fire and name the right subject; restore it and see silence. Run the healthy case
+   *first*: a "negative control" on a system that is already broken passes for the wrong reason,
+   and a control run against a script that aborts before reaching the check passes for no reason
+   at all.
+
+**A model's KNOWN failure mode needs a detector that survives the model's own migration.** Where
+distribution moves from *linking* to *rendering*, staleness becomes the failure mode by
+construction — the rendered copy is correct only until a source changes — so the freshness check is
+part of the rendering model, not an accessory to it. Exhibit: config distributed by symlinking into
+a checkout was replaced by files rendered from layered sources; the freshness check was gated on
+the resident file being a symlink; it therefore stopped running at the cut-over and stayed silent
+while merged security rules — including a mandatory gate written for a live incident — were absent
+from every session for the better part of a day. Nothing failed. The check was simply no longer
+about anything.
+
+### A detector's printed REMEDY is part of the detector
+
+The remedy a finding prints will be run by someone who has not re-derived the situation — that is
+its purpose. **So the detector must verify the preconditions its own remedy assumes**, or it
+becomes the instruction that causes the next incident. In particular, a remedy that rebuilds
+something *from a working tree* assumes that tree holds only what is merged; a lane sitting on a
+feature branch would publish its unmerged draft by following the advice, turning a freshness
+warning into a review bypass. Measure against the merged ref (*never the working tree*, above) and
+say so when the tree is not in the state the remedy needs.
 
 ## Definition of done: a service isn't deployed until its backups are PROVEN
 
