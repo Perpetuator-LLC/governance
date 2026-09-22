@@ -1052,6 +1052,13 @@ trap in the obvious advice: it looks like it addresses the cause and it only mov
 pipeline, including the ones you want to hear about. Reserve it for where an empty match is a
 genuine expected outcome, not to silence a signal.
 
+⚠️ **Generalise the near-miss: a remedy stated as INTENT must show its SYNTAX whenever the obvious
+completion re-creates the defect.** *"Capture once and match against that"* is a true sentence and an
+unusable instruction — the natural way to finish it is to pipe the captured value into the same
+early-exiting consumer, which is the original bug one line further down. A remedy whose most likely
+reading is the defect has not been written down yet, however correct its intent. Where the failure
+lives in the syntax, the fix is syntax: show the line.
+
 **And a probe that can fail by RACE needs a repeat-N self-test.** One green run is not evidence
 about a timing-dependent check — run it enough times to see the distribution, and make that repetition
 part of the test rather than something a person does once by hand.
