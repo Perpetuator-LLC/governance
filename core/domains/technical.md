@@ -324,6 +324,82 @@ choke-point function and the bypass test **by name**, and its walk exercises the
 quiet: the new source is acquired correctly, shown correctly, and never spent, because one consumer
 still reads the old source directly.
 
+## A write path that does more than STORE is a choke point too
+
+The rule above is about reading an invariant from several sources. Its mirror is the write side, and
+it fails more quietly: **when an existing write path does something beyond storing the value —
+strips identifying metadata, normalises an encoding, derives a companion artifact, enforces a size
+bound — every new writer must go through one function, and the extra step must be asserted on the
+NEW path.**
+
+The danger is that the second writer looks trivially correct. Storing bytes *is* the obvious job; the
+sanitisation is invisible at the call site, absent from the field's name, and usually documented
+only in the first caller. So a CLI, an importer, a migration or a fixture loader gets written that
+"just sets the field", and the result is indistinguishable from the correct one on every screen —
+the artifact renders, the tests pass, and the thing that was being stripped is now published.
+
+**"Both callers use the same helper" is not an assertion, it is the thing that stops being true.**
+It is true on the day the second caller is written and silently false after the next refactor, which
+is exactly when nobody re-reads it. So the test for the extra step is repeated against the new path,
+on input that actually carries what is being defended against — not because that caller is suspected,
+but because the duplicated assertion is the only thing that fires when the paths diverge.
+
+Two corollaries:
+
+- **Put the permission check in the CALLERS, not the shared function.** The API enforces
+  authorisation; an operator tool exists to act without it. A `skip_permissions=True` parameter on
+  the shared function is how a bypass becomes reachable from the request path.
+- **A field whose write path sanitises should be hard to write any other way.** If setting it
+  directly is one line, someone will write that line.
+
+## A tool that BYPASSES the permission model is shaped by how cheaply it can be verified
+
+Operator tooling that repairs live data — fixing a lockout, correcting ownership, setting content
+nobody can reach through the product — necessarily acts outside the authorisation model. That is
+legitimate and often the only option: a permission system working correctly will produce states that
+cannot be repaired from inside it. What makes it safe is not restraint in what it can do, but how
+hard it is to run blind:
+
+| Property | Why |
+|---|---|
+| **Read-only subcommands exist and are the obvious first move** | Most "something is broken" reports are answered by a listing. An inspect step that is awkward to reach gets skipped. |
+| **Every mutating action takes a dry run that names the row** | The dry run must print the same lines as the real one, or it is not a rehearsal of it. |
+| **Targets match EXACTLY; ambiguity is an error that lists the candidates** | Silently taking the first match is how the wrong production row gets edited. |
+| **The undo is printed at the moment of the change** | An operator who has just made a mistake should not have to derive the reversal. Capture the prior state *before* mutating, or the hint names the new value. |
+| **The repair tool cannot create the condition it exists to fix** | It runs outside the model's own guards, so the guards it bypasses have to be restated in it. |
+
+⚠️ **The last row is the one that gets missed.** A model-level guard (a check that refuses to remove
+the last administrator, a constraint that keeps a record reachable) is enforced on the path the
+product uses. A tool that writes underneath that path does not inherit it — so the tool built to
+resolve lockouts will happily create one. Enumerate the guards on the path being bypassed and
+re-assert the ones that still apply.
+
+Exclusions are a design statement: name the operations deliberately left out and why, so the next
+person extends it on purpose rather than discovering the gap mid-incident.
+
+## Gate the AFFORDANCE on the same predicate as the action
+
+When a server refuses an action, the client must not offer it. This is not a security fix — the
+refusal already holds — and that is precisely why it gets deprioritised: nothing leaks, so it reads
+as cosmetic. What it actually produces is a control that can only ever fail, which a user reasonably
+reports as a broken product, or as a permissions bug that does not exist.
+
+Three things make the fix stick:
+
+- **Gate the handler as well as the view.** A handler that trusts the template hiding it is one
+  refactor from being wrong, and the template is the easier of the two to change.
+- **A permission fix ENUMERATES the sibling surfaces.** Ungated controls cluster: they were written
+  together, they sit on the same screen, and a fix scoped to the one that was reported leaves the
+  rest. Gating one control and stopping is how the same defect is filed twice.
+- **Mutation-check the gate.** A suite that goes green *before* the gate is added proves nothing
+  about it — it never rendered the control. Remove the guard, watch the new test fail, restore it.
+  Without that step "tests pass" is compatible with the gate not existing.
+
+⚠️ **A user reporting "I can do X" is usually reporting an AFFORDANCE, not a capability.** They saw
+the control; they may never have watched the request fail. Establish which before filing it as a
+hole in the server — the remedies are unrelated, and the wrong one sends people to audit a
+permission model that is working.
+
 ## Public engine, private config
 
 An IaC repo has two kinds of content, and only one of them can ever go public:
