@@ -1031,7 +1031,37 @@ where a region is unavoidable, **read every line of it before removing it**, not
 ⚠️ **This is one member of a wider family: an operation confident about code it has not read.** Its
 siblings are the comment that describes behaviour the function no longer has, and the test bar naming
 a control that was removed months ago — both of which read as authoritative precisely because they
-are written in the codebase's own voice. **A statement inside the repository is evidence about when
+are written in the codebase's own voice. **A statement inside the repository is evidence about when it was written and about what its author INTENDED — never about
+what shipped.
+
+⚠️ **Where an artefact is GENERATED, the generated artefact is the thing; the source that generates
+it is not.** For an API, the schema callers see *is* the surface. A declarative framework synthesises
+arguments from a field list, so they appear **nowhere in the class body** and the source
+**under-reports** the boundary — auditing the class audits half of it. It misleads the other way too:
+read carelessly, source **over-reports**, because a commented-out declaration beside a real one
+scans as part of the interface. Both errors hit one reviewer ninety seconds apart, same file, same
+report — one missing two real arguments, the other inventing one.
+
+⚠️ **Its mirror image: a stale COPY of someone else's artefact, which reports a surface as
+unavailable.** A repo that syncs a neighbour's schema and lints against the copy will confirm its own
+stale answer at every step. Measured: such a copy sat 58 lines behind the original; one capability
+reported blocked had shipped on the other side some time earlier, while a second genuinely was still
+blocked. **Not reliably wrong is the worst property a source can have** — it never earns the distrust
+that would get it re-read.
+
+**And a BLOCKED claim is the one kind of claim nothing ever expires.** A green test is re-run. A
+stale comment is eventually read next to the code. *"Blocked on another team"* is re-read as a fact,
+by the person who wrote it, indefinitely. **Re-measure a blocking claim against the live artefact
+before repeating it** — that single step turned four scattered tickets into one pattern in the
+exhibit behind this rule.
+
+**The general move: read the artefact that DEFINES the surface, not the one that DESCRIBES it** — the
+executed query over the resolver, the deployed revision over the default branch, the code over the
+ticket about the code. In each pairing the defining artefact was available and *cheaper* to read.
+
+⚠️ **Make it mechanical, not a thing a careful reader remembers.** The reviewer above had written this
+rule one section earlier in the same document and then broke it. Stating a rule is not applying it,
+and the gap between the two is exactly where a check belongs.
 it was written, not about what the code does now.** Where a comment and the code disagree, the code
 is the fact and the comment is an artifact with a date on it; treat a confident assertion in prose as
 a hypothesis to re-measure, particularly when it is the reason you were about to skip reading
