@@ -1059,13 +1059,19 @@ nobody exits early — measured 0/3 on streams of 200 KB and 3 MB. So a pipeline
 `| grep -q` is a candidate, never a finding: **reproduce it before filing one.** A scan whose real
 producer emits only a few lines is not affected, however alarming the grep looks.
 
-**Do not reduce the second condition to a byte threshold.** It is tempting to say "safe below one
-pipe buffer", and measurement does not support it: with a two-process producer the failure appeared
-**intermittently at a tail of about 1 KB**, and with a single-process producer it was clean at 100
-lines, intermittent at 1,000, and deterministic by 20,000. There is a gradient, its boundary moves
-with how the producer is built, and **the intermittent band is the dangerous part** — a check that
-passes three times there is not fixed. Treat any early-exiting consumer on a stream you do not
-control as exposed.
+⚠️ **It is a RACE, not a size — and no byte threshold can express it.** The discriminator is whether
+the producer is **still scheduled to write** when the consumer exits, which depends on how slow the
+producer is, not how much it emits. Measured on the same ~60 bytes: a producer that pauses mid-stream
+failed **10/10**, while the identical bytes emitted without a pause failed **0/10**. That is three
+orders of magnitude below any pipe-buffer figure, so *"safe below one buffer"* is not a conservative
+simplification — it is a rule that would classify a real, flaking guard as safe. A slow producer is
+the common case in practice: anything that queries a network, a lock, a cloud API or another process
+can stall between bytes.
+
+**And the discriminator is `pipefail`, not the shell.** The same construct returns 0 without it and
+141 with it, in bash and zsh alike — measured 0/0/0 versus 141/141/141 in each. A probe that looks
+shell-dependent is really pipefail-dependent, so **switching shells does not fix it and a check run
+without `pipefail` gives a false all-clear** regardless of which shell ran it.
 
 **The strongest remedy is to remove the pipe, not to mitigate it.** Where the producer can be asked
 for a bounded result directly — a `--count=1`-style flag, a query that returns one row — there is no
