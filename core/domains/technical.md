@@ -1011,6 +1011,23 @@ it **PASSES**, beside one **known-BAD** artifact it **FAILS**. One without the o
 calibration — the known-bad alone proves it can fire, which is exactly the evidence a
 fires-on-everything checker also produces.
 
+⚠️ **And when a probe is run across a SET to compare its members, the evidence is the
+DIFFERENTIATION — not the values.** A broken probe returns the same thing for every input, which is
+precisely what a working probe returns when the answer is genuinely uniform. **The two are
+indistinguishable from the outputs alone**, so agreement across a control set is a *smell*, not
+reassurance. This inverts the intuition — consistent results feel like corroboration — which is why
+it survives review.
+
+Measured: three versions of one package audited with a flag the pinned tool does not accept returned
+three identical errors. **Three matching non-answers read as three consistent results.** The
+corrected run returned *vulnerable / vulnerable / clean*, and it was the difference that made it
+evidence. Reproduced here in one command: an invalid flag passed with three different inputs
+produces three identical refusals — perfect agreement, zero information.
+
+**So a control set contains at least one input whose expected answer DIFFERS from the subject's, and
+the assertion is on the difference rather than on the subject's value alone.** A probe that cannot be
+shown to disagree with itself somewhere has not been shown to be reading its input at all.
+
 **Measured root cause, because the shape recurs: hand-parsing a structured format.** A line regex
 over YAML read a block sequence as empty, so the gate fired on **every correctly-formed record** —
 and its remediation would have corrupted them. A checker that is wrong in the FIRING direction is
