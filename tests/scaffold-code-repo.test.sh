@@ -110,6 +110,17 @@ check "…and both local linters are pinned to a rev, never a moving ref" \
 
 check "…and fetches only from the vendor's own release URL" \
   "grep -q 'github.com/gitleaks/gitleaks/releases/download' '$S/$CI'"
+# A dependency gate is not optional for a repo that will grow a manifest. Asserting
+# the JOB exists is not enough — assert it separates runtime from dev, because a
+# combined scan either blocks a release on a test-runner advisory or hides a real
+# runtime CVE behind "it is only dev".
+check "the CI gate scans dependencies for CVEs" \
+  "grep -q 'pip-audit' '$S/$CI'"
+check "…separating RUNTIME from DEV, reported separately" \
+  "grep -q 'RUNTIME' '$S/$CI' && grep -qi 'runtime.txt' '$S/$CI' && grep -qi 'dev.txt' '$S/$CI'"
+check "…discovering manifests by glob, so a new service cannot opt out silently" \
+  "grep -q 'pyproject.toml' '$S/$CI' && grep -q 'discovered' '$S/$CI'"
+
 check "the CI gate reports an empty test/lint discovery instead of passing silently" \
   "grep -q 'discovered' '$S/$CI' && grep -q 'nothing to lint' '$S/$CI'"
 if command -v gitleaks >/dev/null 2>&1; then

@@ -87,6 +87,57 @@ jobs:
           [ "${#yaml_files[@]}" -eq 0 ] || yamllint -d relaxed "${yaml_files[@]}"
           echo "linted ${#shell_files[@]} shell and ${#yaml_files[@]} YAML file(s)"
 
+      # Dependency CVE scan. A manifest with no gate pointing at it is how a
+      # service ends up audited NOWHERE — the failure this repo's sibling recorded
+      # against buzz-bridge (mcp#318). Any pyproject.toml found here is scanned;
+      # adding a new service cannot silently opt out of the gate.
+      #
+      # RUNTIME and DEV are scanned SEPARATELY and reported separately. They are
+      # different risks: a runtime CVE ships to the user, a dev-only one does not.
+      # Collapsing them either blocks a release on a test-runner advisory or hides
+      # a real one behind "it's only dev".
+      - name: Dependency audit (pip-audit)
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          manifests=(services/*/pyproject.toml)
+          echo "discovered ${#manifests[@]} python manifest(s)"
+          if [ "${#manifests[@]}" -eq 0 ]; then
+            echo "::warning::no python manifests — nothing audited (reported, not silent)"
+            exit 0
+          fi
+          SUDO=""; [ "$(id -u)" = 0 ] || SUDO="sudo"
+          if ! command -v pip-audit >/dev/null 2>&1; then
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y -qq python3-pip python3-venv
+            # --timeout/--retries: a pypi ReadTimeoutError must not turn a clean
+            # tree into a red run whose dependency state is UNKNOWN.
+            pip install --break-system-packages --timeout 60 --retries 5 \
+              poetry pip-audit poetry-plugin-export
+          fi
+          pip-audit --version
+          fails=0
+          for m in "${manifests[@]}"; do
+            d="$(dirname "$m")"; n="$(basename "$d")"
+            echo "── $n"
+            ( cd "$d" && poetry export --without-hashes -f requirements.txt -o "/tmp/$n-runtime.txt" ) || { echo "::error::$n: export failed"; fails=$((fails+1)); continue; }
+            ( cd "$d" && poetry export --without-hashes --with dev -f requirements.txt -o "/tmp/$n-dev.txt" ) || cp "/tmp/$n-runtime.txt" "/tmp/$n-dev.txt"
+            if pip-audit -r "/tmp/$n-runtime.txt" --strict --desc; then
+              echo "   runtime: clean"
+            else
+              echo "::error file=$m::$n RUNTIME dependencies have known CVEs — this ships to users"
+              fails=$((fails+1))
+            fi
+            if pip-audit -r "/tmp/$n-dev.txt" --strict; then
+              echo "   dev: clean"
+            else
+              echo "::error file=$m::$n DEV dependencies have known CVEs"
+              fails=$((fails+1))
+            fi
+          done
+          echo "audited ${#manifests[@]} manifest(s), $fails failure(s)"
+          [ "$fails" -eq 0 ]
+
       # Every `tests/*.test.sh` suite. A repository that has not written one yet is not a
       # failure -- but the COUNT is always printed, so "0 suites" is a visible fact rather
       # than a green tick meaning nothing. Raise the floor as suites are added; never lower
