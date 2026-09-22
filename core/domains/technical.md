@@ -1309,6 +1309,32 @@ is the fact and the comment is an artifact with a date on it; treat a confident 
 a hypothesis to re-measure, particularly when it is the reason you were about to skip reading
 something.
 
+## A render source that is a WORKING TREE inherits that tree's branch
+
+**When the thing a publisher reads is a checkout, what it publishes depends on where someone left
+that checkout.** Nothing in the publishing command says which revision it is about to ship — the
+branch is ambient state, set by whoever last used the directory for something else. Measured: a
+core-content clone serving every instruction file on a machine was left on a feature branch, one
+commit ahead of the default; any routine re-render would have published unmerged content into every
+session, and the review gate would have been bypassed by a `checkout` rather than by a decision.
+
+**So a publisher either pins its source revision or asserts it before writing** — and the assertion
+belongs in the tool, because the failure is silent: a checkout on the wrong branch looks exactly like
+one on the right branch.
+
+⚠️ **The mirror failure is staleness, and it is the one the render model accepts by design.** A
+rendered output is only as current as the last render, so a rule can merge and reach nobody. Measured
+alongside the above: two security rules sat merged and unrendered for about 21 hours, including the
+gate written to stop a live incident. **A model whose known failure mode is staleness needs something
+that checks for staleness** — the design is only honest if the detector exists and runs.
+
+⚠️ **And when comparing a rendered output, compare what the FORMAT means, not its bytes.** A file its
+own application rewrites — a settings or configuration file re-serialised when someone toggles a
+value — changes hash with no human involved, and a byte comparison then reports a hand edit that
+never happened. Measured: differing hash, identical size, parsed content deep-equal. **A drift check
+that cries wolf on an application's own writes trains its reader to discount it**, which costs more
+than the drift it was meant to catch.
+
 ## An expected value copied from the OUTPUT pins the defect
 
 **A test whose expected value was taken from what the code currently produces is not a test — it is a
