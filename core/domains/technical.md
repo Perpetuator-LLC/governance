@@ -1232,6 +1232,74 @@ same requirement aimed at the fixture rather than the detector, and it is the on
 skipped — because a green test looks like success, and a fixture that cannot fail looks exactly like
 a fixture that passes.
 
+## An edit addressed by REGION is a claim about every line in that region
+
+**"Delete lines N to M" asserts that all of them are dead.** Addressing a change by position rather
+than by identity moves the burden of proof from the thing you meant to remove onto the whole span,
+and the span is exactly what nobody re-reads: the author verified the *first* dead method and the
+*last* one, and the live method sitting between them was never named in anyone's reasoning. Measured
+instance: a deletion by line region swallowed a live method that another feature called — caught by a
+spec, restored, and reported rather than quietly patched.
+
+**So address edits by identity where the tooling allows it** — by symbol, by node, by name — and
+where a region is unavoidable, **read every line of it before removing it**, not just its ends.
+
+⚠️ **This is one member of a wider family: an operation confident about code it has not read.** Its
+siblings are the comment that describes behaviour the function no longer has, and the test bar naming
+a control that was removed months ago — both of which read as authoritative precisely because they
+are written in the codebase's own voice. **A statement inside the repository is evidence about when it was written and about what its author INTENDED — never about
+what shipped.
+
+⚠️ **Read the artefact that DEFINES a surface, never the one that DESCRIBES it.** Source describes
+intent; a generated schema, an executed query, a deployed revision, the code itself — those are the
+surface. The pairings recur: executed query over resolver, deployed revision over default branch,
+code over the ticket about the code, and a peer's summary over the thing they summarised.
+
+⚠️ **For a SCHEDULED job the defining artefact is the working tree on disk at the path it runs from**
+— not a release, not a tag, not a branch. A script living only on an integration branch is
+unreachable to a job reading the default branch, so *"merged to the integration branch and the gate
+passed"* is a true claim about a branch and says nothing about what the job can call. Measured:
+wiring a nightly watch to a script in exactly that state would have produced a step failing silently
+every night, in a job whose own header notes that a scheduled run has no reader. **In every
+one of them the defining artefact was available and cheaper to read than the describing one.** The
+generated-schema case below is the sharpest instance, not the whole rule.
+
+⚠️ **Where an artefact is GENERATED, the generated artefact is the thing; the source that generates
+it is not.** For an API, the schema callers see *is* the surface. A declarative framework synthesises
+arguments from a field list, so they appear **nowhere in the class body** and the source
+**under-reports** the boundary — auditing the class audits half of it. It misleads the other way too:
+read carelessly, source **over-reports**, because a commented-out declaration beside a real one
+scans as part of the interface. Both errors hit one reviewer ninety seconds apart, same file, same
+report — one missing two real arguments, the other inventing one.
+
+⚠️ **Its mirror image: a stale COPY of someone else's artefact, which reports a surface as
+unavailable.** A repo that syncs a neighbour's schema and lints against the copy will confirm its own
+stale answer at every step. Measured: such a copy sat 58 lines behind the original; one capability
+reported blocked had shipped on the other side some time earlier, while a second genuinely was still
+blocked. **Not reliably wrong is the worst property a source can have** — it never earns the distrust
+that would get it re-read.
+
+**And a BLOCKED claim is the one kind of claim nothing ever expires.** A green test is re-run. A
+stale comment is eventually read next to the code. *"Blocked on another team"* is re-read as a fact,
+by the person who wrote it, indefinitely. **Re-measure a blocking claim against the live artefact
+before repeating it** — that single step turned four scattered tickets into one pattern in the
+exhibit behind this rule.
+
+⚠️ **Make it mechanical, not a thing a careful reader remembers.** The reviewer above had written
+this rule one section earlier in the same document and then broke it — so an acceptance step that
+depends on remembering will not hold.
+
+**The step: a claim must QUOTE the defining artefact, and the quote is what a reviewer checks the
+absence of.** A claim about an API surface quotes the exported schema line, not the class. A claim
+about what merged quotes the content at that revision, not the request's state. A claim about a query
+count quotes the executed statement, not the resolver. **An unquoted claim is not a weaker claim, it
+is an unreviewable one** — and absence is far easier to spot than a wrong quote, which is the property
+that makes this enforceable at all.
+it was written, not about what the code does now.** Where a comment and the code disagree, the code
+is the fact and the comment is an artifact with a date on it; treat a confident assertion in prose as
+a hypothesis to re-measure, particularly when it is the reason you were about to skip reading
+something.
+
 ## An expected value copied from the OUTPUT pins the defect
 
 **A test whose expected value was taken from what the code currently produces is not a test — it is a
