@@ -1016,6 +1016,164 @@ attributed to anything except its cause.
 Same refusal as *a service isn't deployed until its backups are PROVEN*: **a suite that passes while
 mutating production is not a passing suite — it is an unmeasured side effect wearing a tick.**
 
+## Under `pipefail`, an early-exiting consumer makes a SUCCESSFUL search report failure
+
+**`set -o pipefail` makes a pipeline fail if ANY stage fails — and a consumer that stops reading
+early kills its producer with a broken pipe.** `grep -q`, `head -n`, `jq -e` and friends exit the
+moment they have their answer; the producer, still writing, dies on `SIGPIPE` and exits `141`; the
+pipeline reports `141`. **So the guard reports failure precisely because the search SUCCEEDED
+quickly.** The data was found. The check says it was not.
+
+⚠️ **The intermittency is what carries it through review.** It only fires when the producer is still
+writing at the moment the consumer quits, so it depends on output size and pipe-buffer timing: small
+inputs pass, the developer's test passes, and it fails on the larger real input some fraction of the
+time. Measured — the same pipeline, five runs each:
+
+| pipeline | `pipefail` | exit |
+|---|---|---|
+| early match, long tail, `… \| grep -q` | on | **141, 141, 141, 141, 141** |
+| the same pipeline | off | 0, 0, 0 |
+| `… \| head -n 1` | on | **141, 141, 141** |
+
+**Remedies, measured rather than assumed — and the obvious one does not work:**
+
+| approach | exit |
+|---|---|
+| capture to a variable, then `printf '%s' "$out" \| grep -q` | **141, 141, 141 — still broken** |
+| `[[ $out == *MATCH* ]]` (no pipe at all) | 0, 0, 0 |
+| `grep -q MATCH <<<"$out"` (here-string) | 0, 0, 0 |
+| consume the whole stream: `n=$(… \| grep -c …)`, then test `n` | 0, 0, 0 |
+
+**Capturing first is not the fix; removing the early exit from a pipe is.** Capturing and then
+piping the captured value into `grep -q` rebuilds the identical hazard one line later, which is the
+trap in the obvious advice: it looks like it addresses the cause and it only moves it.
+
+`|| true` also returns 0, and it is the wrong tool here: it suppresses **every** failure in that
+pipeline, including the ones you want to hear about. Reserve it for where an empty match is a
+genuine expected outcome, not to silence a signal.
+
+⚠️ **The hazard needs TWO conditions, so the SHAPE alone is not a defect.** The consumer must exit
+early **and** the producer must still be writing when it does. A match that lands near the END of a
+long stream returns 0 every time, because the consumer reads to the end before it has an answer and
+nobody exits early — measured 0/3 on streams of 200 KB and 3 MB. So a pipeline containing
+`| grep -q` is a candidate, never a finding: **reproduce it before filing one.** A scan whose real
+producer emits only a few lines is not affected, however alarming the grep looks.
+
+⚠️ **It is a RACE, not a size — and no byte threshold can express it.** The discriminator is whether
+the producer is **still scheduled to write** when the consumer exits, which depends on how slow the
+producer is, not how much it emits. Measured on the same ~60 bytes: a producer that pauses mid-stream
+failed **10/10**, while the identical bytes emitted without a pause failed **0/10**. That is three
+orders of magnitude below any pipe-buffer figure, so *"safe below one buffer"* is not a conservative
+simplification — it is a rule that would classify a real, flaking guard as safe. A slow producer is
+the common case in practice: anything that queries a network, a lock, a cloud API or another process
+can stall between bytes.
+
+**And the discriminator is `pipefail`, not the shell.** The same construct returns 0 without it and
+141 with it, in bash and zsh alike — measured 0/0/0 versus 141/141/141 in each. A probe that looks
+shell-dependent is really pipefail-dependent, so **switching shells does not fix it and a check run
+without `pipefail` gives a false all-clear** regardless of which shell ran it. The **rate** varies —
+the same class of producer missed 10/10 on one machine and roughly a third to two-thirds of the time
+on another — so a low observed rate is never evidence of immunity.
+
+⚠️ **The fixture is where this goes wrong, and it is the most reusable lesson here: a producer that
+cannot race certifies broken code as clean.** Piping a small file through `cat` into the same guard
+returns success **0/10 in every shell, with and without `pipefail`** — it cannot exhibit the failure
+at any size, because a single fast write finishes before the consumer exits. A self-test built on
+that fixture passes on genuinely broken code, and it does so *confidently*.
+
+⚠️ **In a SCANNER the failure inverts into a fail-open, which is why this is not merely a flaky
+guard.** `if producer | grep -q SECRET; then alarm; fi` treats the 141 as *pattern not found*, so the
+scan reports **clean while the thing it hunts is present**. Measured on a producer that emits a
+credential on its first line and keeps writing: **5/5 runs printed "clean"**, the credential there
+every time. A guard that refuses to proceed announces itself; a scanner that fails this way is
+silent, and its silence is the success signal everyone downstream is waiting for.
+
+**The mirror of "reproduce before filing" is the trap behind every wrong answer here: a PASSING
+fixture proves nothing about a gate unless that fixture can make the gate FAIL.** Core already
+requires a detector to be proven against a known-bad control; this aims the same requirement at the
+*fixture*. A scan certified safe on a two-line fixture failed 5/5 on a realistic input of the same
+kind. **Before trusting a green self-test, confirm the fixture can produce a red one.**
+
+**The fixture must be a
+real, slow, multi-write producer** — one that pauses between writes, as a network call, a lock or a
+subprocess does. Three independent investigations of this hazard reached three different conclusions,
+and the fixture is why: each was measuring a construct that raced differently, or did not race at
+all.
+
+**The strongest remedy is to remove the pipe, not to mitigate it.** Where the producer can be asked
+for a bounded result directly — a `--count=1`-style flag, a query that returns one row — there is no
+second process to kill and the condition cannot arise: measured 0/3. The pipe-free forms above are
+the fallback for when the producer cannot be bounded.
+
+⚠️ **Generalise the near-miss: a remedy stated as INTENT must show its SYNTAX whenever the obvious
+completion re-creates the defect.** *"Capture once and match against that"* is a true sentence and an
+unusable instruction — the natural way to finish it is to pipe the captured value into the same
+early-exiting consumer, which is the original bug one line further down. A remedy whose most likely
+reading is the defect has not been written down yet, however correct its intent. Where the failure
+lives in the syntax, the fix is syntax: show the line.
+
+**And a probe that can fail by RACE needs a repeat-N self-test.** One green run is not evidence
+about a timing-dependent check — run it enough times to see the distribution, and make that repetition
+part of the test rather than something a person does once by hand.
+
+## A fixture that cannot EXPRESS the failure certifies it clean
+
+**A passing test proves nothing about a gate until that gate has been seen to fail.** A fixture is
+not a sample of realistic input; it is an instrument, and an instrument that cannot register the
+defect reports *clean* on broken code — confidently, repeatably, and in exactly the place where
+someone will later cite the green run as evidence.
+
+**The failure mode is that the fixture is PLAUSIBLE.** Nobody writes an obviously useless one. They
+are built by careful people, they look like the real thing, and they are shaped — usually by
+accident — so the defect cannot appear in them. Two properties that do it:
+
+- **Size-bounded.** The input is small enough that the mechanism never engages. Measured instance: a
+  guard whose failure requires a producer still writing when its consumer exits passes **0/10** on a
+  small fast fixture and fails **5/5** on a realistic input of the same kind. The fixture was correct
+  in shape and wrong in scale, and scale was the whole mechanism.
+- **Scope-bounded — sized right, scoped wrong.** The input is large enough for the mechanism to
+  engage, but the test only *observes* part of it, and the effect lands in the part it never looks
+  at. Measured on the same broken read-with-a-cursor: **30 rows with only 20 observed passes 20/20**,
+  while **20 rows with 20 observed fails 10/20 with ten duplicates** — same page size, same mutation,
+  same code. The perturbation pushed the first page's rows past the observation window onto a third
+  page the test never read. ⚠️ **The loud version of the defect existed and the fixture hid it**, so
+  a bigger fixture is not automatically a better one. State the mechanism first, then size **and
+  scope** to it: the test must observe the whole range the effect can move things into.
+- **Masked by uniqueness — the input space cannot CONTAIN the case being ruled out.** A test that
+  claims a lookup is exact must include a near-miss that would collide; a dataset where every key
+  happens to be unique cannot tell an identity lookup from a substring one, and will certify the
+  substring one as exact. Measured: a case-insensitive *contains* filter queried with a key present
+  only once returns **1 hit and looks like identity**; the same filter and query against a set
+  holding a near-miss returns **3**. Taking the first result hides it either way. ⚠️ **The shipped
+  failure is silent and plausible** — the caller gets a neighbouring record rather than an error or
+  an empty result, so nobody reports it as a bug. Whenever a test asserts uniqueness, exactness or
+  "resolves to one", the fixture must contain the thing that would break it.
+- **Window-missing, and probably the commonest of these.** The fixture sets up the right
+  condition but applies it *outside the interval where the code is vulnerable* — before the operation
+  starts, or after it finishes. Nothing is wrong with the input; the timing of the perturbation means
+  the vulnerable path is never entered. Measured on a deliberately broken read-with-a-cursor: a
+  mutation landing **between** the two reads exposes it (a row silently never returned), while the
+  identical mutation applied **before** or **after** them passes **20/20 against the same broken
+  code**. Nothing in the fixture looks wrong, because nothing is.
+
+**One sentence subsumes every shape above: state the property of the REAL input that makes the defect
+appear, and show the fixture has it.** Both halves carry weight. Naming the property is what stops
+you reaching for a plausible extreme instead — and *"make it maximally different"* is exactly the
+instinct that produces an unfalsifiable test, because extremity is not the same as exercising the
+mechanism. Showing the fixture has the property is what catches the four failures above, each of
+which was a fixture nobody had checked against the property it was supposed to embody.
+
+⚠️ **The shapes are not a checklist to run down.** They are what "lacks the property" happened to
+look like four times; the next one will look like something else. The property is the invariant, and
+it has to be written down before the fixture is built, because afterwards every fixture looks like it
+has it.
+
+**So the acceptance step is one line: show the fixture producing a RED result before trusting its
+green one.** Core already requires a detector to be proven against a known-bad control; this is the
+same requirement aimed at the fixture rather than the detector, and it is the one that is routinely
+skipped — because a green test looks like success, and a fixture that cannot fail looks exactly like
+a fixture that passes.
+
 ## An expected value copied from the OUTPUT pins the defect
 
 **A test whose expected value was taken from what the code currently produces is not a test — it is a
