@@ -1023,6 +1023,32 @@ The same shape covers any rendered configuration — templated config, generated
 rendered dotfiles. **An artifact that has a generator has exactly one durable edit point, and it is
 not the artifact.**
 
+## A long browser harvest checkpoints to the PAGE, because the session is the fragile part
+
+When an agent harvests data through a browser over many steps, the accumulated result belongs in the
+page's own durable storage (`localStorage`/IndexedDB), written **after every item** — not held in a
+JavaScript variable, and not held in the agent's context. The loop is then restartable: each pass
+re-reads what it already has and fetches only what is missing.
+
+Everything around the data is less reliable than the data. The page navigates and in-memory state
+dies with it; the tool call times out while the work keeps running in the page; the browser
+connection drops mid-run; the site starts throttling after N requests and the approach has to
+change; the single-page app degrades under repeated automation and needs a reload to recover. Each
+of those is survivable when the partial result is already persisted, and each costs the entire
+harvest when it is not. On a long extraction you should expect to meet several of them.
+
+- **Persist inside the loop, not after it.** A write at the end of the batch is the write that never
+  happens on the run that fails.
+- **Key by the item's stable id**, so resuming is a set-difference. A counter is wrong the moment
+  one item fails and the next succeeds.
+- **The readiness probe is part of the data contract.** A probe that fires before the page has
+  rendered stores an empty record that looks complete. Require the thing you actually want — the
+  content nodes present, and their count stable across two polls — before recording anything.
+- **Reconcile against a figure the page states itself.** Comparing a computed sum to a printed
+  total is what catches silently-missing rows; without it, an export that skipped a whole class of
+  items still looks finished.
+- **A tool-call timeout does not mean the work stopped.** Poll the store; do not restart the loop.
+
 ## A fleet audit measures against the FORGE, never against `refs/remotes/*` as found
 
 **`origin/<default>` is a local file.** It is a pointer cached by the last fetch, and its *spelling*
