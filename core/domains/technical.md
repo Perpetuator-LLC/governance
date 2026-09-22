@@ -592,6 +592,26 @@ that invisibility is the real cost: the branch drops out of every sweep keyed on
 so nothing reports it as unmerged, orphaned or stale. Fix the record or fix the convention, and
 until then treat the agent's behaviour as compliant.
 
+**The same read also tells you what is already TAKEN, and that is the half agents skip.** Listing
+the remote's branches is not only how you find your own; it is the roster of work other seats are
+holding. **Before rebuilding anything for a ticket, read that roster and read the ticket's newest
+comment** — a ticket whose latest comment says the work is built or held is TAKEN, and the branch
+naming it is someone else's, however stale the ticket body looks.
+
+⚠️ **Re-pushing commits you did not author under your own branch name is not a naming choice, it is
+a laundering of provenance.** Measured: a seat re-pushed another seat's held branch under its own
+suffix — byte-identical commits, original attribution trailers intact — and opened a second pull
+request on it. The trail broke in both directions at once: the author lost the record that the work
+was theirs, the re-pusher silently inherited responsibility for code they had not written, and the
+merger received two requests for one change with nothing on either saying which was which.
+
+**So: carrying someone else's commits is legitimate and stating it is mandatory.** Put the
+provenance in the pull request body — whose work, which branch it came from, why it is being carried
+— because that body is the only surface a merger reads before clicking. **A rename is never
+attribution**: it changes the one field that looked like authorship while leaving the actual
+authorship evidence pointing somewhere else, which is worse than an unattributed copy because it
+reads as settled.
+
 **Diagnosing a seat that got this wrong: check the text LAST.** Identical rendered instructions
 across harnesses mean the text is not the variable, and "sharpen the wording" is then a fix aimed at
 the wrong layer. Establish in order: did the branch exist, did the record name it, did the record
