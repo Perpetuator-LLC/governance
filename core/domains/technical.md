@@ -1016,6 +1016,27 @@ attributed to anything except its cause.
 Same refusal as *a service isn't deployed until its backups are PROVEN*: **a suite that passes while
 mutating production is not a passing suite — it is an unmeasured side effect wearing a tick.**
 
+## An edit addressed by REGION is a claim about every line in that region
+
+**"Delete lines N to M" asserts that all of them are dead.** Addressing a change by position rather
+than by identity moves the burden of proof from the thing you meant to remove onto the whole span,
+and the span is exactly what nobody re-reads: the author verified the *first* dead method and the
+*last* one, and the live method sitting between them was never named in anyone's reasoning. Measured
+instance: a deletion by line region swallowed a live method that another feature called — caught by a
+spec, restored, and reported rather than quietly patched.
+
+**So address edits by identity where the tooling allows it** — by symbol, by node, by name — and
+where a region is unavoidable, **read every line of it before removing it**, not just its ends.
+
+⚠️ **This is one member of a wider family: an operation confident about code it has not read.** Its
+siblings are the comment that describes behaviour the function no longer has, and the test bar naming
+a control that was removed months ago — both of which read as authoritative precisely because they
+are written in the codebase's own voice. **A statement inside the repository is evidence about when
+it was written, not about what the code does now.** Where a comment and the code disagree, the code
+is the fact and the comment is an artifact with a date on it; treat a confident assertion in prose as
+a hypothesis to re-measure, particularly when it is the reason you were about to skip reading
+something.
+
 ## An expected value copied from the OUTPUT pins the defect
 
 **A test whose expected value was taken from what the code currently produces is not a test — it is a
