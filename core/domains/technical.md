@@ -1142,6 +1142,15 @@ accident — so the defect cannot appear in them. Two properties that do it:
   page the test never read. ⚠️ **The loud version of the defect existed and the fixture hid it**, so
   a bigger fixture is not automatically a better one. State the mechanism first, then size **and
   scope** to it: the test must observe the whole range the effect can move things into.
+- **Masked by uniqueness — the input space cannot CONTAIN the case being ruled out.** A test that
+  claims a lookup is exact must include a near-miss that would collide; a dataset where every key
+  happens to be unique cannot tell an identity lookup from a substring one, and will certify the
+  substring one as exact. Measured: a case-insensitive *contains* filter queried with a key present
+  only once returns **1 hit and looks like identity**; the same filter and query against a set
+  holding a near-miss returns **3**. Taking the first result hides it either way. ⚠️ **The shipped
+  failure is silent and plausible** — the caller gets a neighbouring record rather than an error or
+  an empty result, so nobody reports it as a bug. Whenever a test asserts uniqueness, exactness or
+  "resolves to one", the fixture must contain the thing that would break it.
 - **Window-missing, and probably the commonest of these.** The fixture sets up the right
   condition but applies it *outside the interval where the code is vulnerable* — before the operation
   starts, or after it finishes. Nothing is wrong with the input; the timing of the perturbation means
