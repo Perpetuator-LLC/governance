@@ -570,6 +570,33 @@ cheaper answers a neighbouring question, agrees with the right answer most of th
 exactly when the branch is old — which is when someone is most likely to be nervous and least likely
 to re-check.
 
+## "Read the integration branch, never compute it" — the read returns a LIST, and selecting from it is the hard half
+
+**A rule that says READ rather than COMPUTE has not finished until it says how to SELECT.** Listing
+the integration branches returns every seat's branch, not yours. The candidates look alike by
+construction — they share a prefix and differ only by a suffix naming a seat — so an agent that does
+not firmly know its own seat name picks a plausible wrong one, and a machine-scoped or human-scoped
+branch left over from an earlier convention is the most plausible wrong one of all, because it looks
+like the general-purpose choice.
+
+**So the selection is by exact match on the seat's own identity — lane AND harness — and a near
+match is a stop, not a default.** If exactly one candidate matches, use it. If none does, **create
+it**; a missing branch is not licence to open a feature pull request against the default branch,
+which is the failure this rule exists to prevent and the one an empty read invites. If several match,
+stop and ask: two branches claiming one seat is a collision somebody must adjudicate.
+
+⚠️ **Where a registry records the branch, the record and the naming convention must agree, and a
+mismatch is the registry's defect, not the agent's.** An agent that follows a recorded branch name is
+behaving correctly even when that name is invisible to the convention's own discovery query — and
+that invisibility is the real cost: the branch drops out of every sweep keyed on the convention,
+so nothing reports it as unmerged, orphaned or stale. Fix the record or fix the convention, and
+until then treat the agent's behaviour as compliant.
+
+**Diagnosing a seat that got this wrong: check the text LAST.** Identical rendered instructions
+across harnesses mean the text is not the variable, and "sharpen the wording" is then a fix aimed at
+the wrong layer. Establish in order: did the branch exist, did the record name it, did the record
+agree with the convention, and only then whether the instruction was read.
+
 ## Agent attribution lives in the BODY — the author field is one shared identity
 
 **Write side.** Every agent-authored commit, PR body, review and forge comment carries its own
