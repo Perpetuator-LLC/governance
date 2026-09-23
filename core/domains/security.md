@@ -470,6 +470,13 @@ the deny rule covers what you chose.
 
 - **Deny by the exact tool name** the harness shows for that server, and verify it after connecting:
   a write attempt must be **refused by permissions**, not merely prompted.
+- **Deny every surface the server arrives on.** The same tool server can reach a session under more
+  than one name — added by hand under a chosen name, or attached as an account-level connector under
+  a generated id — and a deny keyed to one name does not cover the other. List the names the harness
+  actually shows, deny each, and **re-verify after any reconnect**: a re-added connector can get a new
+  id, and the old deny then matches nothing, silently.
+- **Do not assume the environment you connected is the only one it reaches.** An account-level
+  connection may expose live as well as test data; check what it reports before relying on "sandbox".
 - **An outbound channel on the same server** (feedback, support messages) is denied too unless there
   is a reason to allow it: it cannot move money, but it can send your data somewhere you did not choose.
 - **Connect sandbox first**, and treat the live-mode connection as a separate grant with its own
