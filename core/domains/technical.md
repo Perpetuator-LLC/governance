@@ -1258,6 +1258,42 @@ same requirement aimed at the fixture rather than the detector, and it is the on
 skipped — because a green test looks like success, and a fixture that cannot fail looks exactly like
 a fixture that passes.
 
+### The same instrument failure in a STATIC CHECKER: validating FORM cannot see a defect in MEANING
+
+A fixture is not the only instrument shaped so the defect cannot appear in it. **A checker that
+validates the FORM of an artefact is structurally unable to see a defect in its MEANING — and the
+two get conflated because both are called "checking the script".**
+
+**Measured, with a control.** A shell parameter expansion that blends substring syntax with
+default-value syntax — `${VAR:0:9:-none}`, a plausible-looking hybrid of two real forms — is
+grammatically well-formed, so the parser is satisfied; the arithmetic context is only evaluated when
+the line executes.
+
+| instrument | verdict on the defective line |
+|---|---|
+| `bash -n` (syntax check) | **passes, silent** |
+| `shellcheck` 0.11.0, shebang present | **passes, exit 0** |
+| executing it | `arithmetic syntax error in expression (error token is ":-none")`, exit 1 |
+| control: the valid `${VAR:0:9}` | all three agree — parses, lints, prints `abcdef012` |
+
+**So the remedy is not a better linter.** Both static instruments certify the line clean; only
+running it produces the defect. **The acceptance step is an assertion that the value actually
+renders**, not a gate that the file parses.
+
+**Why this earns a rule rather than a note.** It manufactures a *true* statement that is load-bearing
+and useless: *"we lint our shell scripts"* becomes accurate the day `bash -n` enters CI, the gate
+passes forever, and nobody re-examines it. The first real failure then lands in production on a path
+that had never run — and in a deploy or recovery script that is disproportionately likely to be the
+**error-handling** path, because error handling is the code that executes least. A gate that is
+green because it cannot fail is the same instrument failure as the fixture above, wearing the
+clothes of tooling rather than of a test.
+
+**The operational form, which generalises past shell:** *name what your check actually evaluates,
+then ask what it cannot see.* Schema validation does not evaluate semantics. A type check does not
+evaluate values. A dry run does not evaluate side effects. Each is worth having; none of them is
+evidence for the layer below it, and a check's name is written by the person who built it, not by
+the failure it will one day have to catch.
+
 ## An edit addressed by REGION is a claim about every line in that region
 
 **"Delete lines N to M" asserts that all of them are dead.** Addressing a change by position rather
