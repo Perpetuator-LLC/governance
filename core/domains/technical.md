@@ -1707,6 +1707,25 @@ what the command does on *your construction*; the question is what it does on th
 actually produces. Here a hunt across live repositories found a real conflicting pair, and it was
 the real one that exposed that the guard could not work at all.
 
+⚠️ **That is scoped to DISCOVERY, and the scope is the whole of it.** Constructing a case is wrong
+for learning behaviour you do not know — it tells you about your construction. It is exactly right
+for **demonstrating that an instrument can fail**, where you already know the answer and are testing
+the test. Read without this, the rule forbids building a positive control, which canon requires a few
+paragraphs above; the two would contradict each other. **Hunt to discover, construct to calibrate.**
+
+⚠️ **And a control you did not verify is not a control, so agreement with it is not corroboration.**
+Two runs reaching the same answer feel like confirmation, and the feeling is the risk: an unverified
+instrument agreeing with a verified one adds **no** evidence, while looking exactly like a second
+opinion. Measured, on the reproduction of this very rule: one lane's control branch merged clean when
+it was expected to conflict (a weak control, proving nothing), and its replacement was built with an
+invalid commit invocation, so both branches stayed at the **same SHA** — merging a branch into itself,
+which is clean by definition and printed as a passing control. Two independent runs then reported the
+same result, and only one of them was licensed to.
+
+**So a corroborating run states whether ITS OWN control fired**, not merely what it concluded. Without
+that line, the second run's agreement is indistinguishable from the second run being broken in a way
+that happens to agree — and agreement is the outcome a broken instrument produces most easily.
+
 ⚠️ **Third, and it decides what the DETECTOR is keyed on: a symptom is a function of the consumer's
 parsing, so a detector written from one observed symptom encodes that observer's choices rather than
 the defect.** Two readers hit the same failure above and saw different things — taking the first
