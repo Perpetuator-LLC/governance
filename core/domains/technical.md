@@ -1547,6 +1547,33 @@ session, and the review gate would have been bypassed by a `checkout` rather tha
 belongs in the tool, because the failure is silent: a checkout on the wrong branch looks exactly like
 one on the right branch.
 
+⚠️ **And the assertion is on the COMMIT, not the branch: "on the right branch" is not "at the right
+commit".** The branch name is the reassuring part and it is the part that stays correct while the
+defect exists. A source left **behind** the merged tip renders **without** work that is already
+merged — no error, no conflict, and every consumer quietly loses rules that were reviewed and
+landed. It is the exact mirror of being ahead, and it is the half people do not check, because
+"I am on the default branch" feels like the end of the question.
+
+**Measured, on consecutive days in one repository, opposite signs and the same cause:**
+
+| state of the source checkout | what a render does | how it announces itself |
+|---|---|---|
+| **ahead** of the merged tip | publishes **unmerged** content, bypassing review by a `checkout` | nothing |
+| **behind** the merged tip | omits content that **is** merged | nothing |
+| **diverged** | publishes a tree on no merged history | nothing |
+
+**So the check is `HEAD == <remote default>`, and it reports the DIRECTION**, because ahead and
+behind need opposite remedies and a reader who is told only *"these differ"* will guess. Direction is
+available here and costs nothing: ancestry orders commits, so this is a measurement rather than an
+inference from two hashes differing (*DIFFERENCE is not DIRECTION*, above).
+
+⚠️ **A detector written for one sign will not catch the other, and its silence will read as health.**
+The first version of this check asked *"is the source on a non-default branch **and ahead**"* — built
+from the incident that prompted it. It was correct, and it sat silent through the mirror case the
+following day. **When a rule names a direction, ask what its opposite looks like before the detector
+ships**; the case you just lived through is the one you will encode, and the other one is the one
+that will find you.
+
 ⚠️ **The mirror failure is staleness, and it is the one the render model accepts by design.** A
 rendered output is only as current as the last render, so a rule can merge and reach nobody. Measured
 alongside the above: two security rules sat merged and unrendered for about 21 hours, including the
