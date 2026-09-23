@@ -87,7 +87,7 @@ jobs:
           echo "discovered ${#suites[@]} suite(s)"
           # ASSERT THE COUNT, NOT JUST THE EXIT CODE: a runner that discovers zero suites exits 0
           # forever. Raise the floor when suites are added; never lower it to make a run pass.
-          if [ "${#suites[@]}" -lt 13 ]; then
+          if [ "${#suites[@]}" -lt 18 ]; then
             echo "::error::only ${#suites[@]} suites discovered, expected >= 13"
             exit 1
           fi

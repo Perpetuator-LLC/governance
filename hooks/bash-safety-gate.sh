@@ -129,7 +129,61 @@ fi
 
 # Block secret extraction — secrets must never enter agent context.
 # Catches: cat/grep/rg/head/tail on .env files, keychain access, docker env dumps.
-if echo "$cmd" | grep -qE 'cat\s+.*\.env|grep\s+.*\.env|rg\s+.*\.env|head\s+.*\.env|tail\s+.*\.env|less\s+.*\.env|more\s+.*\.env'; then
+SECRET_READ='cat\s+.*\.env|grep\s+.*\.env|rg\s+.*\.env|head\s+.*\.env|tail\s+.*\.env|less\s+.*\.env|more\s+.*\.env'
+
+# The pattern runs over the WHOLE string, so `.*` spans `&&`, `;` and `|`: a reader verb in one command
+# and a name merely containing ".env" in another (`grep -q x a.json && cp sample.environment.ts b`) was
+# blocked, several times a session in one lane. An over-broad floor gate is one the next person deletes.
+#
+# So a whole-string match is re-checked per SUB-COMMAND — and this can only ever turn a block into an
+# allow, never the reverse: the pattern is unchanged and still runs first. Every doubt keeps the block:
+#   - no python3 (a jq-only host), or a command that will not tokenise (unbalanced quote);
+#   - anything that nests one command inside another, because a separator inside it belongs to the
+#     inner command and the tokeniser cannot see that: `head $(echo x; echo .env)` reads .env, and a
+#     naive split calls it two clean halves. Same for backticks, `(…)` subshells, `<(…)`, `{ …; }`
+#     groups (a redirect after the group feeds every command in it), and an ESCAPED separator such as
+#     `find … -exec head {} \;`, which the tokeniser returns as a bare `;`.
+# Quote-aware: `grep "a && b" .env` is ONE sub-command. A naive split on `&&` would allow it.
+only_across_subcommands() {  # <cmd> <regex> -> 0 iff it tokenises cleanly and NO sub-command matches
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 - "$1" "$2" <<'PY' 2>/dev/null
+import re, shlex, sys
+cmd, pat = sys.argv[1], sys.argv[2]
+if re.search(r"[`()]|\\[;&|\n]", cmd):   # nesting; an escaped separator; a backslash-continued line
+    sys.exit(1)
+try:
+    # posix=False KEEPS the quotes on a token. In posix mode a quoted `";"` or a quoted newline comes
+    # back as the bare `;` / newline — indistinguishable from a real separator — so `grep ";" .env`
+    # split into two clean halves and was ALLOWED. Caught by the probe before it shipped.
+    # An UNQUOTED newline ends a command, so it is a separator token; a QUOTED one stays inside its
+    # word, so `grep "KEY<newline>" .env` remains one sub-command and still matches (DOTALL below).
+    lex = shlex.shlex(cmd, posix=False, punctuation_chars="();<>|&\n")
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    toks = list(lex)
+except ValueError:
+    sys.exit(1)
+if any(t in ("{", "}") for t in toks):
+    sys.exit(1)
+SEP = {"&&", "||", ";", "|", "&", "|&", "\n"}
+segs, cur = [], []
+for t in toks:
+    if t in SEP:
+        segs.append(cur)
+        cur = []
+    else:
+        cur.append(t)
+segs.append(cur)
+rx = re.compile(pat, re.DOTALL)
+sys.exit(1 if any(rx.search(" ".join(s)) for s in segs) else 0)
+PY
+}
+
+# FLATTEN before matching. `grep -E` matches line by line, so a newline between the reader and the file
+# name — even one inside quotes, `cat "<newline>" .env`, which reads the file — hid the read from every
+# line and the gate ALLOWED it. Joining the lines closes that; the per-sub-command check above then
+# splits on UNQUOTED newlines, so an ordinary multi-line command keeps today's line-wise behaviour.
+if printf '%s' "$cmd" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$cmd" "$SECRET_READ"; then
   echo "BLOCKED: Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run." >&2
   exit 2
 fi
