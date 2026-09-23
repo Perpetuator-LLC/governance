@@ -531,6 +531,28 @@ The rule generalises past CLIs: an API error, a validation message and a
 permission denial are all refusals, and each one is where a person decides
 whether to work with the system or around it.
 
+### A REDACTED step still owes its failure a reason
+
+The extreme case of a refusal that names nothing is a step that **must** hide its
+output — a task that handles a credential and is therefore silenced, masked or
+logged at a redacted level. Hiding the *payload* is right. Hiding the *failure*
+with it is not: the run reports a bare non-zero exit, and the next step is
+guesswork on a credential path — which is precisely where people start switching
+the redaction off "just to see".
+
+**So the step carries its reason out on a channel it has characterised as
+value-free:** an HTTP status, an error class, or a status word the step itself
+chooses and writes somewhere the silenced output does not reach. A follow-up step
+turns that word into a real failure with a message naming which leg broke.
+Diagnosis without exposure.
+
+⚠️ **Scope — a tool's raw error output is NOT value-free by default.** Some tools
+echo their input when they fail: a parser's traceback can print the document it
+could not parse, a CLI can repeat the argument it rejected. Forwarding that
+channel from a credential step publishes the credential in the failure message.
+Characterise what a tool's error channel carries before forwarding it; where you
+cannot, map it to a status word and forward only the word. Truncate either way.
+
 ## Public engine, private config
 
 An IaC repo has two kinds of content, and only one of them can ever go public:
@@ -592,6 +614,37 @@ would burn on disclosure, it belongs in the store even in the private repo.
 Do the split **when you create the config**, not when you decide to publish — retrofitting
 means rewriting history. Scope of a *policy* is a separate question from location of its *config*;
 see `security.md` → *Pick the rung from the CONSUMER*.
+
+## The engagement is the top-level namespace in every system
+
+An organisation that works for several engagements — its own business, clients,
+a household — keeps each one's resources apart in **every** system that holds
+them: the forge organisation, the identity realm, the secret store's path prefix,
+the storage bucket or vault. **Use the same engagement key as the top-level
+segment everywhere** (`<engagement>/…` in the forge, a realm named for it,
+`<mount>/<engagement>/…` in the secret store).
+
+What it buys: a policy can be written against a prefix, so a mistake inside one
+engagement cannot grant another's; *"what does this engagement own?"* is one
+listing per system; and offboarding an engagement is deleting one namespace
+rather than hunting through a shared one.
+
+⚠️ **Scope — three limits, each the mirror of a way to over-apply it:**
+
+- **Shared platform services are not split per engagement.** One identity server,
+  one secret store, one forge serve every engagement; the namespace lives
+  *inside* them (a realm, a path, an organisation), never as a duplicate server.
+- **The operator's own platform is an engagement too.** Resources that genuinely
+  serve every engagement — CI runners, resolvers, monitoring — belong to the
+  operator's own namespace, not to an unnamed shared bucket nobody owns.
+- **Conform on creation or on touch, not by migration.** A new resource takes the
+  namespace from day one. An existing one moves when it is being changed anyway,
+  because a live path has consumers that must move with it; a sweep that
+  relocates working resources to satisfy a convention trades real outages for
+  tidiness. The convention is a direction to trend in, not a gate.
+
+The rule below is this one applied to a local disk, which has no namespaces of
+its own.
 
 ## A local checkout names its organisation when repo names collide
 
