@@ -1916,6 +1916,44 @@ The same shape covers any rendered configuration — templated config, generated
 rendered dotfiles. **An artifact that has a generator has exactly one durable edit point, and it is
 not the artifact.**
 
+## An env-var default is not a default when the LAUNCHER sets the variable
+
+**`${VAR:-fallback}` falls back only when `VAR` is unset or empty.** A job started by a launcher —
+launchd, systemd, cron, a CI runner, a container entrypoint — can inherit a **non-empty value that is
+wrong for it**. The fallback then never fires, the job uses the launcher's value, and it fails in a
+way that looks like a credential or network fault rather than a configuration one. Nobody suspects the
+line, because the line is correct: it does exactly what it says, for a situation the author never
+pictured.
+
+**So for an UNATTENDED job, read the environment the job actually inherits before assuming a clean
+start** — the launcher's own view of it (`launchctl print gui/$(id -u)/<label>`, `systemctl show -p
+Environment <unit>`, the runner's env dump), not your interactive shell's, which is a different
+process with a different parent. Then either **pin** the value the job needs, or **validate** the
+inherited one with the operation the job depends on (*does this agent socket hold an identity?*, not
+*is the variable set?*), and fail loudly on a mismatch.
+
+**Measured:** a backup job used `${SSH_AUTH_SOCK:-<intended agent>}` for five days while its launcher
+exported an agent socket of its own that held zero identities. The fallback never fired; every run
+exited non-zero with an authentication error. Probed the way the job connects, the inherited socket
+was refused and the intended one succeeded.
+
+**Scope — where following this would be wrong:**
+
+- **Interactive runs: do not override.** A value a user exported is their choice, and pinning over it
+  breaks legitimate setups — a forwarded agent, a test socket, a different profile. The rule is for
+  jobs no human is watching, because those are the ones where the inherited value was never chosen.
+- **The mirror holds too: a launcher that STRIPS a variable the job needs** — a minimal `PATH`, no
+  `HOME`, no locale. There `:-` does fire, but only helps if the fallback is right *for that
+  launcher*, which is exactly what nobody tested. Validate the effective value either way; the
+  direction of the mismatch does not change the remedy.
+- **Validating does not give you liveness.** A job that checks, refuses and exits non-zero still needs
+  something watching its exit code, or it now fails loudly into a log no one reads.
+
+**The property this rule depends on is a launcher that injects environment.** Where the job's
+environment is fully declared by the thing that starts it — a unit whose `Environment=` lines are the
+whole of it, a container with no inherited env — there is nothing unexpected to inherit, and the check
+reduces to reading that declaration.
+
 ## A long browser harvest checkpoints to the PAGE, because the session is the fragile part
 
 When an agent harvests data through a browser over many steps, the accumulated result belongs in the
