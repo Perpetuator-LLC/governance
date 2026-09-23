@@ -40,6 +40,16 @@ refused to run on **any** dirty worktree blocked immediately on a legitimate unt
 which is the normal working state of that lane; narrowed to **tracked** changes it defends what it
 was written for and stops obstructing the job.
 
+⚠️ **Over-breadth reaches the deleted guard by two roads, and the second is faster.** Friction is the
+familiar one: the guard obstructs real work, someone argues, it is narrowed or dropped. **Noise is the
+other: a guard scoped to a system it does not describe fires on every run, correctly by its own logic
+and wrongly about the world.** Nobody argues with it — they stop reading it, and when it is finally
+removed the blame lands on the detector rather than on the person who scoped it. Measured: a
+render-source check written for a review-gated repository, applied to a vault whose working tree *is*
+its source of truth and which a sync timer leaves permanently ahead of its remote; it would have
+fired every session, forever. **A guard that cries wolf is on its way out even while everyone agrees
+it is right.**
+
 This is the third face of a failure already named twice here — a permanently-red gate trains everyone
 to ignore red, and a checker that fires is not a checker that is right. The new face: **a guard can be
 correct and still too wide, and the wide one does not survive to be correct later.** A gate that

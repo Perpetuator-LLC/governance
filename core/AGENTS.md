@@ -80,6 +80,34 @@ be wrong.** If you find one, its boundary belongs in the text. If you cannot, ei
 genuinely unconditional — rare, and worth saying so — or you have not looked hard enough, which is
 the usual answer.
 
+⚠️ **Where to look, because the search has a systematic blind spot: the exhibit that taught you the
+rule is the thing hiding its mirror.** You will encode the case you lived through — its shape is the
+vivid one, and every sentence you write will be true of it. The situation that breaks the rule is
+usually **the same case with one property inverted**: the opposite direction, the empty set instead
+of the full one, the absent thing instead of the present one, the read instead of the write.
+
+**So when a rule names a direction, a presence, or an order, write down its opposite and check that
+the rule still says the right thing.** Measured: a detector built from an incident where a source
+tree was *ahead* of the merged tip asked *"is it on a non-default branch and ahead"* — correct, and
+silent the following day when the same tree was *behind*, which fails in the mirror way and just as
+quietly. The rule had been through review. Nobody asked what *behind* looked like, because the
+incident that prompted it had no *behind* in it.
+
+**The case you just lived through is the one you encode. The other one is the one that finds you.**
+
+⚠️ **A third failure is not a missing case at all, and no amount of adding cases repairs it: the rule
+may be ABOUT A DIFFERENT SYSTEM.** A missing scope leaves a rule incomplete. A missing **system
+model** leaves it complete, coherent, and aimed at something else — it applies a premise from where
+it was learned to somewhere that premise does not hold. Measured: a check asking *"is this checkout
+at the reviewed revision?"* pointed at a repository where **nothing is reviewed** — no branch gate,
+no pull request, a working tree that is itself the source of truth. Every case it enumerated was
+correct; the question was wrong.
+
+**So before generalising, name the property of the original system the rule depends on, and ask
+whether the destination has it.** Review gate, ordering guarantee, single writer, durable identifier,
+an authority the rule defers to — a rule written where one of these held is silently a different rule
+where it does not. The tell is a rule that keeps being right and keeps being useless.
+
 **Exhibit** (kept here because it is about this document's own process): a rule landed reading *find
 a natural instance rather than constructing one*. True, and the reason is sound — a constructed case
 tells you about your construction. But stated without scope it **forbids building a positive
