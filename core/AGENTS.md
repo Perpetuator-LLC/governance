@@ -95,6 +95,19 @@ incident that prompted it had no *behind* in it.
 
 **The case you just lived through is the one you encode. The other one is the one that finds you.**
 
+⚠️ **A third failure is not a missing case at all, and no amount of adding cases repairs it: the rule
+may be ABOUT A DIFFERENT SYSTEM.** A missing scope leaves a rule incomplete. A missing **system
+model** leaves it complete, coherent, and aimed at something else — it applies a premise from where
+it was learned to somewhere that premise does not hold. Measured: a check asking *"is this checkout
+at the reviewed revision?"* pointed at a repository where **nothing is reviewed** — no branch gate,
+no pull request, a working tree that is itself the source of truth. Every case it enumerated was
+correct; the question was wrong.
+
+**So before generalising, name the property of the original system the rule depends on, and ask
+whether the destination has it.** Review gate, ordering guarantee, single writer, durable identifier,
+an authority the rule defers to — a rule written where one of these held is silently a different rule
+where it does not. The tell is a rule that keeps being right and keeps being useless.
+
 **Exhibit** (kept here because it is about this document's own process): a rule landed reading *find
 a natural instance rather than constructing one*. True, and the reason is sound — a constructed case
 tells you about your construction. But stated without scope it **forbids building a positive
