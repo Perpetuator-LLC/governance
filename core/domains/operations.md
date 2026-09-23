@@ -498,6 +498,36 @@ re-running the search afterwards **as an assertion** rather than trusting the ed
 general obligation this rule inherits: *after any sweep, re-run the detector and require a zero,
 then confirm the detector still fires on a planted positive.*
 
+### A retirement DECLARED as data is only as strong as the reader that never opens it
+
+The table above is about prose. **When a retirement is recorded as data** — a retired-list, a deny
+list, a deprecation map — rather than by deleting the thing, the records that name it usually survive
+on purpose, so whoever holds one can still close it out. **Every reader of those records must then
+consult the declaration**, or it goes on resolving the retired entry, correctly, indefinitely.
+
+⚠️ **The reader that matters most is the one that speaks FIRST and most imperatively** — a start-up
+hook, a default, an auto-selector — because it is the one that gets obeyed. **Measured:** a registry
+of agent seats kept each retired seat's working directory by design. Three readers honoured a separate
+retired-list. The fourth, the hook that tells a freshly cleared session what to run, did not — and
+told it, in wording written to suppress hesitation, to boot the retired lane. The lookup was right.
+It was simply the only reader nobody had told.
+
+**So adding a declaration means enumerating every reader of the records it qualifies, and gating
+each** — preferably through one resolver they all call (`technical.md` → *An invariant with more than
+one SOURCE is answered by ONE choke-point function*), because a list with N independent readers is N
+places to forget it.
+
+- **The mirror: what a declaration ADDS fails the same way, only quieter.** A new entry some reader
+  does not know about usually fails as a *non-event* — nothing resolves, nothing is printed — which
+  is harder to notice than a wrong answer.
+- **Scope — the reader whose JOB is the retired structure is the exception.** A migration or cut-over
+  script that must copy out of the old place is supposed to read it; gating it "fixes" it into a bug.
+  Ask whether the reader **routes live work** (gate it) or **moves state out of** the retired thing
+  (leave it).
+- **The property this depends on is records that outlive the retirement.** Where retiring deletes
+  them, no reader can find the entry — and nothing can close it out either, which is usually why they
+  were kept.
+
 ### The mirror: a RESOLUTION falsifies a claim just as a retirement does
 
 A retirement falsifies a claim because the thing it names is gone. **A resolution falsifies one
