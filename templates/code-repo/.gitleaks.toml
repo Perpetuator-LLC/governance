@@ -1,0 +1,17 @@
+# Secret scanning. https://github.com/gitleaks/gitleaks
+#
+# Layer 1 of the defense in depth: pre-commit (here) catches a secret before it
+# enters git history; CI catches it in a pull request; image and forge-wide scans
+# catch what the first two miss. Each layer assumes the others exist.
+
+title = "Secret scanning"
+
+[extend]
+useDefault = true
+
+[allowlist]
+  description = "Global allowlist"
+  paths = [
+    '''\.env\.example$''',
+    '''\.gitleaks\.toml$''',
+  ]

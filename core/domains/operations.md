@@ -116,6 +116,27 @@ hand-off defect — the human can't tell hung from working; measured: a migratio
 nothing until done and the human asked whether it was hung); prints an explicit end-state summary;
 the agent reads the artifact, never asks for the scrollback.
 
+⚠️ **The terse form of the same defect is a step written as a NOUN PHRASE plus a citation.**
+*"Store prerequisites (see comment N, step ①): the API keys, the limit value, the sample ids."*
+passes every test above by accident — it sits under the human's section, it is numbered, it is
+short — and **it is not a step, because nothing in it is a verb the human can type or click.** It
+is the agent's index of two documents, compressed to one line by a message-length budget; the
+human reads it as *"what needs to be done"* and asks *"what do you want ME to do?"*, which is the
+entire cost of the rule paid again.
+
+Two tests, applied to every line in the human's section before sending:
+
+1. **Does the line contain a VERB with an OBJECT the human can act on now** — a command in a
+   fence, a menu path, a field and a value? A citation (a comment id, a step number, a document
+   name) is never that object.
+2. **If the line names a value the human must supply** — a key, an id, a secret — **does it say
+   WHERE that value comes from** (which dashboard, which page), and **which of them are actually
+   still missing**? A store the agent can read for key NAMES (never values) is read first; the
+   human fills only what that read reported missing, never a list the agent assumed.
+
+Sending the citation form is not concision. It moves the synthesis the rule exists to do back onto
+the human, and it looks compliant while doing it.
+
 ## Git refs in human-facing text
 
 - ⚠️ **The test is ACTIONABILITY, not FORMAT: not "is this ref a link?" but "can the reader reach
@@ -142,6 +163,11 @@ the agent reads the artifact, never asks for the scrollback.
   this commit") rather than as a bad query. Resolve the full id with the tool that mints it
   (`git rev-parse`) in the same step that uses it; before believing an empty answer, re-run it
   unfiltered and match on the result side.
+  **The mechanical cause is almost always PARALLELISM:** the call that mints the id (create a PR, an
+  issue, a comment) and the message that cites it go out in the same batch of tool calls, so the
+  message is written before the id exists and the author fills the gap with the number they expect.
+  Hedging ("confirm the number") does not help — the reader acts on the number. **Never batch an
+  id-minting call with anything that cites its result;** send the citing message in the next step.
 - **A FILE link resolves only for a path UNDER the working directory, written relative.** Absolute
   paths outside it, `file://` URLs, and symlinks inside it all fail to open.
 
@@ -275,6 +301,15 @@ Measured in this same incident, by the agent writing this entry.
 message, hand-off — because each one is now a durable wrong reason that reads as settled. This is why
 "name the source" is not bookkeeping.
 
+⚠️ **And the chase can only reach copies that already exist.** A draft authored *after* a correction
+is **not downstream of it** — nothing links the two, so the sweep that caught every existing copy
+cannot reach a document written next month from the same stale recollection. **Authoring order is not
+knowledge order**, and a late draft looks *more* current than the correction it contradicts. So a new
+draft that restates a mechanism **cites the correction it post-dates**; where the drafter can find no
+such citation, that is the signal to re-read the source rather than the memory. Measured: a filing
+written three weeks after a mechanism had been retracted *three separate times* led with that
+mechanism, and nothing in the authoring caught it.
+
 ## Routines are infrastructure — they migrate, or they silently die
 
 **Every scheduled task and skill is migration payload, equal to threads and tickets.** A migration
@@ -374,6 +409,28 @@ it. Relation to the spine: a North Star sits at the Theme/Objective (strategy) l
 spine (`core/AGENTS.md` → *Artifact placement*) — lighter than full OKR machinery, but the same "trace
 work upward" intent (G9).
 
+## A procedure document holds its WHOLE current flow — a delta version forks the identifier
+
+**One state, one file.** A procedure — an SOP, a runbook, a playbook — is a document that someone
+follows end to end, so it carries the whole flow as it stands today. **A version that records only
+what CHANGED is not a shorter procedure; it is a second document wearing the same name.** The
+reader who finds it follows half a flow and has no way to know which half is missing, because a
+delta is silent about everything it did not touch.
+
+This is worse than ordinary duplication. Two full copies disagree visibly — a reader who opens both
+can see the conflict. A full copy and a delta look *complementary*, so a reader who opens both still
+cannot assemble the procedure without knowing which is authoritative and what order they compose in,
+and a reader who opens only one gets no signal at all.
+
+⚠️ **On a shared identifier, FOLD — do not reconcile and do not keep both.** When two documents
+claim the same procedure id, the answer is one document containing the current flow, not a pointer
+between them and not a merge note explaining their relationship. **The identifier is what consumers
+resolve**, so two files answering to it means the id no longer names a single thing, which is the
+defect regardless of how good either file is.
+
+Corrections to a procedure are edits to it. The history of *why* it changed belongs in the version
+control or the decision record, never in a sibling document the follower might land on instead.
+
 ## Placement binds authoring and referencing
 
 **A doc goes to its canonical home at BIRTH.** A requirements or spec doc drafted mid-flight — by
@@ -383,3 +440,31 @@ confirm the path is the artifact's canonical home before propagating it, because
 wrong path makes the move more expensive and the misplacement more authoritative. Measured: a redesign
 spec was authored into the knowledge vault instead of the initiative repo, and its path was copied
 into an epic and two hand-off blocks before a human caught it.
+
+## A record's coverage ends at its LAST CITED EVENT, not at when it was WRITTEN
+
+**"The record is recent" is not evidence that it is current.** A hand-off, status or summary is
+written from a read of its sources, and that read finishes before the writing does. Anything that
+arrives in the gap is absent from the record and *looks covered*, because the record's own timestamp
+is newer than the event's. So recency is not a weaker form of currency — it actively **defeats** the
+check a successor would otherwise run, which is to ask how old the record is.
+
+**Measured:** a hand-off written *after* new messages had already landed on a source channel still
+missed them. Nothing about the document looked wrong — it was hours old, thorough, and every item in
+it was true.
+
+⚠️ **The tell: a reader can date the RECORD but cannot date its COVERAGE.** Those are two different
+timestamps — when the record was written, and the newest event it actually consumed — and only the
+first one is visible. A record carrying just the first is unfalsifiable about what it missed, which
+is why this survives review: there is nothing in it to catch.
+
+| side | obligation |
+|---|---|
+| **author** | per source channel, cite the last event consumed — an id, a timestamp, a message ref. That citation is the **watermark**, and it is the only thing that makes the record's coverage falsifiable. |
+| **consumer** | before acting on the record, re-read each source channel for the window **since that watermark** — not since the record's write time. A channel with no watermark is re-read in full for the plausible window, and the missing watermark is reported back to the author. |
+
+**This is a third distinct cause in the hand-off family, and the other two cannot catch it.**
+Staleness — the artifact moved while the record stood still — is defeated by the record being
+recent. A dropped precondition — the record was incomplete at birth — is defeated by the record
+being complete as far as it read. **A freshness check that asks only *"how old is this?"* passes
+this case every time.**

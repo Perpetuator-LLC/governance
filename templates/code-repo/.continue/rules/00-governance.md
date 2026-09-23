@@ -1,0 +1,4 @@
+# Governance
+
+**Read `AGENTS.md`** — the canonical instruction file for every AI agent in this repository.
+This file is a pointer; conventions live there, not here.

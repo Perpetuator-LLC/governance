@@ -88,6 +88,27 @@ if echo "$cmd" | grep -qE '(curl|wget)\s+.*\|\s*(bash|sh|zsh)'; then
   exit 2
 fi
 
+# Block executing an ENCODED payload.
+# A step handed to a human must be readable by the human who runs it. An encoded or compressed
+# payload is not a command — it is an opaque binary that will execute with that human's credentials,
+# and the blast radius is everything those credentials reach, not just their machine. Compression
+# that defeats review is not incidental to the delivery mechanism; it IS the defect. Decoding alone
+# is allowed (inspecting a payload is how you review it); decoding INTO an interpreter is not.
+if echo "$cmd" | grep -qiE '(base64|xxd|uudecode|openssl\s+enc)[^|;]*(-d|--decode|-D)?[^|;]*\|\s*(bash|sh|zsh|python3?|node|perl|ruby)'; then
+  echo "BLOCKED: decoding a payload straight into an interpreter. The human running this cannot read what it does, and it executes with their credentials. Commit the change and open a pull request instead." >&2
+  exit 2
+fi
+# Decode-then-execute, split across && or ; — the same shape with a file in the middle.
+if echo "$cmd" | grep -qiE '(base64|xxd|uudecode)[^&;]*(-d|--decode|-D)[^&;]*>[^&;]+[;&]+[^&;]*(bash|sh|zsh|python3?|node|perl|ruby)\s'; then
+  echo "BLOCKED: decoding a payload to a file and then executing it. Writing it to disk first does not make it reviewable. Commit the change and open a pull request instead." >&2
+  exit 2
+fi
+# Piping stdin straight into an interpreter.
+if echo "$cmd" | grep -qE '\|\s*(python3?|node|perl|ruby|bash|sh|zsh)\s+-\s*$'; then
+  echo "BLOCKED: piping stdin into an interpreter. Whatever produced that stream is unreviewable at the point it runs. Put the code in a file under version control." >&2
+  exit 2
+fi
+
 # Block eval of untrusted input
 if echo "$cmd" | grep -qE '^\s*eval\s+'; then
   echo "BLOCKED: eval is dangerous. Use direct commands instead." >&2

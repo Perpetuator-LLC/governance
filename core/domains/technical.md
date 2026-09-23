@@ -128,6 +128,15 @@ live host (inline `python`/`sed` heredocs against live files, `docker` CLI state
 clicks, hand-edited on-box configs) is a VIOLATION even when it "works" and even for a one-off — it
 creates drift the IaC can't see and a step no audit can replay. If the IaC doesn't exist yet, WRITING
 it (playbook/role/script, committed and merged) IS the task; then hand over its one-line invocation.
+**Establish the absence before you author** — list the committed surface (the playbooks, scripts or
+command directory) and search it for the VERB, not for your phrasing of it. "I have not seen one" is
+not evidence that none exists, and a mature repo often already has the thing under a name you did not
+guess. Writing a second one costs twice: the duplicate itself, and the review that now has to decide
+which is canonical. **A safety gate's refusal of your hand-authored version is evidence you should
+re-run this search, not evidence of a capability boundary.** Inline credential handling is exactly
+what such gates match on, and it is exactly what the existing surface already abstracts behind a
+reviewed include — so the refusal usually means *you wrote the wrong thing*, not *you may not do
+this*. Read the refusal as a routing signal before you report it upward as a blocker.
 **Litmus:** if the recipe contains inline SQL or a `python -c` against a prod service, stop and write
 the command/script instead. Verification counts as interaction — "check how many rows are expired" is
 a management command, not a paste-block of SQL. Ad-hoc commands are for read-only diagnosis only.
@@ -309,6 +318,155 @@ Rules:
 
 Copy the repo's existing end-to-end enum (there is usually one) rather than inventing a new pattern.
 
+### A FILTER argument is a boundary too, and the failure there is matching SEMANTICS
+
+The shape above is an argument that is *untyped*. A filter can be typed and still wrong: **a filter
+over a closed vocabulary must match EXACTLY.** A substring lookup there accepts values the vocabulary
+does not contain and answers with a **superset** of the intended rows. Two failure modes, one
+invariant — keep them together, because a reviewer who fixes one and not the other has fixed nothing:
+
+- **the exact option is absent or unusable**, so a caller reaches for the loose one; and
+- **the argument looks exact and is not** — the dangerous half, because a careful reader is not warned.
+
+⚠️ **The grep shape: two arguments for the SAME field that disagree on matching semantics.** One
+enum-typed and exact, one string-typed and loose, over the same closed set — **one of them is wrong
+by construction.** Searching for loose lookups alone is noise: substring matching is correct and
+intended on a display name or a description. What makes it a defect is the field ranging over a
+**closed set**.
+
+**Take the inventory from the GENERATED SCHEMA, not the filter class.** Frameworks generate arguments
+from a declarative field list, so they appear nowhere in the source you are reading and the class
+body systematically under-reports what the API exposes. A reviewer grepping only the source sees the
+hand-written half and concludes the surface is smaller than it is.
+
+**The consequence class is not "a wrong row" — it is a wrong row that biases a DECISION.** Nothing
+errors, nothing is empty, so nothing is ever filed. Measured instance: a vocabulary value annotated
+in source as deprecated in favour of three successors **over-matches exactly those three**, so a query
+asking *"how much is the deprecated thing still used?"* returns four times its true value — a
+measurement that lies in the direction of inaction, about the very migration it was run to check. A
+wrong number nobody acts on is a bug; a wrong number that argues against finishing a migration gets
+acted on.
+
+**Narrowing a shipped filter is a semantic change to a contract, so price the blast radius first.**
+Enumerate every consumer before tightening it — and have the owning lane confirm its own side rather
+than accepting your reading of their code. That check costs minutes and is what separates narrowing
+from breaking.
+
+⚠️ **PARTIAL compliance on one object is a stronger smell than total absence.** Where nothing is
+typed you can believe the rule was never applied. Where two fields of four are typed and two ship the
+closed vocabulary as a plain string — with the correct vocabulary already defined server-side and
+simply not exposed — somebody applied the rule, stopped, and nothing noticed. Measured on a single
+type carrying four plan-related fields: two enum-typed and correct, two closed-but-untyped, inches
+apart. **Look for the half-done object, not the untouched one.**
+
+⚠️ **And the cost GROWS, which is the argument for urgency this rule otherwise lacks: a closed
+vocabulary shipped as a string teaches consumers to PARSE it.** Downstream code starts taking the
+value apart — splitting on a delimiter, matching a prefix — and that parsing works only because the
+current serialisation happens to suit it. **Typing the field later then breaks those consumers
+silently**, because the wire format changes to the vocabulary's member names: no error, no empty
+state, just a value that never matches again. Measured instance sat on a billing indicator.
+
+**So fixing a loose vocabulary is not a free correction — check how consumers CONSUME it first.** The
+remediation and the defect have the same root: the loose type invited parsing where mapping belonged.
+Typing the field is still right; doing it without reading the consumers is how a correctness fix
+becomes an outage.
+
+⚠️ **A commented-out attempt is evidence somebody sketched, not evidence it cannot work.** It reads
+as *"this was tried and failed"* and is treated as a closed question. Measured on one such block:
+across all history **no commit ever carried it uncommented** — it was never live, so there was no
+failure to learn from. Check the history before inheriting the conclusion.
+
+## An invariant with more than one SOURCE is answered by ONE choke-point function
+
+**Money (an allowance pool plus a paid balance), a quota, a permission: when an invariant can be
+satisfied from more than one source, exactly one function answers it, and every caller uses that
+function.** Adding a source means adding it *inside* that function, and shipping a test that fails
+when any caller reads a source directly. The guard is on the **call shape**, not the import: a caller
+that imports the helper and then reads a balance itself passes every "does it use the helper?" grep
+while bypassing it — calling a shared helper is not using it.
+
+**A feature that adds a source without the choke point is not done.** Its done-when names the
+choke-point function and the bypass test **by name**, and its walk exercises the **consuming** path
+(spend from the new source), not only the acquiring one (grant or buy it). The failure it prevents is
+quiet: the new source is acquired correctly, shown correctly, and never spent, because one consumer
+still reads the old source directly.
+
+## A write path that does more than STORE is a choke point too
+
+The rule above is about reading an invariant from several sources. Its mirror is the write side, and
+it fails more quietly: **when an existing write path does something beyond storing the value —
+strips identifying metadata, normalises an encoding, derives a companion artifact, enforces a size
+bound — every new writer must go through one function, and the extra step must be asserted on the
+NEW path.**
+
+The danger is that the second writer looks trivially correct. Storing bytes *is* the obvious job; the
+sanitisation is invisible at the call site, absent from the field's name, and usually documented
+only in the first caller. So a CLI, an importer, a migration or a fixture loader gets written that
+"just sets the field", and the result is indistinguishable from the correct one on every screen —
+the artifact renders, the tests pass, and the thing that was being stripped is now published.
+
+**"Both callers use the same helper" is not an assertion, it is the thing that stops being true.**
+It is true on the day the second caller is written and silently false after the next refactor, which
+is exactly when nobody re-reads it. So the test for the extra step is repeated against the new path,
+on input that actually carries what is being defended against — not because that caller is suspected,
+but because the duplicated assertion is the only thing that fires when the paths diverge.
+
+Two corollaries:
+
+- **Put the permission check in the CALLERS, not the shared function.** The API enforces
+  authorisation; an operator tool exists to act without it. A `skip_permissions=True` parameter on
+  the shared function is how a bypass becomes reachable from the request path.
+- **A field whose write path sanitises should be hard to write any other way.** If setting it
+  directly is one line, someone will write that line.
+
+## A tool that BYPASSES the permission model is shaped by how cheaply it can be verified
+
+Operator tooling that repairs live data — fixing a lockout, correcting ownership, setting content
+nobody can reach through the product — necessarily acts outside the authorisation model. That is
+legitimate and often the only option: a permission system working correctly will produce states that
+cannot be repaired from inside it. What makes it safe is not restraint in what it can do, but how
+hard it is to run blind:
+
+| Property | Why |
+|---|---|
+| **Read-only subcommands exist and are the obvious first move** | Most "something is broken" reports are answered by a listing. An inspect step that is awkward to reach gets skipped. |
+| **Every mutating action takes a dry run that names the row** | The dry run must print the same lines as the real one, or it is not a rehearsal of it. |
+| **Targets match EXACTLY; ambiguity is an error that lists the candidates** | Silently taking the first match is how the wrong production row gets edited. |
+| **The undo is printed at the moment of the change** | An operator who has just made a mistake should not have to derive the reversal. Capture the prior state *before* mutating, or the hint names the new value. |
+| **The repair tool cannot create the condition it exists to fix** | It runs outside the model's own guards, so the guards it bypasses have to be restated in it. |
+
+⚠️ **The last row is the one that gets missed.** A model-level guard (a check that refuses to remove
+the last administrator, a constraint that keeps a record reachable) is enforced on the path the
+product uses. A tool that writes underneath that path does not inherit it — so the tool built to
+resolve lockouts will happily create one. Enumerate the guards on the path being bypassed and
+re-assert the ones that still apply.
+
+Exclusions are a design statement: name the operations deliberately left out and why, so the next
+person extends it on purpose rather than discovering the gap mid-incident.
+
+## Gate the AFFORDANCE on the same predicate as the action
+
+When a server refuses an action, the client must not offer it. This is not a security fix — the
+refusal already holds — and that is precisely why it gets deprioritised: nothing leaks, so it reads
+as cosmetic. What it actually produces is a control that can only ever fail, which a user reasonably
+reports as a broken product, or as a permissions bug that does not exist.
+
+Three things make the fix stick:
+
+- **Gate the handler as well as the view.** A handler that trusts the template hiding it is one
+  refactor from being wrong, and the template is the easier of the two to change.
+- **A permission fix ENUMERATES the sibling surfaces.** Ungated controls cluster: they were written
+  together, they sit on the same screen, and a fix scoped to the one that was reported leaves the
+  rest. Gating one control and stopping is how the same defect is filed twice.
+- **Mutation-check the gate.** A suite that goes green *before* the gate is added proves nothing
+  about it — it never rendered the control. Remove the guard, watch the new test fail, restore it.
+  Without that step "tests pass" is compatible with the gate not existing.
+
+⚠️ **A user reporting "I can do X" is usually reporting an AFFORDANCE, not a capability.** They saw
+the control; they may never have watched the request fail. Establish which before filing it as a
+hole in the server — the remedies are unrelated, and the wrong one sends people to audit a
+permission model that is working.
+
 ## Public engine, private config
 
 An IaC repo has two kinds of content, and only one of them can ever go public:
@@ -324,6 +482,45 @@ runnable, and reviewable, while the private half stays a small diffable set of d
 The split is what makes "should this repo be public?" answerable at all — otherwise a single
 internal hostname anywhere in the tree vetoes publishing the whole thing forever.
 
+**The same split governs the repo's WRITING, and there the divider is AUDIENCE, not polish.** Two
+top-level directories: **`docs/`** is the published manual — architecture, API reference, runbooks,
+decision records, guides — readable by anyone who gets the repo, including a customer, a
+contributor or a future owner. **`notes/`** is internal: working notes, investigations, scratch
+analysis, session and hand-off records, and anything naming internal hosts, engagement specifics or
+unshipped plans.
+
+⚠️ **Do not split it by draft-versus-finished.** That is a lifecycle property, it already has a
+`status` field, and a draft can be perfectly publishable while a polished internal analysis never
+is. Audience is the property that decides whether a file can be shipped, open-sourced, handed to a
+client or attached to a proposal — and it has to be answerable **from the path, before anyone opens
+the file.** A tree that mixes the two turns "can we publish this?" into a per-file review every
+single time.
+
+What follows immediately:
+
+- **Publishing, or handing the repo to someone else, becomes one reviewable operation** — remove
+  the internal directory — instead of a file-by-file audit. **If that operation would not be safe,
+  the split is already broken, and that is the bug to fix** rather than a reason to audit.
+- **A redaction sweep starts in the published directory.** An internal hostname or ticket reference
+  there is the finding; the same string in the internal directory is expected and is not.
+- **Internal is not unreviewed.** Those files are committed and reviewed like any others — they are
+  in the repo because the next person working here needs them, and separate because the next
+  *reader* may not be one of us.
+- **Session records and hand-off exports are always internal**, whatever they contain: they name
+  people, seats and systems by construction.
+
+⚠️ **The published half lives IN the repository, not in the forge's wiki.** A wiki is a **separate
+git repository** — its own URL, its own refs — so moving a directory in the code repo never
+populates it and nothing holds the two in step. Measured on one forge: a repo's wiki URL resolved
+successfully with **zero refs** while the code repo listed dozens of branches, so the wiki looked
+available and was simply a different, empty repository. Its pages are also a flat namespace of
+names rather than paths, which means it **cannot carry the audience boundary this rule depends on**:
+there is no directory to remove and no path to read the answer from.
+
+The deciding property is the same one that makes the split work at all: **documentation kept beside
+the code changes in the same commit and is reviewed in the same pull request.** A wiki drifts
+because nothing ties a page to the change that invalidated it.
+
 **Private is not a licence to commit secrets.** The overlay is *lower-sensitivity*, not
 *safe*; the same secret-scanning gate and the same store-everything-else rule apply. If a value
 would burn on disclosure, it belongs in the store even in the private repo.
@@ -331,6 +528,15 @@ would burn on disclosure, it belongs in the store even in the private repo.
 Do the split **when you create the config**, not when you decide to publish — retrofitting
 means rewriting history. Scope of a *policy* is a separate question from location of its *config*;
 see `security.md` → *Pick the rung from the CONSUMER*.
+
+## A local checkout names its organisation when repo names collide
+
+A forge namespaces repositories by organisation (`org-a/secrets`, `org-b/secrets`); a local disk does
+not. Two same-named repos cloned side by side either collide or are told apart by path accident, and
+an agent standing in `~/projects/secrets` will confidently act on whichever org's repo happens to be
+there. **Keep the plain name in the forge; prefix the local directory with the organisation**
+(`org-a-secrets`, `org-b-secrets`). Never infer which organisation a checkout belongs to from its
+directory name: read its remote.
 
 ## Deploys & health — pull-based
 
@@ -352,6 +558,62 @@ see `security.md` → *Pick the rung from the CONSUMER*.
   rollback path after a compose upgrade, `docker image ls` the ACTUAL names on the box and reconcile
   both spellings (retag the survivors, or pin `image:`/`container_name:` explicitly so the name stops
   depending on the compose version).
+
+## A deployable repo stands alone — the stack-repo properties
+
+A repository that something deploys from carries everything needed to deploy it, gate it and find it
+**without its former siblings**, and stays publishable later. Each property below is implicit in a
+monorepo and breaks silently when a stack is extracted, so each is a review check.
+`templates/stack-repo/` is the layout (properties 1–3, 6 and 11–13 ship in it as working files), and
+`governance scaffold --template stack-repo --out DIR` creates whatever a repository is missing without
+overwriting anything.
+
+1. **CI reports a status on the default branch before anything deploys from the repo.** A status-gated
+   pull deployer reads "no status" as "not green" and waits forever, so a new repo without CI is a
+   silent deploy stop.
+2. **The secret-scan gate proves its rules fire**: a positive fixture caught by a named rule id, and a
+   negative fixture of env and template shapes (empty values, `${VAR}` placeholders) that nothing
+   catches. A clean scan alone cannot tell "no secrets" from "rules that match nothing".
+3. **The README has a `Contracts` section**, one line per cross-repo runtime edge: external networks
+   joined (and their owner), hostnames resolved that another repo's containers own, ports exposed to
+   others, secret-store path *prefixes* read — names only. Splitting repositories does not split the
+   runtime fabric, and this list is the only place that coupling stays visible.
+4. **Deploy parameters are data in the repo's own deploy vars**: repo slug, watch path, target dir,
+   state file, unit name. A shared role's defaults name some other repository, so inheriting them
+   deploys the wrong thing or nothing.
+5. **Shared substrate is vendored under drift detection, never hand-copied**: every file copied from a
+   shared home is listed in a manifest, and CI fails on unexplained divergence. A hand-copy diverges the
+   first time either side changes — and the second hand-carry is the trigger to automate.
+6. **No hard-coded checkout paths, home directories or sibling-repo slugs**; a script derives its repo
+   root from its own location. Such a path works only on the machine that wrote it, which is why the
+   template's lint fails the build on one.
+7. **The registry row exists before the repository does** (what / where / why / status), and the
+   deploy credential's scope is verified by a read against the new repository, never assumed. A
+   credential still scoped to the old repository fails at the first deploy, when nobody is watching.
+8. **Extraction is copy → gate → re-point → prove no-op → delete, and the copy is a squash import**
+   with a provenance line (donor and commit), never history-preserving when the donor's history holds
+   credentials or organisation identifiers — that history stays in the donor. The donor keeps its copy
+   (behind a thin `MOVED.md` pointer) and rollback stays "re-run the old deployer" until the new
+   repository's deployer has logged an identical-tree no-op and one real change has deployed end to end.
+9. **A retire pass precedes any move**: artifacts with no deploy path, roles nothing references and
+   decommission playbooks for things already gone are deleted in place first, never migrated. A move
+   gives dead weight a new home and the look of being owned.
+10. **One decision log per repository**, holding only the decisions it owns; a cross-cutting decision
+    stays in the donor's or the platform's log and is linked, not copied — two copies drift, and each
+    reads as the authoritative one.
+11. **The repository splits into a generic `module/` and a private `overlay/`**: the module is
+    parameterised and publishable, the overlay holds the organisation's hosts, inventory, secret paths,
+    dashboards, probes and alerts — core, adapter, local, as in a governance render. Publishing later
+    is then "publish `module/`, relocate `overlay/`" instead of an audit of every file.
+12. **Core services are consumed through declared inputs, never literals** — identity issuer URL,
+    secret-store address and path prefix, edge network name, an optional bus URL — listed under
+    `Contracts` → *Inputs*, and the module starts with none of them set (a plain env file, no SSO). A
+    module that needs one organisation's core services just to start cannot be tried, tested or
+    published anywhere else, and a test that renders its config with empty inputs is what proves it.
+13. **CI lints `module/` for the organisation's terms** — its domains, private network names and
+    secret-path prefixes, from a denylist the overlay owns — and for checkout paths and references into
+    `overlay/`; a missing denylist is *not checked*, never clean. Genericness without a gate decays on
+    the first urgent fix.
 
 ## An integration that MIRRORS external state ships a push handler AND a pull reconcile
 
@@ -391,6 +653,180 @@ code, never as a block a human runs by hand. A hand-run command in a deploy hand
 ticket, not a step to perform: it can only exist on the new build, so it fails on the old one — and
 that is exactly when it gets run. The deploy flow is documented as code so it is repeatable and never
 depends on one person's memory.
+
+## "Merged" is not "the reviewed code merged" — a verdict pins a HEAD, a click picks a MOMENT
+
+**A review verdict names a commit. A merge names an instant. Nothing in a forge binds the two.**
+Between the approval and the click the branch can move — a fix can land, or fail to — and the merge
+takes whatever the request's head is when the button is pressed. It then reports `merged: true`,
+closes, and looks exactly like a merge of the reviewed code.
+
+**Measured:** an approval was pinned to a head, and the merge happened **two minutes before that
+commit existed**. The fix the approval was conditional on never entered the merge. The request's
+head ref was *correct* at click time — this is a race, not a stale cache — and three independent
+checks all said merged: the API's `merged: true`, the closed state, and an ancestry check against
+the merge's own head. Only reading the merged FILE found the pre-fix line still sitting there.
+
+⚠️ **`merged: true` answers a different question than the reviewer's.** The reviewer asked *did the
+code I approved land?* Answer that by comparing **the merged head against the head the verdict was
+pinned to**, and where they differ, by content — the behaviour the review was about, not the diff.
+
+| who | obligation |
+|---|---|
+| **reviewer** | pin the verdict to a head **and say it is void at any other**. An approval with no head is un-auditable; an approval with a head and no void clause reads as approval of whatever merges. |
+| **whoever confirms the merge** | compare merged head to pinned head *before* reporting it landed. Equal ⇒ done. Different ⇒ the review has not happened yet, whatever the request says. |
+
+**This is the reader-side twin of the branch-freeze rule**, and the gap between them is where this
+lives: a freeze binds the **pusher** not to move a branch under a posted claim, and says nothing to
+the **merger**, who is the one holding the race. The merger is often a human clicking a button who
+cannot see a claim that has not been posted yet. **A freeze the other party never saw is not a
+freeze** — which is why the check has to run after the merge, by content, and not rely on either
+side having been disciplined.
+
+## A merge-ready claim covers EVERY CI run for the head, queried by the full id
+
+**"Green" is a claim about every run the forge made for that exact commit** — typically a push run
+and a pull-request run, sometimes more than one workflow — found by querying the **full** commit id,
+never a branch name or an abbreviated id (an exact-match filter returns nothing for a short id, which
+reads as "no runs"). **A split verdict on one commit is red.** A green push run beside a red
+pull-request run on the same commit is not "mostly green"; the red one is the answer until it is
+explained.
+
+⚠️ **Zero runs can be produced BY CONSTRUCTION, and that is the dangerous form of "no runs".**
+**An event raised by the CI system's own identity is typically not treated as a trigger** — most
+platforms suppress it deliberately, to stop a job re-triggering itself. The event does not have to
+be a push: a branch pushed by the job token raises no push run, and a pull request *opened* by the
+job token raises no pull-request run either. Either way the head arrives **un-gated** and has no run
+at all: not a failure, not a pending, nothing to read. It looks identical to a query typo, and to a
+head whose run has not been scheduled yet.
+
+⚠️ **Do not read that as "do not let a bot push."** The rule is about the identity that raised the
+event, not the verb — two lanes hit this on different verbs, and the second nearly escaped the first
+lane's write-up because it named only pushes. Whenever automation creates the event that is supposed
+to gate a head, check that the event actually started a run.
+
+**Two consequences.** Any automated push to a ref that is supposed to be gated must use a credential
+that actually triggers the gate — a user token — or dispatch the workflow explicitly in the same
+action; and **a merge-ready claim on a head with zero runs is void**, never "green by absence". Assert
+that a run EXISTS for the exact head before assessing its conclusion; treat *no run* as a third
+state alongside passed and failed, and say which of the three you observed.
+
+**A green that queries a live feed ages.** Gates that consult an external, changing source — a
+dependency or vulnerability audit, a licence database — can pass and then fail on the same commit
+minutes apart, so a green observed earlier is not a current green. For those gates, the merge-ready
+claim names the run and its time, and is re-checked at merge.
+
+## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
+
+**`git diff main..branch` shows what REPLACING main with the branch would do. A merge does not do
+that.** It shows every commit main gained since the branch forked as a *deletion*, because it is
+comparing two endpoints rather than asking what the branch adds. The number is real; the question it
+answers is not the one being asked.
+
+**Measured:** a branch was judged to "revert ~568 lines of live content" on merge, and a cherry-pick
+was performed to avoid it. A test-merge into the same head gave **exit 0, no conflicts, 2 files,
++35/−8, and no file touched outside the intended directory** — identical to the cherry-pick's own
+delta. The 568 was the two-dot figure. Two lanes then reproduced it independently, one with
+`git merge-tree --write-tree`, before it was corrected.
+
+**The damage is the belief, not the wasted PR.** *"A branch behind the default branch reverts the
+newer content when merged"* is false, and it is sticky: it makes every long-lived branch look
+radioactive and drives cherry-picks nobody needs. Where a repository takes automated commits — a
+sync timer, a bot, a generated artifact — **every** branch is behind within the hour, so the false
+rule fires constantly and always looks confirmed.
+
+⚠️ **The replacement PR usually has the same property**, which is what makes the diagnosis stick: the
+cherry-pick raised to replace that branch reported *92 deletions* against the same head when read
+two-dot. A rule that "explains" both the suspect and its replacement is not discriminating between
+them.
+
+| to answer | use |
+|---|---|
+| what does merging this bring? | `git diff <base>...<branch>` (three-dot), or merge it in a scratch worktree and diff against the base |
+| would it conflict? | `git merge-tree --write-tree <base> <branch>`, or the scratch merge's exit code |
+| what is on the branch that is not on the base? | `git log <base>..<branch>` |
+| **nothing a reviewer normally asks** | `git diff <base>..<branch>` (two-dot) |
+
+**Same family as the cheap-view failures elsewhere in this file:** the reading that is one character
+cheaper answers a neighbouring question, agrees with the right answer most of the time, and diverges
+exactly when the branch is old — which is when someone is most likely to be nervous and least likely
+to re-check.
+
+## "Read the integration branch, never compute it" — the read returns a LIST, and selecting from it is the hard half
+
+**A rule that says READ rather than COMPUTE has not finished until it says how to SELECT.** Listing
+the integration branches returns every seat's branch, not yours. The candidates look alike by
+construction — they share a prefix and differ only by a suffix naming a seat — so an agent that does
+not firmly know its own seat name picks a plausible wrong one, and a machine-scoped or human-scoped
+branch left over from an earlier convention is the most plausible wrong one of all, because it looks
+like the general-purpose choice.
+
+**So the selection is by exact match on the seat's own identity — lane AND harness — and a near
+match is a stop, not a default.** If exactly one candidate matches, use it. If none does, **create
+it**; a missing branch is not licence to open a feature pull request against the default branch,
+which is the failure this rule exists to prevent and the one an empty read invites. If several match,
+stop and ask: two branches claiming one seat is a collision somebody must adjudicate.
+
+⚠️ **Where a registry records the branch, the record and the naming convention must agree, and a
+mismatch is the registry's defect, not the agent's.** An agent that follows a recorded branch name is
+behaving correctly even when that name is invisible to the convention's own discovery query — and
+that invisibility is the real cost: the branch drops out of every sweep keyed on the convention,
+so nothing reports it as unmerged, orphaned or stale. Fix the record or fix the convention, and
+until then treat the agent's behaviour as compliant.
+
+**The same read also tells you what is already TAKEN, and that is the half agents skip.** Listing
+the remote's branches is not only how you find your own; it is the roster of work other seats are
+holding. **Before rebuilding anything for a ticket, read that roster and read the ticket's newest
+comment** — a ticket whose latest comment says the work is built or held is TAKEN, and the branch
+naming it is someone else's, however stale the ticket body looks.
+
+⚠️ **Re-pushing commits you did not author under your own branch name is not a naming choice, it is
+a laundering of provenance.** Measured: a seat re-pushed another seat's held branch under its own
+suffix — byte-identical commits, original attribution trailers intact — and opened a second pull
+request on it. The trail broke in both directions at once: the author lost the record that the work
+was theirs, the re-pusher silently inherited responsibility for code they had not written, and the
+merger received two requests for one change with nothing on either saying which was which.
+
+**So: carrying someone else's commits is legitimate and stating it is mandatory.** Put the
+provenance in the pull request body — whose work, which branch it came from, why it is being carried
+— because that body is the only surface a merger reads before clicking. **A rename is never
+attribution**: it changes the one field that looked like authorship while leaving the actual
+authorship evidence pointing somewhere else, which is worse than an unattributed copy because it
+reads as settled.
+
+**Diagnosing a seat that got this wrong: check the text LAST.** Identical rendered instructions
+across harnesses mean the text is not the variable, and "sharpen the wording" is then a fix aimed at
+the wrong layer. Establish in order: did the branch exist, did the record name it, did the record
+agree with the convention, and only then whether the instruction was read.
+
+## Agent attribution lives in the BODY — the author field is one shared identity
+
+**Write side.** Every agent-authored commit, PR body, review and forge comment carries its own
+provenance *in the text*: the **harness** (a closed enum), the **precise model identifier**, and the
+**human who initiated the work**. Take each from runtime evidence at the time of the write; where a
+value is genuinely unavailable, write `unavailable` rather than a plausible one. **Never infer
+identity from a task title, an inherited transcript, a configured default, or an example** — an
+identity you did not observe is not one you may assert, and a field that always reports the same
+value records nothing while looking like an audit trail. `Initiated-By` is **provenance, not
+authorization**: a run a human started does not mean that human approved each later action.
+
+⚠️ **Attribution is not signing.** Trailers describe provenance; a signature proves possession of a
+key. Never use a human's signing key, or weaken signing policy, to satisfy an attribution
+requirement. A required signature with no authorised agent key is a commit *gate* — preserve the
+reviewed patch and report it, never bypass the check.
+
+**Read side, and this is the half that gets skipped.** Where agents reach a forge through one
+gateway account, **every post they make carries that account as its author**. The author field then
+distinguishes nothing — and it fails in the expensive direction, because it still reads as an
+answer. **Any audit concluding "X never commented" or "nobody responded" from the author field is
+void by construction**, not merely unreliable. Attribute from the provenance in the body; where the
+body carries none, the honest finding is **unattributable**, never **absent**. Measured: a comment
+was reported missing two hours after it was posted, because every comment on that forge reads as the
+same author.
+
+**The two halves are one rule, because the write side is what makes the read side possible.**
+Provenance dropped "to save tokens" does not cost a nicety — it removes the last way to tell who did
+the work, on a surface where the author field has already been collapsed by design.
 
 ## A dependent repo's CI must PROVE its API is deployed before it deploys
 
@@ -575,6 +1011,23 @@ it **PASSES**, beside one **known-BAD** artifact it **FAILS**. One without the o
 calibration — the known-bad alone proves it can fire, which is exactly the evidence a
 fires-on-everything checker also produces.
 
+⚠️ **And when a probe is run across a SET to compare its members, the evidence is the
+DIFFERENTIATION — not the values.** A broken probe returns the same thing for every input, which is
+precisely what a working probe returns when the answer is genuinely uniform. **The two are
+indistinguishable from the outputs alone**, so agreement across a control set is a *smell*, not
+reassurance. This inverts the intuition — consistent results feel like corroboration — which is why
+it survives review.
+
+Measured: three versions of one package audited with a flag the pinned tool does not accept returned
+three identical errors. **Three matching non-answers read as three consistent results.** The
+corrected run returned *vulnerable / vulnerable / clean*, and it was the difference that made it
+evidence. Reproduced here in one command: an invalid flag passed with three different inputs
+produces three identical refusals — perfect agreement, zero information.
+
+**So a control set contains at least one input whose expected answer DIFFERS from the subject's, and
+the assertion is on the difference rather than on the subject's value alone.** A probe that cannot be
+shown to disagree with itself somewhere has not been shown to be reading its input at all.
+
 **Measured root cause, because the shape recurs: hand-parsing a structured format.** A line regex
 over YAML read a block sequence as empty, so the gate fired on **every correctly-formed record** —
 and its remediation would have corrupted them. A checker that is wrong in the FIRING direction is
@@ -647,6 +1100,303 @@ attributed to anything except its cause.
 Same refusal as *a service isn't deployed until its backups are PROVEN*: **a suite that passes while
 mutating production is not a passing suite — it is an unmeasured side effect wearing a tick.**
 
+## Under `pipefail`, an early-exiting consumer makes a SUCCESSFUL search report failure
+
+**`set -o pipefail` makes a pipeline fail if ANY stage fails — and a consumer that stops reading
+early kills its producer with a broken pipe.** `grep -q`, `head -n`, `jq -e` and friends exit the
+moment they have their answer; the producer, still writing, dies on `SIGPIPE` and exits `141`; the
+pipeline reports `141`. **So the guard reports failure precisely because the search SUCCEEDED
+quickly.** The data was found. The check says it was not.
+
+⚠️ **The intermittency is what carries it through review.** It only fires when the producer is still
+writing at the moment the consumer quits, so it depends on output size and pipe-buffer timing: small
+inputs pass, the developer's test passes, and it fails on the larger real input some fraction of the
+time. Measured — the same pipeline, five runs each:
+
+| pipeline | `pipefail` | exit |
+|---|---|---|
+| early match, long tail, `… \| grep -q` | on | **141, 141, 141, 141, 141** |
+| the same pipeline | off | 0, 0, 0 |
+| `… \| head -n 1` | on | **141, 141, 141** |
+
+**Remedies, measured rather than assumed — and the obvious one does not work:**
+
+| approach | exit |
+|---|---|
+| capture to a variable, then `printf '%s' "$out" \| grep -q` | **141, 141, 141 — still broken** |
+| `[[ $out == *MATCH* ]]` (no pipe at all) | 0, 0, 0 |
+| `grep -q MATCH <<<"$out"` (here-string) | 0, 0, 0 |
+| consume the whole stream: `n=$(… \| grep -c …)`, then test `n` | 0, 0, 0 |
+
+**Capturing first is not the fix; removing the early exit from a pipe is.** Capturing and then
+piping the captured value into `grep -q` rebuilds the identical hazard one line later, which is the
+trap in the obvious advice: it looks like it addresses the cause and it only moves it.
+
+`|| true` also returns 0, and it is the wrong tool here: it suppresses **every** failure in that
+pipeline, including the ones you want to hear about. Reserve it for where an empty match is a
+genuine expected outcome, not to silence a signal.
+
+⚠️ **The hazard needs TWO conditions, so the SHAPE alone is not a defect.** The consumer must exit
+early **and** the producer must still be writing when it does. A match that lands near the END of a
+long stream returns 0 every time, because the consumer reads to the end before it has an answer and
+nobody exits early — measured 0/3 on streams of 200 KB and 3 MB. So a pipeline containing
+`| grep -q` is a candidate, never a finding: **reproduce it before filing one.** A scan whose real
+producer emits only a few lines is not affected, however alarming the grep looks.
+
+⚠️ **It is a RACE, not a size — and no byte threshold can express it.** The discriminator is whether
+the producer is **still scheduled to write** when the consumer exits, which depends on how slow the
+producer is, not how much it emits. Measured on the same ~60 bytes: a producer that pauses mid-stream
+failed **10/10**, while the identical bytes emitted without a pause failed **0/10**. That is three
+orders of magnitude below any pipe-buffer figure, so *"safe below one buffer"* is not a conservative
+simplification — it is a rule that would classify a real, flaking guard as safe. A slow producer is
+the common case in practice: anything that queries a network, a lock, a cloud API or another process
+can stall between bytes.
+
+**And the discriminator is `pipefail`, not the shell.** The same construct returns 0 without it and
+141 with it, in bash and zsh alike — measured 0/0/0 versus 141/141/141 in each. A probe that looks
+shell-dependent is really pipefail-dependent, so **switching shells does not fix it and a check run
+without `pipefail` gives a false all-clear** regardless of which shell ran it. The **rate** varies —
+the same class of producer missed 10/10 on one machine and roughly a third to two-thirds of the time
+on another — so a low observed rate is never evidence of immunity.
+
+⚠️ **The fixture is where this goes wrong, and it is the most reusable lesson here: a producer that
+cannot race certifies broken code as clean.** Piping a small file through `cat` into the same guard
+returns success **0/10 in every shell, with and without `pipefail`** — it cannot exhibit the failure
+at any size, because a single fast write finishes before the consumer exits. A self-test built on
+that fixture passes on genuinely broken code, and it does so *confidently*.
+
+⚠️ **In a SCANNER the failure inverts into a fail-open, which is why this is not merely a flaky
+guard.** `if producer | grep -q SECRET; then alarm; fi` treats the 141 as *pattern not found*, so the
+scan reports **clean while the thing it hunts is present**. Measured on a producer that emits a
+credential on its first line and keeps writing: **5/5 runs printed "clean"**, the credential there
+every time. A guard that refuses to proceed announces itself; a scanner that fails this way is
+silent, and its silence is the success signal everyone downstream is waiting for.
+
+**The mirror of "reproduce before filing" is the trap behind every wrong answer here: a PASSING
+fixture proves nothing about a gate unless that fixture can make the gate FAIL.** Core already
+requires a detector to be proven against a known-bad control; this aims the same requirement at the
+*fixture*. A scan certified safe on a two-line fixture failed 5/5 on a realistic input of the same
+kind. **Before trusting a green self-test, confirm the fixture can produce a red one.**
+
+**The fixture must be a
+real, slow, multi-write producer** — one that pauses between writes, as a network call, a lock or a
+subprocess does. Three independent investigations of this hazard reached three different conclusions,
+and the fixture is why: each was measuring a construct that raced differently, or did not race at
+all.
+
+**The strongest remedy is to remove the pipe, not to mitigate it.** Where the producer can be asked
+for a bounded result directly — a `--count=1`-style flag, a query that returns one row — there is no
+second process to kill and the condition cannot arise: measured 0/3. The pipe-free forms above are
+the fallback for when the producer cannot be bounded.
+
+⚠️ **Generalise the near-miss: a remedy stated as INTENT must show its SYNTAX whenever the obvious
+completion re-creates the defect.** *"Capture once and match against that"* is a true sentence and an
+unusable instruction — the natural way to finish it is to pipe the captured value into the same
+early-exiting consumer, which is the original bug one line further down. A remedy whose most likely
+reading is the defect has not been written down yet, however correct its intent. Where the failure
+lives in the syntax, the fix is syntax: show the line.
+
+**And a probe that can fail by RACE needs a repeat-N self-test.** One green run is not evidence
+about a timing-dependent check — run it enough times to see the distribution, and make that repetition
+part of the test rather than something a person does once by hand.
+
+## A fixture that cannot EXPRESS the failure certifies it clean
+
+**A passing test proves nothing about a gate until that gate has been seen to fail.** A fixture is
+not a sample of realistic input; it is an instrument, and an instrument that cannot register the
+defect reports *clean* on broken code — confidently, repeatably, and in exactly the place where
+someone will later cite the green run as evidence.
+
+**The failure mode is that the fixture is PLAUSIBLE.** Nobody writes an obviously useless one. They
+are built by careful people, they look like the real thing, and they are shaped — usually by
+accident — so the defect cannot appear in them. Two properties that do it:
+
+- **Size-bounded.** The input is small enough that the mechanism never engages. Measured instance: a
+  guard whose failure requires a producer still writing when its consumer exits passes **0/10** on a
+  small fast fixture and fails **5/5** on a realistic input of the same kind. The fixture was correct
+  in shape and wrong in scale, and scale was the whole mechanism.
+- **Scope-bounded — sized right, scoped wrong.** The input is large enough for the mechanism to
+  engage, but the test only *observes* part of it, and the effect lands in the part it never looks
+  at. Measured on the same broken read-with-a-cursor: **30 rows with only 20 observed passes 20/20**,
+  while **20 rows with 20 observed fails 10/20 with ten duplicates** — same page size, same mutation,
+  same code. The perturbation pushed the first page's rows past the observation window onto a third
+  page the test never read. ⚠️ **The loud version of the defect existed and the fixture hid it**, so
+  a bigger fixture is not automatically a better one. State the mechanism first, then size **and
+  scope** to it: the test must observe the whole range the effect can move things into.
+- **Masked by uniqueness — the input space cannot CONTAIN the case being ruled out.** A test that
+  claims a lookup is exact must include a near-miss that would collide; a dataset where every key
+  happens to be unique cannot tell an identity lookup from a substring one, and will certify the
+  substring one as exact. Measured: a case-insensitive *contains* filter queried with a key present
+  only once returns **1 hit and looks like identity**; the same filter and query against a set
+  holding a near-miss returns **3**. Taking the first result hides it either way. ⚠️ **The shipped
+  failure is silent and plausible** — the caller gets a neighbouring record rather than an error or
+  an empty result, so nobody reports it as a bug. Whenever a test asserts uniqueness, exactness or
+  "resolves to one", the fixture must contain the thing that would break it.
+- **Window-missing, and probably the commonest of these.** The fixture sets up the right
+  condition but applies it *outside the interval where the code is vulnerable* — before the operation
+  starts, or after it finishes. Nothing is wrong with the input; the timing of the perturbation means
+  the vulnerable path is never entered. Measured on a deliberately broken read-with-a-cursor: a
+  mutation landing **between** the two reads exposes it (a row silently never returned), while the
+  identical mutation applied **before** or **after** them passes **20/20 against the same broken
+  code**. Nothing in the fixture looks wrong, because nothing is.
+
+**One sentence subsumes every shape above: state the property of the REAL input that makes the defect
+appear, and show the fixture has it.** Both halves carry weight. Naming the property is what stops
+you reaching for a plausible extreme instead — and *"make it maximally different"* is exactly the
+instinct that produces an unfalsifiable test, because extremity is not the same as exercising the
+mechanism. Showing the fixture has the property is what catches the four failures above, each of
+which was a fixture nobody had checked against the property it was supposed to embody.
+
+⚠️ **The shapes are not a checklist to run down.** They are what "lacks the property" happened to
+look like four times; the next one will look like something else. The property is the invariant, and
+it has to be written down before the fixture is built, because afterwards every fixture looks like it
+has it.
+
+**So the acceptance step is one line: show the fixture producing a RED result before trusting its
+green one.** Core already requires a detector to be proven against a known-bad control; this is the
+same requirement aimed at the fixture rather than the detector, and it is the one that is routinely
+skipped — because a green test looks like success, and a fixture that cannot fail looks exactly like
+a fixture that passes.
+
+## An edit addressed by REGION is a claim about every line in that region
+
+**"Delete lines N to M" asserts that all of them are dead.** Addressing a change by position rather
+than by identity moves the burden of proof from the thing you meant to remove onto the whole span,
+and the span is exactly what nobody re-reads: the author verified the *first* dead method and the
+*last* one, and the live method sitting between them was never named in anyone's reasoning. Measured
+instance: a deletion by line region swallowed a live method that another feature called — caught by a
+spec, restored, and reported rather than quietly patched.
+
+**So address edits by identity where the tooling allows it** — by symbol, by node, by name — and
+where a region is unavoidable, **read every line of it before removing it**, not just its ends.
+
+⚠️ **This is one member of a wider family: an operation confident about code it has not read.** Its
+siblings are the comment that describes behaviour the function no longer has, and the test bar naming
+a control that was removed months ago — both of which read as authoritative precisely because they
+are written in the codebase's own voice. **A statement inside the repository is evidence about when it was written and about what its author INTENDED — never about
+what shipped.
+
+⚠️ **Read the artefact that DEFINES a surface, never the one that DESCRIBES it.** Source describes
+intent; a generated schema, an executed query, a deployed revision, the code itself — those are the
+surface. The pairings recur: executed query over resolver, deployed revision over default branch,
+code over the ticket about the code, and a peer's summary over the thing they summarised.
+
+⚠️ **For a SCHEDULED job the defining artefact is the working tree on disk at the path it runs from**
+— not a release, not a tag, not a branch. A script living only on an integration branch is
+unreachable to a job reading the default branch, so *"merged to the integration branch and the gate
+passed"* is a true claim about a branch and says nothing about what the job can call. Measured:
+wiring a nightly watch to a script in exactly that state would have produced a step failing silently
+every night, in a job whose own header notes that a scheduled run has no reader. **In every
+one of them the defining artefact was available and cheaper to read than the describing one.** The
+generated-schema case below is the sharpest instance, not the whole rule.
+
+⚠️ **Where an artefact is GENERATED, the generated artefact is the thing; the source that generates
+it is not.** For an API, the schema callers see *is* the surface. A declarative framework synthesises
+arguments from a field list, so they appear **nowhere in the class body** and the source
+**under-reports** the boundary — auditing the class audits half of it. It misleads the other way too:
+read carelessly, source **over-reports**, because a commented-out declaration beside a real one
+scans as part of the interface. Both errors hit one reviewer ninety seconds apart, same file, same
+report — one missing two real arguments, the other inventing one.
+
+⚠️ **Its mirror image: a stale COPY of someone else's artefact, which reports a surface as
+unavailable.** A repo that syncs a neighbour's schema and lints against the copy will confirm its own
+stale answer at every step. Measured: such a copy sat 58 lines behind the original; one capability
+reported blocked had shipped on the other side some time earlier, while a second genuinely was still
+blocked. **Not reliably wrong is the worst property a source can have** — it never earns the distrust
+that would get it re-read.
+
+**And a BLOCKED claim is the one kind of claim nothing ever expires.** A green test is re-run. A
+stale comment is eventually read next to the code. *"Blocked on another team"* is re-read as a fact,
+by the person who wrote it, indefinitely. **Re-measure a blocking claim against the live artefact
+before repeating it** — that single step turned four scattered tickets into one pattern in the
+exhibit behind this rule.
+
+⚠️ **Make it mechanical, not a thing a careful reader remembers.** The reviewer above had written
+this rule one section earlier in the same document and then broke it — so an acceptance step that
+depends on remembering will not hold.
+
+**The step: a claim must QUOTE the defining artefact, and the quote is what a reviewer checks the
+absence of.** A claim about an API surface quotes the exported schema line, not the class. A claim
+about what merged quotes the content at that revision, not the request's state. A claim about a query
+count quotes the executed statement, not the resolver. **An unquoted claim is not a weaker claim, it
+is an unreviewable one** — and absence is far easier to spot than a wrong quote, which is the property
+that makes this enforceable at all.
+it was written, not about what the code does now.** Where a comment and the code disagree, the code
+is the fact and the comment is an artifact with a date on it; treat a confident assertion in prose as
+a hypothesis to re-measure, particularly when it is the reason you were about to skip reading
+something.
+
+## The mechanism that performs a process is not deployed BY that process
+
+**A tool that carries out a process is usually not itself installed by it.** Improvements to the tool
+land in the repository and look like they took effect — every commit is real, every diff applies —
+while the copy that actually executes was installed by a separate, rarely-run mechanism and goes on
+running the old code. **The gap survives review indefinitely because the describing artefact and the
+performing artefact share a name and a path**, so nothing on screen distinguishes them. Measured
+instance: an installed deployer ran two months behind its repository while every release shipped
+changes to it.
+
+This is the rule above applied one layer out. That one is about **data** — a body versus its
+comments, a schema versus the class that generates it. This is the same failure on the **tool**.
+
+### Identity by PATH is not identity
+
+When a mechanism replaces files as part of its own work — a checkout, a rename, an install — a
+self-check comparing *"me"* against *"the new me"* **by path** compares a file with itself and can
+never report a difference. Replacement by rename makes it worse rather than better: the running
+process keeps its original inode while the path begins resolving to the replacement, so hashing the
+path after the swap reads the new file, not the code that is executing.
+
+**Take identity by CONTENT, captured before the replacement can occur.**
+
+### A self-updating mechanism must refuse to hand off DOWNWARD
+
+Give the hand-off contract a **monotonic revision** and refuse to pass control to a copy whose
+revision is lower than the running one. Without it, **repairing the mechanism un-repairs it on the
+next run**: install a current copy, and the next run observes that the installed copy differs from
+the checked-out one and hands off to the stale one. ⚠️ **"Differs" is not "is newer"** — a freshly
+installed current copy looks exactly as different from a stale one as the stale one looks from it, so
+the repair and the regression are indistinguishable to a comparison that knows only inequality.
+
+### Say which surface the check runs on
+
+**A drift check living only inside the mechanism inherits the defect it exists to detect** — a stale
+copy carries a stale check. Such a gate must name the surface each leg runs on, and at least one leg
+must run somewhere that does not read the suspect artefact in order to judge the suspect artefact.
+Where no such surface exists without credentials, **say so**, rather than implying a coverage that is
+not there.
+
+**The one-minute test for any self-updating tool:** what does its self-check compare, and could the
+two sides ever be the same file?
+
+## Cite a STABLE identifier — a branch tip is not one
+
+**A pointer to a moving reference is stale the moment the thing it points at improves.** A branch tip
+is unstable by definition: every improvement to the source invalidates every citation of it, and the
+citing document cannot tell, because nothing about a stale SHA looks stale. Measured: one exhibit's
+tip moved **three times** while it was being cited, each move costing the citing side a verification
+that produced no new information.
+
+**So cite by the thing that is not moving.** While work is in progress that is the **branch plus a
+reachability note** — it says exactly what is true and does not rot. **The first SHA worth pinning is
+the MERGE commit**, because it is the first identifier that is both *stable* and *reachable from the
+default branch*. Those are two different properties and a citation needs both: a tip is reachable and
+unstable, an abandoned commit is stable and unreachable.
+
+⚠️ **The obligation runs the other way too: an artefact under active citation is FROZEN.** Once
+someone has quoted your document, improving it silently breaks their quote — the same contract as a
+posted merge-ready claim freezing a branch. Freeze it, or tell the citing side **which field changed
+and why it mattered**, because a bare new identifier makes them update a string without knowing
+whether what they took from the source is still true.
+
+**Two properties make a correction cheap, and both belong in the pointer:**
+
+- **Say what you TOOK from the source** — the quote, the number, the claim — so a change can be
+  matched against it rather than re-derived.
+- **Keep a superseded identifier, marked as superseded, rather than deleting it.** History is
+  append-only, and a reader arriving with the old reference should land on an explanation instead of
+  a dead end.
+
 ## An expected value copied from the OUTPUT pins the defect
 
 **A test whose expected value was taken from what the code currently produces is not a test — it is a
@@ -700,11 +1450,11 @@ pre-fix system.
 
 They are opposites, and the difference decides what you look for:
 
-| | *Absence-as-health* | **This rule** |
-|---|---|---|
-| What happens | a check that matches nothing goes **green** | a check that is now mistyped goes **permanently red** |
-| Why it survives | silence reads as success | noise reads as a broken monitor |
-| How it is "fixed" | nobody notices | someone widens or mutes it — converting the detector into the blind spot it existed to catch |
+| | *Absence-as-health* | **This rule** | **Guard stops selecting** |
+|---|---|---|---|
+| What happens | a check that matches nothing goes **green** | a check that is now mistyped goes **permanently red** | the check's guard no longer matches, so it emits **nothing at all** |
+| Why it survives | silence reads as success | noise reads as a broken monitor | there was never any output to miss |
+| How it is "fixed" | nobody notices | someone widens or mutes it — converting the detector into the blind spot it existed to catch | it is not fixed; nothing records that it stopped |
 
 The failure mode here is **not** that the alarm is ignored by accident. It is that a permanently-red
 detector invites the obvious repair — silence it — and silencing it is indistinguishable from fixing
@@ -739,6 +1489,50 @@ in its lifecycle, and diagnosing the system is time spent on a claim nobody has 
 
 Same family as the mistyped check above, arrived at from the opposite direction: there the check
 stopped matching its subject, here the subject stopped existing on either side of the check.
+
+### The third shape: a guard written for the OLD type makes the check VANISH
+
+A detector for a representation is almost always *gated* on that representation — `if it is a
+symlink…`, `if the response is JSON…`, `if the file exists…`. **Change the representation and the
+guard simply stops selecting. The check does not pass and does not fail: it does not run, and no
+output anywhere says so.** Red and green both prove a check executed. Silence proves nothing, which
+is why this shape outlives the other two — there is no noisy row to investigate and no green badge
+to distrust.
+
+**So the migration that changes the type is exactly the moment the old detector goes quiet, and it
+is the only moment anyone would have thought about it.** Move the detector in the same change that
+moves the mechanism. A detector left behind is not deprecated, it is invisible.
+
+Two things make the shape findable afterwards:
+
+1. **Make the guard TOTAL.** A branch per representation the mechanism can now be in, plus an
+   explicit `else` that reports *"this check did not recognise what it was pointed at"*. An
+   unrecognised type is a finding, never a silent skip.
+2. **Positive-control it in BOTH directions before shipping** — perturb the system and see the
+   finding fire and name the right subject; restore it and see silence. Run the healthy case
+   *first*: a "negative control" on a system that is already broken passes for the wrong reason,
+   and a control run against a script that aborts before reaching the check passes for no reason
+   at all.
+
+**A model's KNOWN failure mode needs a detector that survives the model's own migration.** Where
+distribution moves from *linking* to *rendering*, staleness becomes the failure mode by
+construction — the rendered copy is correct only until a source changes — so the freshness check is
+part of the rendering model, not an accessory to it. Exhibit: config distributed by symlinking into
+a checkout was replaced by files rendered from layered sources; the freshness check was gated on
+the resident file being a symlink; it therefore stopped running at the cut-over and stayed silent
+while merged security rules — including a mandatory gate written for a live incident — were absent
+from every session for the better part of a day. Nothing failed. The check was simply no longer
+about anything.
+
+### A detector's printed REMEDY is part of the detector
+
+The remedy a finding prints will be run by someone who has not re-derived the situation — that is
+its purpose. **So the detector must verify the preconditions its own remedy assumes**, or it
+becomes the instruction that causes the next incident. In particular, a remedy that rebuilds
+something *from a working tree* assumes that tree holds only what is merged; a lane sitting on a
+feature branch would publish its unmerged draft by following the advice, turning a freshness
+warning into a review bypass. Measure against the merged ref (*never the working tree*, above) and
+say so when the tree is not in the state the remedy needs.
 
 ## Definition of done: a service isn't deployed until its backups are PROVEN
 
@@ -786,3 +1580,86 @@ per-device configuration:
 Litmus: if the fix would have to be repeated on the next device, it's at the wrong layer.
 Measured: an internal DNS name resolved on the LAN but died on the VPN; the answer was VPN
 split-DNS + DHCP, and the hand-made per-machine resolver file became removable.
+
+## Configure the GENERATOR, never the artifact it generates
+
+**A service manager that generates its unit file will regenerate it, and a hand-edit disappears with
+no error.** The edit appears to work — the service picks it up, the behaviour changes, the check
+passes. Then the next restart, upgrade or reconfigure re-renders that file from the manager's own
+inputs, and everything the inputs do not describe is silently gone. Nothing fails. The service comes
+back up without the setting.
+
+⚠️ **The whole danger is that the FIRST test passes.** A hand-edited unit file is indistinguishable
+from a correctly configured one right up until the regeneration event — which may be weeks later and
+triggered by something unrelated, an unattended upgrade or a reboot. By then nobody connects the
+missing behaviour to the edit, because the edit is no longer there to find. This is absence-as-health
+with a delay fuse: the evidence of the cause is destroyed by the same event that causes the symptom.
+
+**Measured:** environment variables hand-added to a generated service definition vanished on the next
+restart. The durable path was the manager's own per-service environment input — a file the generator
+reads and re-renders *from* — not the definition it writes.
+
+**So establish, before editing any service definition, whether it is authored or generated.** A
+generated file usually says so in a header, lives under a path the manager owns, or has an mtime that
+tracks package operations rather than your edits. If it is generated, find the input. **If the manager
+exposes no input for what you need, that is the finding** — the setting cannot be expressed durably
+there, and a wrapper or a hand-authored unit kept outside the manager is the honest fix, not an edit
+that will be reverted without telling anyone.
+
+The same shape covers any rendered configuration — templated config, generated container manifests,
+rendered dotfiles. **An artifact that has a generator has exactly one durable edit point, and it is
+not the artifact.**
+
+## A long browser harvest checkpoints to the PAGE, because the session is the fragile part
+
+When an agent harvests data through a browser over many steps, the accumulated result belongs in the
+page's own durable storage (`localStorage`/IndexedDB), written **after every item** — not held in a
+JavaScript variable, and not held in the agent's context. The loop is then restartable: each pass
+re-reads what it already has and fetches only what is missing.
+
+Everything around the data is less reliable than the data. The page navigates and in-memory state
+dies with it; the tool call times out while the work keeps running in the page; the browser
+connection drops mid-run; the site starts throttling after N requests and the approach has to
+change; the single-page app degrades under repeated automation and needs a reload to recover. Each
+of those is survivable when the partial result is already persisted, and each costs the entire
+harvest when it is not. On a long extraction you should expect to meet several of them.
+
+- **Persist inside the loop, not after it.** A write at the end of the batch is the write that never
+  happens on the run that fails.
+- **Key by the item's stable id**, so resuming is a set-difference. A counter is wrong the moment
+  one item fails and the next succeeds.
+- **The readiness probe is part of the data contract.** A probe that fires before the page has
+  rendered stores an empty record that looks complete. Require the thing you actually want — the
+  content nodes present, and their count stable across two polls — before recording anything.
+- **Reconcile against a figure the page states itself.** Comparing a computed sum to a printed
+  total is what catches silently-missing rows; without it, an export that skipped a whole class of
+  items still looks finished.
+- **A tool-call timeout does not mean the work stopped.** Poll the store; do not restart the loop.
+
+## A fleet audit measures against the FORGE, never against `refs/remotes/*` as found
+
+**`origin/<default>` is a local file.** It is a pointer cached by the last fetch, and its *spelling*
+is the trap: it reads as "the remote's default branch", so it gets the trust owed to a server answer.
+Nothing about a stale one looks stale — no warning, no age, no error — and every comparison built on
+it (`origin/<default>..<branch>`, `git show origin/<default>:<path>`, "is this branch contained?")
+returns a confident, well-formed, wrong answer.
+
+So a cross-repository audit **fetches first, or asks the server** — `git fetch` before reading any
+`refs/remotes/*`, or `git ls-remote`, which consults the forge and touches no local ref at all.
+Reading a **working tree** is the coarser form of the same mistake: a working tree carries
+uncommitted and unpushed state, a remote-tracking ref carries state that is merely old. An audit
+wants what the forge holds *now*, and only those two commands answer that question.
+
+⚠️ **Any "not on a remote ⇒ discard it" step is VOID until the fetch is PROVEN.** This is where a
+stale ref stops being a reporting error and starts destroying work: the recipe reads *"absent from
+the remote, therefore local junk, therefore delete"*, and **a fetch that failed, was skipped, or was
+never run produces exactly the same observation as a branch that genuinely does not exist.** One of
+those two authorises a delete. Assert the fetch succeeded before acting on what it did not return —
+and prefer a check whose failure mode is *keep*, because the cost of wrongly keeping a branch is a
+line in a report and the cost of wrongly deleting one is unpushed work.
+
+**The tell that a tool has this bug is a guarantee written in the vocabulary of remoteness** —
+*"asserted against the remote default, not a local copy, which can be stale"* — sitting directly
+above code that reads `refs/remotes/origin/<default>`. The comment and the code contradict each
+other, and the comment is the one that gets believed, because it is the one written in the language
+of the thing the reader wanted to be true.
