@@ -58,6 +58,36 @@ checker that contained the private names it hunts for would itself be the disclo
 live in a private list you pass in, and without that list the check reports the name leg as **not
 checked**, never as clean.
 
+### A rule carries its SCOPE, because generalising is what removes it
+
+**State the conditions under which the rule applies, in the rule.** An unscoped rule is not a
+slightly loose rule; it is a different rule, and it will be applied to the situations its author
+never saw.
+
+⚠️ **This is the one authoring error that review does not catch, because every sentence in it is
+true.** A wrong claim is contradicted by the world. **An over-broad rule is obeyed** — quietly, by
+readers who never encounter the case that would have shown them the boundary. Its failure looks
+exactly like compliance. A wrong command, by comparison, fails loudly and once.
+
+**The act of contributing is what destroys the scope.** The exhibit is the situation: it says what
+was true when the lesson was learned, and a reader of the exhibit can see for themselves where it
+stops. Strip the exhibit — as this repository requires — and that boundary leaves with it, **unless
+it was written into the rule**. So the generalisation must carry its limits explicitly, precisely
+because the context that would have implied them is the part being removed.
+
+**The test, before it goes upstream: name a NEIGHBOURING situation where following this rule would
+be wrong.** If you find one, its boundary belongs in the text. If you cannot, either the rule is
+genuinely unconditional — rare, and worth saying so — or you have not looked hard enough, which is
+the usual answer.
+
+**Exhibit** (kept here because it is about this document's own process): a rule landed reading *find
+a natural instance rather than constructing one*. True, and the reason is sound — a constructed case
+tells you about your construction. But stated without scope it **forbids building a positive
+control**, which this same core requires a few paragraphs away. Two sentences, each true,
+contradicting one another, because one omitted the conditions it was about. The correction is a
+clause, not a rewrite: *hunt to discover, construct to calibrate.* It was caught by a peer who tried
+to apply both.
+
 ## Precedence of guidance — the layered merge
 
 The layers above decide which *file* wins. When work is done for someone else — a client, a partner,
