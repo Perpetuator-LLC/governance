@@ -1707,6 +1707,18 @@ what the command does on *your construction*; the question is what it does on th
 actually produces. Here a hunt across live repositories found a real conflicting pair, and it was
 the real one that exposed that the guard could not work at all.
 
+⚠️ **Third, and it decides what the DETECTOR is keyed on: a symptom is a function of the consumer's
+parsing, so a detector written from one observed symptom encodes that observer's choices rather than
+the defect.** Two readers hit the same failure above and saw different things — taking the first
+line as the identifier yielded **1** changed file, taking the whole output yielded **0**. Both
+verdicts were wrong; neither symptom was the defect. A detector keyed on *"watch for a zero here"*
+would have caught one reader's parsing and been blind to the other's, while looking authoritative
+about a class it only half covered.
+
+**Key the detector on the invariant — where the failure is actually signalled — not on what you
+happened to see downstream of it.** The test: *would this detector still fire if someone consumed
+the output differently?* If not, it is a detector for a usage, not for the fault.
+
 **The tell that a tool has this bug is a guarantee written in the vocabulary of remoteness** —
 *"asserted against the remote default, not a local copy, which can be stale"* — sitting directly
 above code that reads `refs/remotes/origin/<default>`. The comment and the code contradict each
