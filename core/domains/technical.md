@@ -1782,6 +1782,86 @@ those two authorises a delete. Assert the fetch succeeded before acting on what 
 and prefer a check whose failure mode is *keep*, because the cost of wrongly keeping a branch is a
 line in a report and the cost of wrongly deleting one is unpushed work.
 
+⚠️ **The same VOID applies to a READ-ONLY verdict, and there nothing prompts anyone to check.** A
+delete at least makes its author uneasy; a report does not. **The refresh step is part of the probe,
+so its exit code is part of the result** — discarding it is the same defect as discarding the
+probe's own. Measured:
+
+```
+git -C "$d" fetch -q origin 2>/dev/null     # rc discarded
+  -> fetch rc 128 (unreachable remote), stderr suppressed
+  -> refs/remotes/origin/<default> UNCHANGED, no warning anywhere
+  -> every downstream comparison answers CORRECTLY about a ref hours old
+```
+
+`2>/dev/null` and an unchecked `$?` together convert a hard failure into a **confident stale
+verdict**, which is worse than an error and indistinguishable from a healthy run. A "no drift"
+finding produced this way is the cheapest kind of wrong: it is the answer everyone hoped for, it
+required no action, and nobody re-examines it.
+
+**So a probe reports the freshness of its own inputs, or it reports nothing.** Check the refresh
+command's status and fail the probe when it fails; where a stale answer is tolerable, say *as of
+when* in the output rather than leaving the reader to assume *now*. A probe whose refresh silently
+failed does not know it is stale — which is the whole difficulty, and the reason this cannot be left
+to the reader's judgement.
+
+⚠️ **The general form, and it is worse than a discarded exit code: a command can report failure in
+its STATUS while still emitting well-formed, USABLE output.** A guard that inspects the output
+therefore cannot see the failure — not because the guard is weak, but because there is nothing wrong
+with what it is looking at. **Test the status. The payload is not a proxy for it.**
+
+Measured, on `git merge-tree --write-tree` between two genuinely conflicting branches:
+
+```
+rc = 1                                     <- the failure is HERE, and only here
+stdout line 1 = a valid 40-hex tree OID    <- well-formed, and usable downstream
+                then the conflicted paths
+```
+
+A guard written as `[ -z "$T" ]` never fires: `$T` is a real OID. Everything downstream then
+succeeds on it and returns a **confident verdict about a merge that does not cleanly exist**. In the
+measured fleet, **three of twenty-one published "no-op" results were conflicts**, and one had been
+used as the stated reason to close a pull request.
+
+**Two lessons, and the second is the one that generalises.** First, a guard that has never been
+observed to fire on the case it names has not been tested — it has been *assumed*, and *"it has
+never fired"* is equally consistent with *"the condition never arose"* and *"it cannot fire"*.
+Second, **find a natural instance rather than constructing one.** A constructed case establishes
+what the command does on *your construction*; the question is what it does on the input the system
+actually produces. Here a hunt across live repositories found a real conflicting pair, and it was
+the real one that exposed that the guard could not work at all.
+
+⚠️ **That is scoped to DISCOVERY, and the scope is the whole of it.** Constructing a case is wrong
+for learning behaviour you do not know — it tells you about your construction. It is exactly right
+for **demonstrating that an instrument can fail**, where you already know the answer and are testing
+the test. Read without this, the rule forbids building a positive control, which canon requires a few
+paragraphs above; the two would contradict each other. **Hunt to discover, construct to calibrate.**
+
+⚠️ **And a control you did not verify is not a control, so agreement with it is not corroboration.**
+Two runs reaching the same answer feel like confirmation, and the feeling is the risk: an unverified
+instrument agreeing with a verified one adds **no** evidence, while looking exactly like a second
+opinion. Measured, on the reproduction of this very rule: one lane's control branch merged clean when
+it was expected to conflict (a weak control, proving nothing), and its replacement was built with an
+invalid commit invocation, so both branches stayed at the **same SHA** — merging a branch into itself,
+which is clean by definition and printed as a passing control. Two independent runs then reported the
+same result, and only one of them was licensed to.
+
+**So a corroborating run states whether ITS OWN control fired**, not merely what it concluded. Without
+that line, the second run's agreement is indistinguishable from the second run being broken in a way
+that happens to agree — and agreement is the outcome a broken instrument produces most easily.
+
+⚠️ **Third, and it decides what the DETECTOR is keyed on: a symptom is a function of the consumer's
+parsing, so a detector written from one observed symptom encodes that observer's choices rather than
+the defect.** Two readers hit the same failure above and saw different things — taking the first
+line as the identifier yielded **1** changed file, taking the whole output yielded **0**. Both
+verdicts were wrong; neither symptom was the defect. A detector keyed on *"watch for a zero here"*
+would have caught one reader's parsing and been blind to the other's, while looking authoritative
+about a class it only half covered.
+
+**Key the detector on the invariant — where the failure is actually signalled — not on what you
+happened to see downstream of it.** The test: *would this detector still fire if someone consumed
+the output differently?* If not, it is a detector for a usage, not for the fault.
+
 **The tell that a tool has this bug is a guarantee written in the vocabulary of remoteness** —
 *"asserted against the remote default, not a local copy, which can be stale"* — sitting directly
 above code that reads `refs/remotes/origin/<default>`. The comment and the code contradict each
