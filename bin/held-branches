@@ -81,9 +81,13 @@ for R in "${REPOS[@]}"; do
     done < <(git -C "$R" cherry "origin/$D" "$b" 2>/dev/null)
     if [ "$up" -gt 0 ]; then
       findings=$((findings + 1))
-      printf '%s  %s  %d not upstream%s · last %s · "%s"\n' "$R" "$b" "$up" \
+      # The tip's AUTHOR is printed because it is the first adjudication question: the first live run
+      # found 7 candidates and 5 were a human contributor's work in progress, not dropped agent holds —
+      # the reviewer had to work out whose each branch was by hand.
+      printf '%s  %s  %d not upstream%s · last %s by %s · "%s"\n' "$R" "$b" "$up" \
         "$([ "$folded" -gt 0 ] && printf ' · %d folded' "$folded")" \
-        "$(git -C "$R" log -1 --format=%cr "$b")" "$(git -C "$R" log -1 --format=%s "$b")"
+        "$(git -C "$R" log -1 --format=%cr "$b")" "$(git -C "$R" log -1 --format=%an "$b")" \
+        "$(git -C "$R" log -1 --format=%s "$b")"
     elif [ "$folded" -gt 0 ]; then
       folded_branches=$((folded_branches + 1))
     fi

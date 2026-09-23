@@ -46,8 +46,9 @@ g push -q origin merge/lane
 
 # dropped: never folded, subject collides with main's "fix tests"
 g switch -qc dropped-collide main; commit d d "fix tests"
-# dropped: plain
-g switch -qc dropped-plain main; commit p p "a decision nobody folded"
+# dropped: plain — authored by someone else, so the report must say WHOSE it is
+g switch -qc dropped-plain main
+printf 'p\n' > "$C/p"; g add p; GIT_AUTHOR_NAME="Other Person" g commit -qm "a decision nobody folded"
 # partly folded: one commit folded, one dropped — must still be a finding
 g switch -qc partial main; commit q1 q1 "partial one"; commit q2 q2 "partial two"
 g switch -q merge/lane; g cherry-pick "partial~1" >/dev/null; g push -q origin merge/lane
@@ -59,6 +60,8 @@ echo "held-branches"
 rc=0; "$HB" "$C" >"$TMP/out" 2>"$TMP/err" || rc=$?
 check "exit 1 when anything is unfolded" "[ '$rc' = '1' ]"
 check "a dropped hold is reported" "grep -q 'origin/dropped-plain ' '$TMP/out'"
+check "…with the tip's AUTHOR, the first adjudication question (whose work is this?)" \
+  "grep 'origin/dropped-plain ' '$TMP/out' | grep -q 'by Other Person'"
 check "a dropped hold whose SUBJECT collides with main is still reported (subject-matching would call it landed)" \
   "grep -q 'origin/dropped-collide ' '$TMP/out'"
 check "a partly folded branch is reported, with its split" "grep -q 'origin/partial  1 not upstream · 1 folded' '$TMP/out'"
