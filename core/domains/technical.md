@@ -649,10 +649,13 @@ shared store is a leak; a composition bug is a missing panel.
 - **Private is not the same as personal.** A person's working notes *for* an
   engagement belong to the engagement, held privately — the owner is whose data
   it is, not who may read it. They leave with the engagement, not with the person.
-- **A forge's user namespace is global, and every user is a login surface.** Give
-  a person their own forge namespace only if they will use the forge directly.
-  Everyone else gets a per-person area inside their engagement's space, with
-  access control — the same privacy, without a second account to secure.
+- **A private area inside a shared space is only as private as the whole space.**
+  Every clone, backup and history of the shared store carries it, so a per-path
+  permission on the serving layer does not make it private. Give each person
+  their own space, so the boundary sits at storage. A namespace-holding account
+  need not be a login: it can exist with sign-in disabled until the person wants
+  it. *Permission tiers* on shared content — who may edit and who may only read —
+  are fine inside one space; **privacy** is not.
 - **Conform on creation or on touch, not by migration.** A new resource takes the
   namespace from day one. An existing one moves when it is being changed anyway,
   because a live path has consumers that must move with it; a sweep that
