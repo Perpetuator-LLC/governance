@@ -1561,6 +1561,21 @@ finding with a separate baseline. **One finding, one claim, one baseline that ca
 Bundling two questions into one comparison is how a detector ends up confidently reporting the
 opposite of what happened.
 
+⚠️ **The carve-out matters as much as the rule: where an ORDERING RELATION exists, two refs are not
+two points.** `git rev-list --left-right --count main...branch` is sound — the DAG supplies the third
+point as the merge-base, and commit parentage is inherently ordered, so ahead/behind is a statement
+about *reachability* that the data structure itself establishes. It also reports **divergence** (`1
+1`) rather than picking a side, which is the behaviour the rule is asking for. What has no such
+relation is two **file contents**, two **hashes**, or two **timestamps**: nothing inside them says
+which supersedes which, and an mtime is a fact about a filesystem rather than about which version is
+authoritative.
+
+**So the test is not "how many things did you compare" but "what orders them".** Ancestry orders
+commits; a recorded event orders states; sequence numbers and monotonic versions order writes.
+Absent one of those, a direction is being supplied by the person reading the output — which is
+exactly where it gets supplied wrong. Without this carve-out the rule reads as *ahead/behind is
+unusable*, and it would then cost more than it saves.
+
 ## Definition of done: a service isn't deployed until its backups are PROVEN
 
 **"Live" means serving traffic AND a verified backup sitting off-box. A service that answers
