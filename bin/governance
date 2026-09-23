@@ -564,6 +564,30 @@ def install_home(home, invocation, dry_run=False, say=print):
     return 0, len(changes)
 
 
+LOCAL_REL = os.path.join(".claude", "CLAUDE.local.md")
+
+
+def resolve_local(home, flag, no_local):
+    """The LOCAL layer for an install into `home`.
+
+    `discover --home` has always defaulted this to <home>/.claude/CLAUDE.local.md; `install` did
+    not, so omitting --local rendered WITHOUT the layer that wins every conflict — and wrote a
+    manifest recording `local: null`, which `check --home` then found perfectly in sync with the
+    render. The post-condition could not see it, because it compares a render with the layers the
+    manifest names, and a layer nobody declared is not missing from that set: it was never in it.
+
+    Found running a fleet import's preflight block, which omits the flag: every session on the
+    rotated machine would have booted without its personal override layer, and the check the
+    block mandates as its evidence would have said everything was fine.
+    """
+    if no_local:
+        return None
+    if flag:
+        return os.path.abspath(flag)
+    found = os.path.join(home, LOCAL_REL)
+    return found if os.path.isfile(found) else None
+
+
 def cmd_install(a):
     home = os.path.abspath(a.home)
     if not os.path.isdir(home):
@@ -571,8 +595,15 @@ def cmd_install(a):
         return 2
     invocation = {"repo": os.path.abspath(a.repo or ROOT),
                   "adapters": [os.path.abspath(p) for p in a.adapter],
-                  "local": os.path.abspath(a.local) if a.local else None,
+                  "local": resolve_local(home, a.local, a.no_local),
                   "harnesses": list(dict.fromkeys(a.harness or ["claude"]))}
+    # Always name it: the layer that wins every conflict is the one a reader most needs to see.
+    if invocation["local"]:
+        print(f"local layer: {invocation['local']}")
+    elif a.no_local:
+        print("local layer: none (--no-local)")
+    else:
+        print(f"local layer: none (no {os.path.join(home, LOCAL_REL)})")
     if a.write_manifest and len(invocation["adapters"]) != 1:
         print("error: --write-manifest records ONE adapter; this install names "
               f"{len(invocation['adapters'])}", file=sys.stderr)
@@ -770,10 +801,9 @@ def cmd_discover(a):
     if home:
         adapter_vaults = [v for v in vaults if vault_role(v) == "adapter"]
         harnesses = [h for h in HARNESSES if os.path.isdir(os.path.join(home, "." + h))] or ["claude"]
-        local = os.path.join(home, ".claude", "CLAUDE.local.md")
         av = adapter_vaults[0] if len(adapter_vaults) == 1 else None
         out["manifest"] = manifest_from(ROOT, home, harnesses, os.path.join(av, ADAPTER_DIR) if av else None,
-                                        av, vaults, local if os.path.isfile(local) else None)
+                                        av, vaults, resolve_local(home, None, False))
         out["manifest_path"] = os.path.join(home, MANIFEST)
     print(json.dumps(out, indent=2))
     if not a.write:
@@ -1096,7 +1126,10 @@ def main():
     p = sub.add_parser("install")
     p.add_argument("--home", required=True, help="the home directory to install into; never defaulted")
     p.add_argument("--adapter", action="append", required=True, help="repeatable; later adapters win")
-    p.add_argument("--local")
+    local = p.add_mutually_exclusive_group()
+    local.add_argument("--local", help=f"default: <home>/{LOCAL_REL} when it exists (as discover does)")
+    local.add_argument("--no-local", action="store_true",
+                       help="render without the local layer even when one exists in <home>")
     p.add_argument("--harness", action="append", choices=HARNESSES, help="repeatable; default: claude")
     p.add_argument("--repo", help="the governance checkout providing CORE; default: this repository")
     p.add_argument("--dry-run", action="store_true")
