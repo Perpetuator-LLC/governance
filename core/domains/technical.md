@@ -1028,6 +1028,25 @@ produces three identical refusals — perfect agreement, zero information.
 the assertion is on the difference rather than on the subject's value alone.** A probe that cannot be
 shown to disagree with itself somewhere has not been shown to be reading its input at all.
 
+⚠️ **Scope, because read plainly this demands the one thing you must not do in the highest-stakes
+case.** Where a differing input **cannot** be introduced — a live payment path, a production safety
+interlock, anything where injecting a known-bad value *is* the harm being guarded against — the rule
+does not license injecting it. **Calibrate on a copy.** And where calibration has not been performed
+anywhere, **report the check as UNCALIBRATED rather than treat it as passing**: the unavailability of
+a control is a finding about the check, not a licence to skip it.
+
+That last clause is the load-bearing half. Without it the exemption becomes the loophole, and the
+checks it would exempt are the most consequential ones in the estate.
+
+**Two cases that look like counterexamples and are not**, recorded so the rule is not "fixed" by
+someone who meets them:
+
+- **Idempotence and determinism tests**, where uniform output *is* the property under test. The rule
+  still holds — you still have to know your comparison could have registered a difference, or a
+  broken comparator reads as perfect determinism.
+- **A set whose expected answers are genuinely all alike** — ten artefacts, all expected valid.
+  Covered: introducing a known-bad eleventh is *construct to calibrate*, not fabricating a result.
+
 **Measured root cause, because the shape recurs: hand-parsing a structured format.** A line regex
 over YAML read a block sequence as empty, so the gate fired on **every correctly-formed record** —
 and its remediation would have corrupted them. A checker that is wrong in the FIRING direction is
