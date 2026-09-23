@@ -1595,8 +1595,50 @@ its purpose. **So the detector must verify the preconditions its own remedy assu
 becomes the instruction that causes the next incident. In particular, a remedy that rebuilds
 something *from a working tree* assumes that tree holds only what is merged; a lane sitting on a
 feature branch would publish its unmerged draft by following the advice, turning a freshness
-warning into a review bypass. Measure against the merged ref (*never the working tree*, above) and
-say so when the tree is not in the state the remedy needs.
+warning into a review bypass. **Check the tree's state and say so when it is not what the remedy
+needs** — and where the remedy is unsafe, the finding must withhold it rather than print it with a
+caveat.
+
+⚠️ **This paragraph first said "measure against the merged ref", and that was wrong** — a
+correction recorded here rather than quietly rewritten, because following it produced the defect
+in the next subsection. The baseline that makes the *remedy* safe and the baseline that makes the
+*claim* true are two different choices, and conflating them is what the next rule is about.
+
+### DIFFERENCE is not DIRECTION — a two-point comparison cannot say which side moved
+
+**Comparing a record against one baseline establishes only that they differ. Any finding that
+asserts a DIRECTION — behind, ahead, stale, drifted, regressed — is claiming more than the
+measurement supports, and it will be wrong roughly half the time it matters.** Direction needs a
+third point.
+
+Measured: a freshness detector compared what was rendered against the merged ref. Rendering from
+a local edit that had not yet been pushed left the live copy **ahead** of that ref — and the
+finding announced it was *behind*, called the loaded text *the OLD version*, and prescribed a
+re-render that was a no-op. Every number in it was correct. The direction was invented, and the
+direction was the only part the reader would act on.
+
+**So state the claim first, then pick the baseline that makes it true.** *"A re-render would
+change what is live"* is a statement about the **source as it stands**, not about what is merged;
+measured that way it is a two-point comparison that asserts no direction, and it is exactly what
+the reader needs to know. A separate concern — *is re-rendering safe from here?* — is a separate
+finding with a separate baseline. **One finding, one claim, one baseline that can establish it.**
+Bundling two questions into one comparison is how a detector ends up confidently reporting the
+opposite of what happened.
+
+⚠️ **The carve-out matters as much as the rule: where an ORDERING RELATION exists, two refs are not
+two points.** `git rev-list --left-right --count main...branch` is sound — the DAG supplies the third
+point as the merge-base, and commit parentage is inherently ordered, so ahead/behind is a statement
+about *reachability* that the data structure itself establishes. It also reports **divergence** (`1
+1`) rather than picking a side, which is the behaviour the rule is asking for. What has no such
+relation is two **file contents**, two **hashes**, or two **timestamps**: nothing inside them says
+which supersedes which, and an mtime is a fact about a filesystem rather than about which version is
+authoritative.
+
+**So the test is not "how many things did you compare" but "what orders them".** Ancestry orders
+commits; a recorded event orders states; sequence numbers and monotonic versions order writes.
+Absent one of those, a direction is being supplied by the person reading the output — which is
+exactly where it gets supplied wrong. Without this carve-out the rule reads as *ahead/behind is
+unusable*, and it would then cost more than it saves.
 
 ## Definition of done: a service isn't deployed until its backups are PROVEN
 
