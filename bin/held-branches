@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# held-branches — list pushed branches whose work never reached the default branch or a rolling
+# integration branch. REPORT ONLY: it never deletes, never merges, never closes anything.
+#
+# A branch pushed "to fold into the next rolling PR" is a HOLD. If the seat that holds it rotates or
+# exports before folding, nothing remembers it: the branch sits on the forge, looks safe because it
+# was pushed, and its work is silently dropped. Measured: one lane's boot found three such branches,
+# and one ticket had been CLOSED saying its decision was "recorded" in a commit that was on none of
+# the branches anything deploys from.
+#
+# For each remote branch not merged into origin/<default> (rolling `merge/*` branches excluded —
+# stranded commits there are bin/orphan-check's job), every commit `git cherry` marks as not upstream
+# is classified:
+#   - FOLDED  — the commit, or a patch-equivalent of it, is on a rolling `merge/*` branch: pending that
+#               PR, not dropped;
+#   - NOT UPSTREAM — on neither: a dropped hold, or someone's work in progress.
+#
+# WHY `git cherry` AND NOT COMMIT SUBJECTS: a fold by rebase or cherry-pick changes the hash, and patch
+# identity survives that. Matching subjects also survives it, but fails in the dangerous direction: a
+# generic subject ("fix tests") that also exists on the default branch makes a DROPPED commit look
+# landed. Calibrated on a fixture; the test suite pins both cases.
+#
+# WHAT THIS CANNOT DO: a `+` means the PATCH is not upstream, never that the CONTENT is not. A squash
+# merge, or a fix that landed as a different patch, is reported as NOT UPSTREAM. That is the tolerable
+# direction — adjudicate each finding by reading the code before acting on it, and never delete on
+# this report alone.
+#
+# Usage
+#   bin/held-branches                 # the current repo
+#   bin/held-branches <repo> [repo…]  # these repos
+#   bin/held-branches --no-fetch      # skip `git fetch --prune` (fast, but reads stale refs)
+#
+# Exit: 0 nothing unfolded · 1 findings · 2 usage/setup error
+set -uo pipefail
+FETCH=1
+REPOS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-fetch) FETCH=0; shift ;;
+    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) echo "unknown flag: $1" >&2; exit 2 ;;
+    *) REPOS+=("$1"); shift ;;
+  esac
+done
+[ ${#REPOS[@]} -eq 0 ] && REPOS=("$PWD")
+
+findings=0
+for R in "${REPOS[@]}"; do
+  git -C "$R" rev-parse --git-dir >/dev/null 2>&1 || { echo "held-branches: not a git repo: $R" >&2; exit 2; }
+  if [ "$FETCH" = 1 ]; then
+    git -C "$R" fetch origin --prune --quiet || { echo "held-branches: fetch failed in $R — refusing to report on stale refs (use --no-fetch to accept them)" >&2; exit 2; }
+  fi
+  # The default branch from origin/HEAD. Fall back ONLY to a main/master that exists; never guess.
+  D="$(git -C "$R" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"; D="${D#origin/}"
+  if [ -z "$D" ]; then
+    for cand in main master; do
+      git -C "$R" rev-parse --verify --quiet "refs/remotes/origin/$cand" >/dev/null && { D="$cand"; break; }
+    done
+  fi
+  [ -n "$D" ] || { echo "held-branches: cannot resolve the default branch of $R (no origin/HEAD, main or master)" >&2; exit 2; }
+
+  ROLL=()
+  while IFS= read -r m; do [ -n "$m" ] && ROLL+=("$m"); done \
+    < <(git -C "$R" for-each-ref --format='%(refname:short)' 'refs/remotes/origin/merge/*')
+
+  folded_branches=0
+  while IFS= read -r b; do
+    case "$b" in origin|origin/HEAD|origin/merge/*|"") continue ;; esac
+    up=0; folded=0
+    while read -r mark sha; do
+      [ "$mark" = "+" ] || continue
+      is_folded=0
+      for m in ${ROLL[@]+"${ROLL[@]}"}; do
+        # The commit itself is in the rolling branch (merged there): `git cherry` prints NOTHING for
+        # an ancestor, so this must be asked separately — the first draft missed it.
+        if git -C "$R" merge-base --is-ancestor "$sha" "$m" 2>/dev/null; then is_folded=1; break; fi
+        # Or a patch-equivalent landed there under a new hash.
+        if git -C "$R" cherry "$m" "$sha" "$sha^" 2>/dev/null | grep -q '^-'; then is_folded=1; break; fi
+      done
+      if [ "$is_folded" = 1 ]; then folded=$((folded + 1)); else up=$((up + 1)); fi
+    done < <(git -C "$R" cherry "origin/$D" "$b" 2>/dev/null)
+    if [ "$up" -gt 0 ]; then
+      findings=$((findings + 1))
+      printf '%s  %s  %d not upstream%s · last %s · "%s"\n' "$R" "$b" "$up" \
+        "$([ "$folded" -gt 0 ] && printf ' · %d folded' "$folded")" \
+        "$(git -C "$R" log -1 --format=%cr "$b")" "$(git -C "$R" log -1 --format=%s "$b")"
+    elif [ "$folded" -gt 0 ]; then
+      folded_branches=$((folded_branches + 1))
+    fi
+  done < <(git -C "$R" branch -r --no-merged "origin/$D" --format='%(refname:short)')
+  [ "$folded_branches" -gt 0 ] && echo "$R  ($folded_branches branch(es) fully folded onto a rolling branch, pending its PR — not listed)"
+done
+
+if [ "$findings" -gt 0 ]; then
+  echo "held-branches: $findings branch(es) with work on neither the default branch nor a rolling branch." >&2
+  echo "  Each is a DROPPED HOLD or someone's work in progress. Adjudicate by CONTENT before acting — a squash merge also appears here." >&2
+  exit 1
+fi
+exit 0
