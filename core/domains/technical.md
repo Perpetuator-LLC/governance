@@ -1011,6 +1011,23 @@ it **PASSES**, beside one **known-BAD** artifact it **FAILS**. One without the o
 calibration — the known-bad alone proves it can fire, which is exactly the evidence a
 fires-on-everything checker also produces.
 
+⚠️ **And when a probe is run across a SET to compare its members, the evidence is the
+DIFFERENTIATION — not the values.** A broken probe returns the same thing for every input, which is
+precisely what a working probe returns when the answer is genuinely uniform. **The two are
+indistinguishable from the outputs alone**, so agreement across a control set is a *smell*, not
+reassurance. This inverts the intuition — consistent results feel like corroboration — which is why
+it survives review.
+
+Measured: three versions of one package audited with a flag the pinned tool does not accept returned
+three identical errors. **Three matching non-answers read as three consistent results.** The
+corrected run returned *vulnerable / vulnerable / clean*, and it was the difference that made it
+evidence. Reproduced here in one command: an invalid flag passed with three different inputs
+produces three identical refusals — perfect agreement, zero information.
+
+**So a control set contains at least one input whose expected answer DIFFERS from the subject's, and
+the assertion is on the difference rather than on the subject's value alone.** A probe that cannot be
+shown to disagree with itself somewhere has not been shown to be reading its input at all.
+
 **Measured root cause, because the shape recurs: hand-parsing a structured format.** A line regex
 over YAML read a block sequence as empty, so the gate fired on **every correctly-formed record** —
 and its remediation would have corrupted them. A checker that is wrong in the FIRING direction is
@@ -1309,6 +1326,49 @@ is the fact and the comment is an artifact with a date on it; treat a confident 
 a hypothesis to re-measure, particularly when it is the reason you were about to skip reading
 something.
 
+## The mechanism that performs a process is not deployed BY that process
+
+**A tool that carries out a process is usually not itself installed by it.** Improvements to the tool
+land in the repository and look like they took effect — every commit is real, every diff applies —
+while the copy that actually executes was installed by a separate, rarely-run mechanism and goes on
+running the old code. **The gap survives review indefinitely because the describing artefact and the
+performing artefact share a name and a path**, so nothing on screen distinguishes them. Measured
+instance: an installed deployer ran two months behind its repository while every release shipped
+changes to it.
+
+This is the rule above applied one layer out. That one is about **data** — a body versus its
+comments, a schema versus the class that generates it. This is the same failure on the **tool**.
+
+### Identity by PATH is not identity
+
+When a mechanism replaces files as part of its own work — a checkout, a rename, an install — a
+self-check comparing *"me"* against *"the new me"* **by path** compares a file with itself and can
+never report a difference. Replacement by rename makes it worse rather than better: the running
+process keeps its original inode while the path begins resolving to the replacement, so hashing the
+path after the swap reads the new file, not the code that is executing.
+
+**Take identity by CONTENT, captured before the replacement can occur.**
+
+### A self-updating mechanism must refuse to hand off DOWNWARD
+
+Give the hand-off contract a **monotonic revision** and refuse to pass control to a copy whose
+revision is lower than the running one. Without it, **repairing the mechanism un-repairs it on the
+next run**: install a current copy, and the next run observes that the installed copy differs from
+the checked-out one and hands off to the stale one. ⚠️ **"Differs" is not "is newer"** — a freshly
+installed current copy looks exactly as different from a stale one as the stale one looks from it, so
+the repair and the regression are indistinguishable to a comparison that knows only inequality.
+
+### Say which surface the check runs on
+
+**A drift check living only inside the mechanism inherits the defect it exists to detect** — a stale
+copy carries a stale check. Such a gate must name the surface each leg runs on, and at least one leg
+must run somewhere that does not read the suspect artefact in order to judge the suspect artefact.
+Where no such surface exists without credentials, **say so**, rather than implying a coverage that is
+not there.
+
+**The one-minute test for any self-updating tool:** what does its self-check compare, and could the
+two sides ever be the same file?
+
 ## A render source that is a WORKING TREE inherits that tree's branch
 
 **When the thing a publisher reads is a checkout, what it publishes depends on where someone left
@@ -1325,8 +1385,10 @@ one on the right branch.
 ⚠️ **The mirror failure is staleness, and it is the one the render model accepts by design.** A
 rendered output is only as current as the last render, so a rule can merge and reach nobody. Measured
 alongside the above: two security rules sat merged and unrendered for about 21 hours, including the
-gate written to stop a live incident. **A model whose known failure mode is staleness needs something
-that checks for staleness** — the design is only honest if the detector exists and runs.
+gate written to stop a live incident. The obligation that follows — *a model's known failure mode
+needs a detector that survives the model's own migration* — is stated with its own exhibit under
+*A fix can invalidate the DIAGNOSTIC that found the bug*; it is named here because **this** is the
+model that incurs it.
 
 ⚠️ **And when comparing a rendered output, compare what the FORMAT means, not its bytes.** A file its
 own application rewrites — a settings or configuration file re-serialised when someone toggles a
@@ -1388,11 +1450,11 @@ pre-fix system.
 
 They are opposites, and the difference decides what you look for:
 
-| | *Absence-as-health* | **This rule** |
-|---|---|---|
-| What happens | a check that matches nothing goes **green** | a check that is now mistyped goes **permanently red** |
-| Why it survives | silence reads as success | noise reads as a broken monitor |
-| How it is "fixed" | nobody notices | someone widens or mutes it — converting the detector into the blind spot it existed to catch |
+| | *Absence-as-health* | **This rule** | **Guard stops selecting** |
+|---|---|---|---|
+| What happens | a check that matches nothing goes **green** | a check that is now mistyped goes **permanently red** | the check's guard no longer matches, so it emits **nothing at all** |
+| Why it survives | silence reads as success | noise reads as a broken monitor | there was never any output to miss |
+| How it is "fixed" | nobody notices | someone widens or mutes it — converting the detector into the blind spot it existed to catch | it is not fixed; nothing records that it stopped |
 
 The failure mode here is **not** that the alarm is ignored by accident. It is that a permanently-red
 detector invites the obvious repair — silence it — and silencing it is indistinguishable from fixing
@@ -1427,6 +1489,50 @@ in its lifecycle, and diagnosing the system is time spent on a claim nobody has 
 
 Same family as the mistyped check above, arrived at from the opposite direction: there the check
 stopped matching its subject, here the subject stopped existing on either side of the check.
+
+### The third shape: a guard written for the OLD type makes the check VANISH
+
+A detector for a representation is almost always *gated* on that representation — `if it is a
+symlink…`, `if the response is JSON…`, `if the file exists…`. **Change the representation and the
+guard simply stops selecting. The check does not pass and does not fail: it does not run, and no
+output anywhere says so.** Red and green both prove a check executed. Silence proves nothing, which
+is why this shape outlives the other two — there is no noisy row to investigate and no green badge
+to distrust.
+
+**So the migration that changes the type is exactly the moment the old detector goes quiet, and it
+is the only moment anyone would have thought about it.** Move the detector in the same change that
+moves the mechanism. A detector left behind is not deprecated, it is invisible.
+
+Two things make the shape findable afterwards:
+
+1. **Make the guard TOTAL.** A branch per representation the mechanism can now be in, plus an
+   explicit `else` that reports *"this check did not recognise what it was pointed at"*. An
+   unrecognised type is a finding, never a silent skip.
+2. **Positive-control it in BOTH directions before shipping** — perturb the system and see the
+   finding fire and name the right subject; restore it and see silence. Run the healthy case
+   *first*: a "negative control" on a system that is already broken passes for the wrong reason,
+   and a control run against a script that aborts before reaching the check passes for no reason
+   at all.
+
+**A model's KNOWN failure mode needs a detector that survives the model's own migration.** Where
+distribution moves from *linking* to *rendering*, staleness becomes the failure mode by
+construction — the rendered copy is correct only until a source changes — so the freshness check is
+part of the rendering model, not an accessory to it. Exhibit: config distributed by symlinking into
+a checkout was replaced by files rendered from layered sources; the freshness check was gated on
+the resident file being a symlink; it therefore stopped running at the cut-over and stayed silent
+while merged security rules — including a mandatory gate written for a live incident — were absent
+from every session for the better part of a day. Nothing failed. The check was simply no longer
+about anything.
+
+### A detector's printed REMEDY is part of the detector
+
+The remedy a finding prints will be run by someone who has not re-derived the situation — that is
+its purpose. **So the detector must verify the preconditions its own remedy assumes**, or it
+becomes the instruction that causes the next incident. In particular, a remedy that rebuilds
+something *from a working tree* assumes that tree holds only what is merged; a lane sitting on a
+feature branch would publish its unmerged draft by following the advice, turning a freshness
+warning into a review bypass. Measure against the merged ref (*never the working tree*, above) and
+say so when the tree is not in the state the remedy needs.
 
 ## Definition of done: a service isn't deployed until its backups are PROVEN
 
