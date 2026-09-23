@@ -467,6 +467,70 @@ the control; they may never have watched the request fail. Establish which befor
 hole in the server — the remedies are unrelated, and the wrong one sends people to audit a
 permission model that is working.
 
+## A DRY RUN must enumerate what it CASCADES, not only what it MATCHES
+
+A destructive command's preview is the whole safety mechanism, and the usual
+implementation quietly breaks it: the preview counts **the rows the command
+matched**, while the deletion also takes **everything the database removes on
+its behalf**. Those two sets are different precisely when a match has pulled in
+something that was never meant to be in scope — so the preview is silent in the
+one case a human is relying on it to speak.
+
+The shape, which recurs wherever a cleanup matches on a naming convention:
+
+- the command matches *test* records by a marker — a name prefix, an email
+  domain, a slug convention;
+- one matched record is a **parent** with a cascading relationship;
+- a **real** child has attached itself to that parent since the marker was
+  minted, through ordinary use that nobody recorded;
+- the preview reports the matched set, which does not include the child;
+- applying it deletes the child, and the report never named it.
+
+**So the preview must be computed from the delete, not from the filter.** Ask
+the database what a deletion would remove — most ORMs can collect exactly this —
+or enumerate the cascading relations explicitly and count them. A preview that
+re-implements the filter is testing the filter against itself.
+
+Two corollaries:
+
+- **Refuse the entangled case rather than reporting it.** When a matched parent
+  owns a child that the markers do not match, that is not a line in a report to
+  be read carefully at 2am — it is a signal that the marker no longer means what
+  it meant. Fail, name the entanglement, and make the operator scope it by hand.
+- **The absence of a backup changes the severity, not the design.** A cleanup
+  whose preview under-reports is a defect either way; without a restore path it
+  is an unrecoverable one, and "we can restore" is a claim that itself needs a
+  proven restore, not an assumed one.
+
+## A refusal must name the way out
+
+Refusing rather than guessing is right — an ambiguous or missing target should
+stop the command, not be resolved by picking something. But a refusal that
+states only what failed leaves the person exactly where they were, and they will
+route around it: guessing at identifiers, reading internal records to reverse
+out a value, or reaching for a lower-level tool with none of the guard rails
+that just stopped them. **The detour is usually more dangerous than the action
+they were refused.**
+
+So a refusal carries the next move, concretely: the command to run, with the
+argument already filled in where it can be.
+
+```
+No user matches 'name' (tried username and email, exact).
+  Find it with: <tool> users --search 'name'
+```
+
+⚠️ **This also tells you when a tool is missing a capability.** If a refusal has
+no way out to name, the gap is not in the error message — it is in the tool. An
+exact-match lookup with no search beside it demands the identifier the operator
+is trying to discover, which is the one thing they cannot supply. Finding
+nothing to write in the error is the signal to build the missing subcommand, not
+to word the refusal more carefully.
+
+The rule generalises past CLIs: an API error, a validation message and a
+permission denial are all refusals, and each one is where a person decides
+whether to work with the system or around it.
+
 ## Public engine, private config
 
 An IaC repo has two kinds of content, and only one of them can ever go public:
