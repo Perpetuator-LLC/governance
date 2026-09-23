@@ -399,7 +399,29 @@ def matches(home, rel, want, cur):
         return cur["type"] == "dir" or ("/" not in rel and cur["type"] == "symlink"
                                         and os.path.isdir(os.path.join(home, rel)))
     if want["type"] == "file":
-        return cur["type"] == "file" and cur["sha256"] == want["sha256"]
+        if cur["type"] != "file":
+            return False
+        if cur["sha256"] == want["sha256"]:
+            return True
+        # A JSON output is rewritten by the application that reads it — toggling a model or an
+        # output style re-serialises the file, key order moves, and the bytes change with no human
+        # involved. Byte comparison then reports EDITED BY HAND for an edit that never happened,
+        # which costs an investigation and teaches the reader to discount the check. Compare what
+        # the format actually means: equal parsed content is in sync, whatever the serialisation.
+        # Measured 2026-09-22: sha differed, size identical, parsed content deep-equal.
+        if rel.endswith(".json"):
+            try:
+                with open(os.path.join(home, rel), encoding="utf-8") as fh:
+                    live = json.load(fh)
+            except Exception:
+                return False          # unparseable is a real finding, never a pass
+            recorded_text = want.get("text")
+            if recorded_text is not None:
+                try:
+                    return live == json.loads(recorded_text)
+                except Exception:
+                    return False
+        return False
     return cur["type"] == "symlink" and cur["target"] == want["target"]
 
 

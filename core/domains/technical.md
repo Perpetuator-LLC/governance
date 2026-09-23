@@ -467,6 +467,70 @@ the control; they may never have watched the request fail. Establish which befor
 hole in the server — the remedies are unrelated, and the wrong one sends people to audit a
 permission model that is working.
 
+## A DRY RUN must enumerate what it CASCADES, not only what it MATCHES
+
+A destructive command's preview is the whole safety mechanism, and the usual
+implementation quietly breaks it: the preview counts **the rows the command
+matched**, while the deletion also takes **everything the database removes on
+its behalf**. Those two sets are different precisely when a match has pulled in
+something that was never meant to be in scope — so the preview is silent in the
+one case a human is relying on it to speak.
+
+The shape, which recurs wherever a cleanup matches on a naming convention:
+
+- the command matches *test* records by a marker — a name prefix, an email
+  domain, a slug convention;
+- one matched record is a **parent** with a cascading relationship;
+- a **real** child has attached itself to that parent since the marker was
+  minted, through ordinary use that nobody recorded;
+- the preview reports the matched set, which does not include the child;
+- applying it deletes the child, and the report never named it.
+
+**So the preview must be computed from the delete, not from the filter.** Ask
+the database what a deletion would remove — most ORMs can collect exactly this —
+or enumerate the cascading relations explicitly and count them. A preview that
+re-implements the filter is testing the filter against itself.
+
+Two corollaries:
+
+- **Refuse the entangled case rather than reporting it.** When a matched parent
+  owns a child that the markers do not match, that is not a line in a report to
+  be read carefully at 2am — it is a signal that the marker no longer means what
+  it meant. Fail, name the entanglement, and make the operator scope it by hand.
+- **The absence of a backup changes the severity, not the design.** A cleanup
+  whose preview under-reports is a defect either way; without a restore path it
+  is an unrecoverable one, and "we can restore" is a claim that itself needs a
+  proven restore, not an assumed one.
+
+## A refusal must name the way out
+
+Refusing rather than guessing is right — an ambiguous or missing target should
+stop the command, not be resolved by picking something. But a refusal that
+states only what failed leaves the person exactly where they were, and they will
+route around it: guessing at identifiers, reading internal records to reverse
+out a value, or reaching for a lower-level tool with none of the guard rails
+that just stopped them. **The detour is usually more dangerous than the action
+they were refused.**
+
+So a refusal carries the next move, concretely: the command to run, with the
+argument already filled in where it can be.
+
+```
+No user matches 'name' (tried username and email, exact).
+  Find it with: <tool> users --search 'name'
+```
+
+⚠️ **This also tells you when a tool is missing a capability.** If a refusal has
+no way out to name, the gap is not in the error message — it is in the tool. An
+exact-match lookup with no search beside it demands the identifier the operator
+is trying to discover, which is the one thing they cannot supply. Finding
+nothing to write in the error is the signal to build the missing subcommand, not
+to word the refusal more carefully.
+
+The rule generalises past CLIs: an API error, a validation message and a
+permission denial are all refusals, and each one is where a person decides
+whether to work with the system or around it.
+
 ## Public engine, private config
 
 An IaC repo has two kinds of content, and only one of them can ever go public:
@@ -1006,6 +1070,24 @@ The familiar rule is to prove a **zero** — a control probe against a known-bad
 result is not a broken selector. That closes the false-negative half and **leaves the mirror open**:
 a checker that returns findings has proved only that it is **ALIVE**. Liveness is not correctness.
 
+⚠️ **The operational test for a zero is one question: what does a BROKEN run of this same command
+print?** If a broken run and a healthy run produce the same output, the zero is not evidence — and
+the comparison costs one command, which is less than the argument about whether to trust it.
+Measured instances, all of them commands whose failure output is indistinguishable from their
+success output:
+
+- A branch comparison whose checkout had silently failed compared a ref **with itself** and printed
+  `0	0` — byte-identical to a genuinely in-sync pair.
+- A search run with an invalid flag returned the **same error for every input**, which read as three
+  consistent results.
+- A grep for a concept, written with the author's own phrasing, returned zero — establishing that a
+  *string* is absent, which is not the question anyone was asking.
+
+**The three share a shape: the command answered a narrower question than the one being asked, and
+answered it correctly.** Nothing in the output is wrong, so nothing in the output can warn you.
+That is why the check has to be run against a KNOWN-BROKEN invocation rather than read carefully —
+careful reading of a truthful answer to the wrong question produces confidence, not detection.
+
 **A new gate owes TWO demonstrations before anyone acts on its output:** one **known-GOOD** artifact
 it **PASSES**, beside one **known-BAD** artifact it **FAILS**. One without the other is half a
 calibration — the known-bad alone proves it can fire, which is exactly the evidence a
@@ -1027,6 +1109,25 @@ produces three identical refusals — perfect agreement, zero information.
 **So a control set contains at least one input whose expected answer DIFFERS from the subject's, and
 the assertion is on the difference rather than on the subject's value alone.** A probe that cannot be
 shown to disagree with itself somewhere has not been shown to be reading its input at all.
+
+⚠️ **Scope, because read plainly this demands the one thing you must not do in the highest-stakes
+case.** Where a differing input **cannot** be introduced — a live payment path, a production safety
+interlock, anything where injecting a known-bad value *is* the harm being guarded against — the rule
+does not license injecting it. **Calibrate on a copy.** And where calibration has not been performed
+anywhere, **report the check as UNCALIBRATED rather than treat it as passing**: the unavailability of
+a control is a finding about the check, not a licence to skip it.
+
+That last clause is the load-bearing half. Without it the exemption becomes the loophole, and the
+checks it would exempt are the most consequential ones in the estate.
+
+**Two cases that look like counterexamples and are not**, recorded so the rule is not "fixed" by
+someone who meets them:
+
+- **Idempotence and determinism tests**, where uniform output *is* the property under test. The rule
+  still holds — you still have to know your comparison could have registered a difference, or a
+  broken comparator reads as perfect determinism.
+- **A set whose expected answers are genuinely all alike** — ten artefacts, all expected valid.
+  Covered: introducing a known-bad eleventh is *construct to calibrate*, not fabricating a result.
 
 **Measured root cause, because the shape recurs: hand-parsing a structured format.** A line regex
 over YAML read a block sequence as empty, so the gate fired on **every correctly-formed record** —
@@ -1258,6 +1359,42 @@ same requirement aimed at the fixture rather than the detector, and it is the on
 skipped — because a green test looks like success, and a fixture that cannot fail looks exactly like
 a fixture that passes.
 
+### The same instrument failure in a STATIC CHECKER: validating FORM cannot see a defect in MEANING
+
+A fixture is not the only instrument shaped so the defect cannot appear in it. **A checker that
+validates the FORM of an artefact is structurally unable to see a defect in its MEANING — and the
+two get conflated because both are called "checking the script".**
+
+**Measured, with a control.** A shell parameter expansion that blends substring syntax with
+default-value syntax — `${VAR:0:9:-none}`, a plausible-looking hybrid of two real forms — is
+grammatically well-formed, so the parser is satisfied; the arithmetic context is only evaluated when
+the line executes.
+
+| instrument | verdict on the defective line |
+|---|---|
+| `bash -n` (syntax check) | **passes, silent** |
+| `shellcheck` 0.11.0, shebang present | **passes, exit 0** |
+| executing it | `arithmetic syntax error in expression (error token is ":-none")`, exit 1 |
+| control: the valid `${VAR:0:9}` | all three agree — parses, lints, prints `abcdef012` |
+
+**So the remedy is not a better linter.** Both static instruments certify the line clean; only
+running it produces the defect. **The acceptance step is an assertion that the value actually
+renders**, not a gate that the file parses.
+
+**Why this earns a rule rather than a note.** It manufactures a *true* statement that is load-bearing
+and useless: *"we lint our shell scripts"* becomes accurate the day `bash -n` enters CI, the gate
+passes forever, and nobody re-examines it. The first real failure then lands in production on a path
+that had never run — and in a deploy or recovery script that is disproportionately likely to be the
+**error-handling** path, because error handling is the code that executes least. A gate that is
+green because it cannot fail is the same instrument failure as the fixture above, wearing the
+clothes of tooling rather than of a test.
+
+**The operational form, which generalises past shell:** *name what your check actually evaluates,
+then ask what it cannot see.* Schema validation does not evaluate semantics. A type check does not
+evaluate values. A dry run does not evaluate side effects. Each is worth having; none of them is
+evidence for the layer below it, and a check's name is written by the person who built it, not by
+the failure it will one day have to catch.
+
 ## An edit addressed by REGION is a claim about every line in that region
 
 **"Delete lines N to M" asserts that all of them are dead.** Addressing a change by position rather
@@ -1397,6 +1534,34 @@ whether what they took from the source is still true.
   append-only, and a reader arriving with the old reference should land on an explanation instead of
   a dead end.
 
+## A render source that is a WORKING TREE inherits that tree's branch
+
+**When the thing a publisher reads is a checkout, what it publishes depends on where someone left
+that checkout.** Nothing in the publishing command says which revision it is about to ship — the
+branch is ambient state, set by whoever last used the directory for something else. Measured: a
+core-content clone serving every instruction file on a machine was left on a feature branch, one
+commit ahead of the default; any routine re-render would have published unmerged content into every
+session, and the review gate would have been bypassed by a `checkout` rather than by a decision.
+
+**So a publisher either pins its source revision or asserts it before writing** — and the assertion
+belongs in the tool, because the failure is silent: a checkout on the wrong branch looks exactly like
+one on the right branch.
+
+⚠️ **The mirror failure is staleness, and it is the one the render model accepts by design.** A
+rendered output is only as current as the last render, so a rule can merge and reach nobody. Measured
+alongside the above: two security rules sat merged and unrendered for about 21 hours, including the
+gate written to stop a live incident. The obligation that follows — *a model's known failure mode
+needs a detector that survives the model's own migration* — is stated with its own exhibit under
+*A fix can invalidate the DIAGNOSTIC that found the bug*; it is named here because **this** is the
+model that incurs it.
+
+⚠️ **And when comparing a rendered output, compare what the FORMAT means, not its bytes.** A file its
+own application rewrites — a settings or configuration file re-serialised when someone toggles a
+value — changes hash with no human involved, and a byte comparison then reports a hand edit that
+never happened. Measured: differing hash, identical size, parsed content deep-equal. **A drift check
+that cries wolf on an application's own writes trains its reader to discount it**, which costs more
+than the drift it was meant to catch.
+
 ## An expected value copied from the OUTPUT pins the defect
 
 **A test whose expected value was taken from what the code currently produces is not a test — it is a
@@ -1531,8 +1696,50 @@ its purpose. **So the detector must verify the preconditions its own remedy assu
 becomes the instruction that causes the next incident. In particular, a remedy that rebuilds
 something *from a working tree* assumes that tree holds only what is merged; a lane sitting on a
 feature branch would publish its unmerged draft by following the advice, turning a freshness
-warning into a review bypass. Measure against the merged ref (*never the working tree*, above) and
-say so when the tree is not in the state the remedy needs.
+warning into a review bypass. **Check the tree's state and say so when it is not what the remedy
+needs** — and where the remedy is unsafe, the finding must withhold it rather than print it with a
+caveat.
+
+⚠️ **This paragraph first said "measure against the merged ref", and that was wrong** — a
+correction recorded here rather than quietly rewritten, because following it produced the defect
+in the next subsection. The baseline that makes the *remedy* safe and the baseline that makes the
+*claim* true are two different choices, and conflating them is what the next rule is about.
+
+### DIFFERENCE is not DIRECTION — a two-point comparison cannot say which side moved
+
+**Comparing a record against one baseline establishes only that they differ. Any finding that
+asserts a DIRECTION — behind, ahead, stale, drifted, regressed — is claiming more than the
+measurement supports, and it will be wrong roughly half the time it matters.** Direction needs a
+third point.
+
+Measured: a freshness detector compared what was rendered against the merged ref. Rendering from
+a local edit that had not yet been pushed left the live copy **ahead** of that ref — and the
+finding announced it was *behind*, called the loaded text *the OLD version*, and prescribed a
+re-render that was a no-op. Every number in it was correct. The direction was invented, and the
+direction was the only part the reader would act on.
+
+**So state the claim first, then pick the baseline that makes it true.** *"A re-render would
+change what is live"* is a statement about the **source as it stands**, not about what is merged;
+measured that way it is a two-point comparison that asserts no direction, and it is exactly what
+the reader needs to know. A separate concern — *is re-rendering safe from here?* — is a separate
+finding with a separate baseline. **One finding, one claim, one baseline that can establish it.**
+Bundling two questions into one comparison is how a detector ends up confidently reporting the
+opposite of what happened.
+
+⚠️ **The carve-out matters as much as the rule: where an ORDERING RELATION exists, two refs are not
+two points.** `git rev-list --left-right --count main...branch` is sound — the DAG supplies the third
+point as the merge-base, and commit parentage is inherently ordered, so ahead/behind is a statement
+about *reachability* that the data structure itself establishes. It also reports **divergence** (`1
+1`) rather than picking a side, which is the behaviour the rule is asking for. What has no such
+relation is two **file contents**, two **hashes**, or two **timestamps**: nothing inside them says
+which supersedes which, and an mtime is a fact about a filesystem rather than about which version is
+authoritative.
+
+**So the test is not "how many things did you compare" but "what orders them".** Ancestry orders
+commits; a recorded event orders states; sequence numbers and monotonic versions order writes.
+Absent one of those, a direction is being supplied by the person reading the output — which is
+exactly where it gets supplied wrong. Without this carve-out the rule reads as *ahead/behind is
+unusable*, and it would then cost more than it saves.
 
 ## Definition of done: a service isn't deployed until its backups are PROVEN
 
@@ -1657,6 +1864,86 @@ never run produces exactly the same observation as a branch that genuinely does 
 those two authorises a delete. Assert the fetch succeeded before acting on what it did not return —
 and prefer a check whose failure mode is *keep*, because the cost of wrongly keeping a branch is a
 line in a report and the cost of wrongly deleting one is unpushed work.
+
+⚠️ **The same VOID applies to a READ-ONLY verdict, and there nothing prompts anyone to check.** A
+delete at least makes its author uneasy; a report does not. **The refresh step is part of the probe,
+so its exit code is part of the result** — discarding it is the same defect as discarding the
+probe's own. Measured:
+
+```
+git -C "$d" fetch -q origin 2>/dev/null     # rc discarded
+  -> fetch rc 128 (unreachable remote), stderr suppressed
+  -> refs/remotes/origin/<default> UNCHANGED, no warning anywhere
+  -> every downstream comparison answers CORRECTLY about a ref hours old
+```
+
+`2>/dev/null` and an unchecked `$?` together convert a hard failure into a **confident stale
+verdict**, which is worse than an error and indistinguishable from a healthy run. A "no drift"
+finding produced this way is the cheapest kind of wrong: it is the answer everyone hoped for, it
+required no action, and nobody re-examines it.
+
+**So a probe reports the freshness of its own inputs, or it reports nothing.** Check the refresh
+command's status and fail the probe when it fails; where a stale answer is tolerable, say *as of
+when* in the output rather than leaving the reader to assume *now*. A probe whose refresh silently
+failed does not know it is stale — which is the whole difficulty, and the reason this cannot be left
+to the reader's judgement.
+
+⚠️ **The general form, and it is worse than a discarded exit code: a command can report failure in
+its STATUS while still emitting well-formed, USABLE output.** A guard that inspects the output
+therefore cannot see the failure — not because the guard is weak, but because there is nothing wrong
+with what it is looking at. **Test the status. The payload is not a proxy for it.**
+
+Measured, on `git merge-tree --write-tree` between two genuinely conflicting branches:
+
+```
+rc = 1                                     <- the failure is HERE, and only here
+stdout line 1 = a valid 40-hex tree OID    <- well-formed, and usable downstream
+                then the conflicted paths
+```
+
+A guard written as `[ -z "$T" ]` never fires: `$T` is a real OID. Everything downstream then
+succeeds on it and returns a **confident verdict about a merge that does not cleanly exist**. In the
+measured fleet, **three of twenty-one published "no-op" results were conflicts**, and one had been
+used as the stated reason to close a pull request.
+
+**Two lessons, and the second is the one that generalises.** First, a guard that has never been
+observed to fire on the case it names has not been tested — it has been *assumed*, and *"it has
+never fired"* is equally consistent with *"the condition never arose"* and *"it cannot fire"*.
+Second, **find a natural instance rather than constructing one.** A constructed case establishes
+what the command does on *your construction*; the question is what it does on the input the system
+actually produces. Here a hunt across live repositories found a real conflicting pair, and it was
+the real one that exposed that the guard could not work at all.
+
+⚠️ **That is scoped to DISCOVERY, and the scope is the whole of it.** Constructing a case is wrong
+for learning behaviour you do not know — it tells you about your construction. It is exactly right
+for **demonstrating that an instrument can fail**, where you already know the answer and are testing
+the test. Read without this, the rule forbids building a positive control, which canon requires a few
+paragraphs above; the two would contradict each other. **Hunt to discover, construct to calibrate.**
+
+⚠️ **And a control you did not verify is not a control, so agreement with it is not corroboration.**
+Two runs reaching the same answer feel like confirmation, and the feeling is the risk: an unverified
+instrument agreeing with a verified one adds **no** evidence, while looking exactly like a second
+opinion. Measured, on the reproduction of this very rule: one lane's control branch merged clean when
+it was expected to conflict (a weak control, proving nothing), and its replacement was built with an
+invalid commit invocation, so both branches stayed at the **same SHA** — merging a branch into itself,
+which is clean by definition and printed as a passing control. Two independent runs then reported the
+same result, and only one of them was licensed to.
+
+**So a corroborating run states whether ITS OWN control fired**, not merely what it concluded. Without
+that line, the second run's agreement is indistinguishable from the second run being broken in a way
+that happens to agree — and agreement is the outcome a broken instrument produces most easily.
+
+⚠️ **Third, and it decides what the DETECTOR is keyed on: a symptom is a function of the consumer's
+parsing, so a detector written from one observed symptom encodes that observer's choices rather than
+the defect.** Two readers hit the same failure above and saw different things — taking the first
+line as the identifier yielded **1** changed file, taking the whole output yielded **0**. Both
+verdicts were wrong; neither symptom was the defect. A detector keyed on *"watch for a zero here"*
+would have caught one reader's parsing and been blind to the other's, while looking authoritative
+about a class it only half covered.
+
+**Key the detector on the invariant — where the failure is actually signalled — not on what you
+happened to see downstream of it.** The test: *would this detector still fire if someone consumed
+the output differently?* If not, it is a detector for a usage, not for the fault.
 
 **The tell that a tool has this bug is a guarantee written in the vocabulary of remoteness** —
 *"asserted against the remote default, not a local copy, which can be stale"* — sitting directly

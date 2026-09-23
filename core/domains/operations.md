@@ -468,3 +468,58 @@ Staleness — the artifact moved while the record stood still — is defeated by
 recent. A dropped precondition — the record was incomplete at birth — is defeated by the record
 being complete as far as it read. **A freshness check that asks only *"how old is this?"* passes
 this case every time.**
+
+## A retirement falsifies every CLAIM that names the thing, and none of the RECORDS
+
+When something is retired, renamed or moved — a repository, a service, a home for a class of
+document — the sentences that mention it split into two kinds, and **they need opposite treatment**:
+
+| | what it is | what to do |
+|---|---|---|
+| **Claim** | asserts a present fact: *canonical home*, *distributed from*, *lives at*, an owner, a path | now **false** — correct it |
+| **Record** | reports a past event: a dated measurement, a ticket reference, an exhibit narrative | still **true** — leave it (history is append-only) |
+
+**Both failure modes are one command away.** A global find-and-replace rewrites the records, so a
+measurement taken against the old thing now claims to have been taken against the new one — history
+quietly falsified, which is the more expensive error because nothing will ever flag it. Leaving
+everything alone is the other half: the false pointers stay, and each one routes the next reader to
+a dead target with the authority of a canonical path.
+
+**The per-occurrence test is tense, not keyword.** *Does this sentence assert something about now,
+or report something that happened?* Present tense plus a location, owner or home is a claim. A date,
+an identifier, or a measurement is a record. The same token appears in both, which is exactly why a
+textual sweep cannot make this call.
+
+**Measured.** After a governance repository was retired and archived, seven `Canonical:` footers and
+one frontmatter `canonical_home:` field still named it as the live home for documents that had moved,
+while fifteen other mentions in the same tree were dated measurements and issue links that had to
+survive untouched. ⚠️ **The first pass corrected six of the seven.** The last was found only by
+re-running the search afterwards **as an assertion** rather than trusting the edit — which is the
+general obligation this rule inherits: *after any sweep, re-run the detector and require a zero,
+then confirm the detector still fires on a planted positive.*
+
+### The mirror: a RESOLUTION falsifies a claim just as a retirement does
+
+A retirement falsifies a claim because the thing it names is gone. **A resolution falsifies one
+because the thing it was WAITING FOR happened** — and this half is harder, because nothing about the
+sentence changes and nothing about the event points back at it.
+
+> *"X needs republication — see the open questions in <handoff>."*
+
+Every word of that is stable. It reads exactly as it did the day it was written. The artefact it
+describes has since been republished, the journal records the republication, and **the sentence sits
+in a resident instruction file that every session loads.** Measured: such a line stood for seven
+weeks after the condition closed, and the closure was recorded *later in the same document* the line
+points at.
+
+**A claim with a pending condition is a claim with an expiry, and nothing fires when it expires.**
+So write it so the expiry is detectable:
+
+- **Name the artefact and the field that will settle it** — *"until `status: published`"* — so the
+  claim can be checked mechanically against the thing rather than re-read for plausibility.
+- **Closing a condition includes finding who was waiting on it.** The work is not the status change;
+  it is the sweep for sentences that named it. A resolution that updates only the artefact leaves
+  every pointer to it lying.
+- **Prefer pointing at the artefact over restating its state.** A pointer stays true as the artefact
+  moves; a restatement is a copy that has to be maintained, and copies are what go stale.
+

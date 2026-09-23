@@ -46,6 +46,25 @@ correct and still too wide, and the wide one does not survive to be correct late
 blocked decoding for inspection would have pushed people to skip inspection, which is precisely the
 behaviour it exists to prevent.
 
+⚠️ **A fourth face, and the one with no friction to warn you: a guard whose COMMENT names the wrong
+threat is deleted by a reader who is CORRECT.** Over-breadth at least annoys someone daily. A
+mis-stated reason is silent — until a cleanup arrives, observes accurately that the stated condition
+can no longer occur, and removes a guard that was still catching something else entirely. That
+reader is not careless. They are right about the reason and wrong about the guard, **and nothing in
+the code tells them so.**
+
+Measured: a probe guarded with `[ -z "$T" ]` against an empty result, written expecting *merge
+conflicts*. The condition it actually caught in practice was a **missing ref** — a different
+failure, arriving through the same empty value. The guard held, for a reason its author had not
+written down.
+
+**So when a guard turns out to defend against something other than what it says, rewrite the comment
+to name what it actually catches, in the same change.** Not as tidying afterwards: the comment is
+the only thing standing between that guard and a correct, catastrophic deletion. And the discovery
+is itself evidence — a guard that fires on a case you did not anticipate is telling you the failure
+space is wider than the one you designed for, which is worth a sentence next to it rather than a
+quiet feeling of reassurance.
+
 ## Secrets in code (mandatory)
 
 Never hardcode a credential in **any** repo file (incl. throwaway/test). Source from, in order:
@@ -451,6 +470,13 @@ the deny rule covers what you chose.
 
 - **Deny by the exact tool name** the harness shows for that server, and verify it after connecting:
   a write attempt must be **refused by permissions**, not merely prompted.
+- **Deny every surface the server arrives on.** The same tool server can reach a session under more
+  than one name — added by hand under a chosen name, or attached as an account-level connector under
+  a generated id — and a deny keyed to one name does not cover the other. List the names the harness
+  actually shows, deny each, and **re-verify after any reconnect**: a re-added connector can get a new
+  id, and the old deny then matches nothing, silently.
+- **Do not assume the environment you connected is the only one it reaches.** An account-level
+  connection may expose live as well as test data; check what it reports before relying on "sandbox".
 - **An outbound channel on the same server** (feedback, support messages) is denied too unless there
   is a reason to allow it: it cannot move money, but it can send your data somewhere you did not choose.
 - **Connect sandbox first**, and treat the live-mode connection as a separate grant with its own
