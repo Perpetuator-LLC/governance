@@ -1006,6 +1006,24 @@ The familiar rule is to prove a **zero** — a control probe against a known-bad
 result is not a broken selector. That closes the false-negative half and **leaves the mirror open**:
 a checker that returns findings has proved only that it is **ALIVE**. Liveness is not correctness.
 
+⚠️ **The operational test for a zero is one question: what does a BROKEN run of this same command
+print?** If a broken run and a healthy run produce the same output, the zero is not evidence — and
+the comparison costs one command, which is less than the argument about whether to trust it.
+Measured instances, all of them commands whose failure output is indistinguishable from their
+success output:
+
+- A branch comparison whose checkout had silently failed compared a ref **with itself** and printed
+  `0	0` — byte-identical to a genuinely in-sync pair.
+- A search run with an invalid flag returned the **same error for every input**, which read as three
+  consistent results.
+- A grep for a concept, written with the author's own phrasing, returned zero — establishing that a
+  *string* is absent, which is not the question anyone was asking.
+
+**The three share a shape: the command answered a narrower question than the one being asked, and
+answered it correctly.** Nothing in the output is wrong, so nothing in the output can warn you.
+That is why the check has to be run against a KNOWN-BROKEN invocation rather than read carefully —
+careful reading of a truthful answer to the wrong question produces confidence, not detection.
+
 **A new gate owes TWO demonstrations before anyone acts on its output:** one **known-GOOD** artifact
 it **PASSES**, beside one **known-BAD** artifact it **FAILS**. One without the other is half a
 calibration — the known-bad alone proves it can fire, which is exactly the evidence a
