@@ -1658,6 +1658,29 @@ those two authorises a delete. Assert the fetch succeeded before acting on what 
 and prefer a check whose failure mode is *keep*, because the cost of wrongly keeping a branch is a
 line in a report and the cost of wrongly deleting one is unpushed work.
 
+⚠️ **The same VOID applies to a READ-ONLY verdict, and there nothing prompts anyone to check.** A
+delete at least makes its author uneasy; a report does not. **The refresh step is part of the probe,
+so its exit code is part of the result** — discarding it is the same defect as discarding the
+probe's own. Measured:
+
+```
+git -C "$d" fetch -q origin 2>/dev/null     # rc discarded
+  -> fetch rc 128 (unreachable remote), stderr suppressed
+  -> refs/remotes/origin/<default> UNCHANGED, no warning anywhere
+  -> every downstream comparison answers CORRECTLY about a ref hours old
+```
+
+`2>/dev/null` and an unchecked `$?` together convert a hard failure into a **confident stale
+verdict**, which is worse than an error and indistinguishable from a healthy run. A "no drift"
+finding produced this way is the cheapest kind of wrong: it is the answer everyone hoped for, it
+required no action, and nobody re-examines it.
+
+**So a probe reports the freshness of its own inputs, or it reports nothing.** Check the refresh
+command's status and fail the probe when it fails; where a stale answer is tolerable, say *as of
+when* in the output rather than leaving the reader to assume *now*. A probe whose refresh silently
+failed does not know it is stale — which is the whole difficulty, and the reason this cannot be left
+to the reader's judgement.
+
 **The tell that a tool has this bug is a guarantee written in the vocabulary of remoteness** —
 *"asserted against the remote default, not a local copy, which can be stale"* — sitting directly
 above code that reads `refs/remotes/origin/<default>`. The comment and the code contradict each
