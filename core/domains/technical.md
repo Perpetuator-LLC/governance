@@ -1309,6 +1309,49 @@ is the fact and the comment is an artifact with a date on it; treat a confident 
 a hypothesis to re-measure, particularly when it is the reason you were about to skip reading
 something.
 
+## The mechanism that performs a process is not deployed BY that process
+
+**A tool that carries out a process is usually not itself installed by it.** Improvements to the tool
+land in the repository and look like they took effect — every commit is real, every diff applies —
+while the copy that actually executes was installed by a separate, rarely-run mechanism and goes on
+running the old code. **The gap survives review indefinitely because the describing artefact and the
+performing artefact share a name and a path**, so nothing on screen distinguishes them. Measured
+instance: an installed deployer ran two months behind its repository while every release shipped
+changes to it.
+
+This is the rule above applied one layer out. That one is about **data** — a body versus its
+comments, a schema versus the class that generates it. This is the same failure on the **tool**.
+
+### Identity by PATH is not identity
+
+When a mechanism replaces files as part of its own work — a checkout, a rename, an install — a
+self-check comparing *"me"* against *"the new me"* **by path** compares a file with itself and can
+never report a difference. Replacement by rename makes it worse rather than better: the running
+process keeps its original inode while the path begins resolving to the replacement, so hashing the
+path after the swap reads the new file, not the code that is executing.
+
+**Take identity by CONTENT, captured before the replacement can occur.**
+
+### A self-updating mechanism must refuse to hand off DOWNWARD
+
+Give the hand-off contract a **monotonic revision** and refuse to pass control to a copy whose
+revision is lower than the running one. Without it, **repairing the mechanism un-repairs it on the
+next run**: install a current copy, and the next run observes that the installed copy differs from
+the checked-out one and hands off to the stale one. ⚠️ **"Differs" is not "is newer"** — a freshly
+installed current copy looks exactly as different from a stale one as the stale one looks from it, so
+the repair and the regression are indistinguishable to a comparison that knows only inequality.
+
+### Say which surface the check runs on
+
+**A drift check living only inside the mechanism inherits the defect it exists to detect** — a stale
+copy carries a stale check. Such a gate must name the surface each leg runs on, and at least one leg
+must run somewhere that does not read the suspect artefact in order to judge the suspect artefact.
+Where no such surface exists without credentials, **say so**, rather than implying a coverage that is
+not there.
+
+**The one-minute test for any self-updating tool:** what does its self-check compare, and could the
+two sides ever be the same file?
+
 ## An expected value copied from the OUTPUT pins the defect
 
 **A test whose expected value was taken from what the code currently produces is not a test — it is a
