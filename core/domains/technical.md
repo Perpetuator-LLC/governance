@@ -1681,6 +1681,32 @@ when* in the output rather than leaving the reader to assume *now*. A probe whos
 failed does not know it is stale — which is the whole difficulty, and the reason this cannot be left
 to the reader's judgement.
 
+⚠️ **The general form, and it is worse than a discarded exit code: a command can report failure in
+its STATUS while still emitting well-formed, USABLE output.** A guard that inspects the output
+therefore cannot see the failure — not because the guard is weak, but because there is nothing wrong
+with what it is looking at. **Test the status. The payload is not a proxy for it.**
+
+Measured, on `git merge-tree --write-tree` between two genuinely conflicting branches:
+
+```
+rc = 1                                     <- the failure is HERE, and only here
+stdout line 1 = a valid 40-hex tree OID    <- well-formed, and usable downstream
+                then the conflicted paths
+```
+
+A guard written as `[ -z "$T" ]` never fires: `$T` is a real OID. Everything downstream then
+succeeds on it and returns a **confident verdict about a merge that does not cleanly exist**. In the
+measured fleet, **three of twenty-one published "no-op" results were conflicts**, and one had been
+used as the stated reason to close a pull request.
+
+**Two lessons, and the second is the one that generalises.** First, a guard that has never been
+observed to fire on the case it names has not been tested — it has been *assumed*, and *"it has
+never fired"* is equally consistent with *"the condition never arose"* and *"it cannot fire"*.
+Second, **find a natural instance rather than constructing one.** A constructed case establishes
+what the command does on *your construction*; the question is what it does on the input the system
+actually produces. Here a hunt across live repositories found a real conflicting pair, and it was
+the real one that exposed that the guard could not work at all.
+
 **The tell that a tool has this bug is a guarantee written in the vocabulary of remoteness** —
 *"asserted against the remote default, not a local copy, which can be stale"* — sitting directly
 above code that reads `refs/remotes/origin/<default>`. The comment and the code contradict each
