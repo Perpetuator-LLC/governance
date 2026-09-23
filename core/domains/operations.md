@@ -498,3 +498,28 @@ re-running the search afterwards **as an assertion** rather than trusting the ed
 general obligation this rule inherits: *after any sweep, re-run the detector and require a zero,
 then confirm the detector still fires on a planted positive.*
 
+### The mirror: a RESOLUTION falsifies a claim just as a retirement does
+
+A retirement falsifies a claim because the thing it names is gone. **A resolution falsifies one
+because the thing it was WAITING FOR happened** — and this half is harder, because nothing about the
+sentence changes and nothing about the event points back at it.
+
+> *"X needs republication — see the open questions in <handoff>."*
+
+Every word of that is stable. It reads exactly as it did the day it was written. The artefact it
+describes has since been republished, the journal records the republication, and **the sentence sits
+in a resident instruction file that every session loads.** Measured: such a line stood for seven
+weeks after the condition closed, and the closure was recorded *later in the same document* the line
+points at.
+
+**A claim with a pending condition is a claim with an expiry, and nothing fires when it expires.**
+So write it so the expiry is detectable:
+
+- **Name the artefact and the field that will settle it** — *"until `status: published`"* — so the
+  claim can be checked mechanically against the thing rather than re-read for plausibility.
+- **Closing a condition includes finding who was waiting on it.** The work is not the status change;
+  it is the sweep for sentences that named it. A resolution that updates only the artefact leaves
+  every pointer to it lying.
+- **Prefer pointing at the artefact over restating its state.** A pointer stays true as the artefact
+  moves; a restatement is a copy that has to be maintained, and copies are what go stale.
+
