@@ -80,6 +80,21 @@ be wrong.** If you find one, its boundary belongs in the text. If you cannot, ei
 genuinely unconditional — rare, and worth saying so — or you have not looked hard enough, which is
 the usual answer.
 
+⚠️ **Where to look, because the search has a systematic blind spot: the exhibit that taught you the
+rule is the thing hiding its mirror.** You will encode the case you lived through — its shape is the
+vivid one, and every sentence you write will be true of it. The situation that breaks the rule is
+usually **the same case with one property inverted**: the opposite direction, the empty set instead
+of the full one, the absent thing instead of the present one, the read instead of the write.
+
+**So when a rule names a direction, a presence, or an order, write down its opposite and check that
+the rule still says the right thing.** Measured: a detector built from an incident where a source
+tree was *ahead* of the merged tip asked *"is it on a non-default branch and ahead"* — correct, and
+silent the following day when the same tree was *behind*, which fails in the mirror way and just as
+quietly. The rule had been through review. Nobody asked what *behind* looked like, because the
+incident that prompted it had no *behind* in it.
+
+**The case you just lived through is the one you encode. The other one is the one that finds you.**
+
 **Exhibit** (kept here because it is about this document's own process): a rule landed reading *find
 a natural instance rather than constructing one*. True, and the reason is sound — a constructed case
 tells you about your construction. But stated without scope it **forbids building a positive
