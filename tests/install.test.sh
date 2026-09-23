@@ -310,6 +310,40 @@ check "…lists repos (a .git file too, not inside node_modules), vaults, and ad
 snap "$R" > "$TMP/root.after"
 check "…and writes nothing under the root" "cmp -s '$TMP/root.before' '$TMP/root.after'"
 
+# --- the LOCAL layer when --local is OMITTED ---------------------------------------------------------
+# Every install above passes --local, so the omission path never ran. It rendered WITHOUT the layer that
+# wins every conflict and wrote `local: null` into the manifest — and `check --home` then agreed with it,
+# because it checks the render against the layers the manifest names. A layer never declared is not
+# missing from that set. The post-condition a caller is told to trust could not see the loss.
+LH="$TMP/home-local-default"; mkdir -p "$LH/.claude"; put "$LH/.claude/CLAUDE.local.md" "# home local override"
+rc="$(gov install --home "$LH" --repo "$C" --adapter "$A1" --write-manifest)"
+check "omitting --local picks up <home>/.claude/CLAUDE.local.md, as discover does" \
+  "[ '$rc' = '0' ] && grep -q '# home local override' '$LH/.claude/CLAUDE.md'"
+check "…says which local layer it used" "grep -q 'local layer: $LH/.claude/CLAUDE.local.md' '$TMP/stdout'"
+check "…and the manifest records it, so a later reconcile keeps it" \
+  "python3 -c \"import json,sys; sys.exit(0 if json.load(open('$LH/.governance/manifest.json'))['local']=='$LH/.claude/CLAUDE.local.md' else 1)\""
+rc="$(gov check --home "$LH")"
+check "…and check --home is in sync with a render that INCLUDES it" "[ '$rc' = '0' ]"
+
+NH="$TMP/home-no-local"; mkdir -p "$NH/.claude"; put "$NH/.claude/CLAUDE.local.md" "# should not appear"
+rc="$(gov install --home "$NH" --repo "$C" --adapter "$A1" --no-local --write-manifest)"
+check "--no-local is the explicit opt-out: the layer is left out even though it exists" \
+  "[ '$rc' = '0' ] && ! grep -q '# should not appear' '$NH/.claude/CLAUDE.md' && grep -q 'local layer: none (--no-local)' '$TMP/stdout'"
+
+EH="$TMP/home-empty-local"; mkdir -p "$EH"
+rc="$(gov install --home "$EH" --repo "$C" --adapter "$A1")"
+check "no local file in the home ⇒ none, said out loud rather than silently" \
+  "[ '$rc' = '0' ] && grep -q 'local layer: none (no ' '$TMP/stdout'"
+
+rc="$(gov install --home "$EH" --repo "$C" --adapter "$A1" --local "$LOCAL" --no-local)"
+check "--local and --no-local together are refused, not silently resolved" "[ '$rc' != '0' ]"
+
+# The MIRROR, because the rule names a presence: an explicit --local still wins over the home's file.
+MH="$TMP/home-explicit-wins"; mkdir -p "$MH/.claude"; put "$MH/.claude/CLAUDE.local.md" "# home file"
+rc="$(gov install --home "$MH" --repo "$C" --adapter "$A1" --local "$LOCAL")"
+check "an explicit --local outranks the home's own file" \
+  "[ '$rc' = '0' ] && grep -q '# local override' '$MH/.claude/CLAUDE.md' && ! grep -q '# home file' '$MH/.claude/CLAUDE.md'"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
