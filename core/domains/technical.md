@@ -629,7 +629,16 @@ engagement cannot grant another's; *"what does this engagement own?"* is one
 listing per system; and offboarding an engagement is deleting one namespace
 rather than hunting through a shared one.
 
-⚠️ **Scope — three limits, each the mirror of a way to over-apply it:**
+**A person is an owner too — one rule, two kinds of owner.** Data private to one
+person sits under that person; data shared across an engagement sits under the
+engagement. Every space has exactly **one** owner, and its audience follows from
+the owner: the engagement's members, or that one person. A person who belongs to
+several engagements does not get one merged store — they get access to several
+spaces, and any single view of "everything I can see" is **composed** from
+separately-gated spaces, never filtered out of one shared store. A filter bug in a
+shared store is a leak; a composition bug is a missing panel.
+
+⚠️ **Scope — five limits, each the mirror of a way to over-apply it:**
 
 - **Shared platform services are not split per engagement.** One identity server,
   one secret store, one forge serve every engagement; the namespace lives
@@ -637,6 +646,13 @@ rather than hunting through a shared one.
 - **The operator's own platform is an engagement too.** Resources that genuinely
   serve every engagement — CI runners, resolvers, monitoring — belong to the
   operator's own namespace, not to an unnamed shared bucket nobody owns.
+- **Private is not the same as personal.** A person's working notes *for* an
+  engagement belong to the engagement, held privately — the owner is whose data
+  it is, not who may read it. They leave with the engagement, not with the person.
+- **A forge's user namespace is global, and every user is a login surface.** Give
+  a person their own forge namespace only if they will use the forge directly.
+  Everyone else gets a per-person area inside their engagement's space, with
+  access control — the same privacy, without a second account to secure.
 - **Conform on creation or on touch, not by migration.** A new resource takes the
   namespace from day one. An existing one moves when it is being changed anyway,
   because a live path has consumers that must move with it; a sweep that
