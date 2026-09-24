@@ -881,8 +881,10 @@ the absence of an objection.
   on a held PR every job is skipped, the run concludes SUCCESS in seconds, and clearing the hold
   emits no new event, so no real run ever follows. **A merge-ready claim names a run whose JOBS
   EXECUTED on the claimed head. Read the jobs, not the run's conclusion.** Where CI skips drafts,
-  the order is: clear the hold, push (an empty commit if nothing changed), claim that run. Better
-  still, let the gating jobs run on drafts, so the hold and the evidence stop competing.
+  clear the hold, then trigger a real run: **close and reopen the PR** where the workflow listens
+  to `reopened` (no commit needed; on GitHub-Actions-compatible runners an omitted `types` includes
+  it, so verify once on your forge), **else push** an empty commit. Claim that run. Better still,
+  let the gating jobs run on drafts, so the hold and the evidence stop competing.
 
 ## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
 
