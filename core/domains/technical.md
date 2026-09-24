@@ -1007,6 +1007,30 @@ across harnesses mean the text is not the variable, and "sharpen the wording" is
 the wrong layer. Establish in order: did the branch exist, did the record name it, did the record
 agree with the convention, and only then whether the instruction was read.
 
+## In a checkout several seats share, delete only the branches you own — containment never proves abandonment
+
+**A blanket cleanup — `git branch --merged | xargs git branch -d` — deletes branches by a property,
+and in a checkout several seats or worktrees share, the property is true of other seats' work.**
+Measured on a fixture, the two ways it takes a branch that is not on the default branch:
+
+| branch | bare `git branch --merged` (run from a rolling branch) | `--merged origin/main` | `branch-reap` |
+|---|---|---|---|
+| folded onto the rolling branch, **not on main** | **listed** — bare `--merged` compares with **HEAD** | kept | kept, "a human decides" |
+| another seat's hold, created, **no commits yet** | **listed** | **listed** | **would reap** |
+
+So: **never run `--merged` bare** — it answers "is this in the branch I am standing on?", and a rolling
+branch contains work main does not. Compare with the default branch (`--merged origin/<default>`, or a
+tool that does, such as `bin/branch-reap`). **And delete only branches you own, by name.** A branch
+with no commits of its own is contained in everything, so no containment test can tell a fresh hold
+from an abandoned one — only its owner can. Protect other seats' refs explicitly (`branch-reap
+--protect`), or leave cleanup of a shared checkout to the one seat that owns it.
+
+- **Scope:** a checkout only one seat uses can reap what is contained in the default branch — that is
+  what `branch-reap` is for. The hazard is sharing.
+- **For what IS reported as unmerged:** a `+` from `git cherry` means the PATCH is not upstream, never
+  that the CONTENT is not. A fix that landed as a different patch looks unmerged — adjudicate by
+  content before deleting anything.
+
 ## Agent attribution lives in the BODY — the author field is one shared identity
 
 **Write side.** Every agent-authored commit, PR body, review and forge comment carries its own
