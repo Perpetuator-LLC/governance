@@ -1524,6 +1524,25 @@ it, so a suite whose fixtures skipped that branch stayed green on the broken for
 Where the interpreter is pinned — a container image, a declared runtime — this reduces to testing
 under that one.
 
+**The same holds for the SHELL an agent's command runs in, and there the difference is not age.** An
+agent's shell tool runs an inline command under the user's login shell, which on macOS is usually
+**zsh**, not bash. **zsh does not word-split an unquoted parameter expansion:** `for x in $list`
+iterates **once**, over the whole string, where bash iterates per word. Nothing errors. The loop
+simply runs once, so a probe written for bash returns a confident false negative, or a count of one.
+Calibrated:
+
+| construct | zsh | bash |
+|---|---|---|
+| `l="a b c"; for x in $l` | **1** iteration | 3 |
+| `for x in $(printf "a b c")` | 3 | 3 |
+| `a=(a b c); for x in "${a[@]}"` | 3 | 3 |
+
+So iterate over an **array** or a `while IFS= read -r` loop, never an unquoted variable. Anything
+longer than a line goes in a file whose `#!/usr/bin/env bash` shebang **selects the interpreter** —
+the shebang is the fix, not the quoting. **Scope:** a script run by path executes under its shebang
+and is unaffected; the hazard is inline commands, `eval`, and command snippets pasted into
+instructions, which run under whatever shell the reader has.
+
 ## An edit addressed by REGION is a claim about every line in that region
 
 **"Delete lines N to M" asserts that all of them are dead.** Addressing a change by position rather
