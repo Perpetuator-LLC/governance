@@ -881,12 +881,50 @@ them.
 | what does merging this bring? | `git diff <base>...<branch>` (three-dot), or merge it in a scratch worktree and diff against the base |
 | would it conflict? | `git merge-tree --write-tree <base> <branch>`, or the scratch merge's exit code |
 | what is on the branch that is not on the base? | `git log <base>..<branch>` |
+| **what will this merge DELETE?** | `git diff --name-status --diff-filter=D <base>...<branch>` — see below |
 | **nothing a reviewer normally asks** | `git diff <base>..<branch>` (two-dot) |
 
 **Same family as the cheap-view failures elsewhere in this file:** the reading that is one character
 cheaper answers a neighbouring question, agrees with the right answer most of the time, and diverges
 exactly when the branch is old — which is when someone is most likely to be nervous and least likely
 to re-check.
+
+### The one case where three-dot shows a REAL deletion: a base merged in with `-s ours`
+
+**Never "sync" a working branch with a base that is ahead of it by `git merge -s ours <base>`.**
+`-s ours` records the base as merged while discarding everything on it. The merge base then moves to
+the base's tip, so git treats the base's newer files as already incorporated, **and the next merge of
+the branch back into the base deletes them**, with no conflict and no warning. Measured: two
+consecutive integration-branch heads would each have deleted 46 files and ~42.8k lines from the
+default branch, and were caught only before merge.
+
+**So before pushing an integration branch, list the deletions the merge will actually perform, and
+explain every row:**
+
+```
+git fetch origin && git diff --name-status --diff-filter=D origin/main...HEAD
+```
+
+**The dots are the whole check.** Calibrated on a fixture:
+
+| case | two-dot `main HEAD` | three-dot `main...HEAD` | what the merge does |
+|---|---|---|---|
+| branch merely **behind** the base | `D` — **false** | *(none)* | file kept |
+| branch did `merge -s ours main` | `D` | `D` — **true** | file **deleted** |
+
+Two-dot shows a D in both, so it cannot tell a stale branch from the destructive one, and it trains
+its reader to explain D rows away. Three-dot shows a D only when the merge will perform it. It is also
+**method-agnostic**: resolving every conflict by taking one side, or checking out an old tree and
+committing it, produce the same real rows, and the deletion list catches them without knowing which
+command caused them.
+
+- **A D row is not a defect.** A deliberate removal is fine. The rule is to explain each row, not to
+  ban deletions.
+- **Direction matters.** `-s ours` is correct when the *other* branch is the obsolete one: recording a
+  superseded branch as merged *into* the default while keeping the default's tree. The hazard is only
+  the reverse, merging the **base into your branch** with `-s ours` and later merging back.
+- **The property this depends on is a merge back into that base.** A branch that never returns (a
+  fork, a vendor snapshot) can discard the base freely.
 
 ## "Read the integration branch, never compute it" — the read returns a LIST, and selecting from it is the hard half
 
