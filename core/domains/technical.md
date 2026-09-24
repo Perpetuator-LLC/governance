@@ -1505,6 +1505,25 @@ evaluate values. A dry run does not evaluate side effects. Each is worth having;
 evidence for the layer below it, and a check's name is written by the person who built it, not by
 the failure it will one day have to catch.
 
+**…and EXECUTE it under the interpreter that will actually run it.** A run is evidence only for the
+interpreter that ran it. macOS ships `/bin/bash` 3.2; a development machine usually resolves `bash` to
+a modern one, so a suite run there proves nothing about a fresh machine. Measured twice in one day,
+both passing `bash -n` and bash 5:
+
+| construct | bash 5 | `/bin/bash` 3.2 |
+|---|---|---|
+| `"${arr[@]}"` on an EMPTY array under `set -u` | fine | `unbound variable`: the block aborts |
+| a heredoc whose body contains `)` inside `< <( … )` | fine | parse error: the section prints its own source and never runs |
+
+Both sat on the path a fresh machine takes first — an import preflight and a session-start detector —
+which is exactly where the modern interpreter is least likely to be installed yet. So a script that
+runs on machines you do not control is tested under the **oldest interpreter it can meet, selected
+explicitly** (`/bin/bash`, never `bash` from `PATH`, which is whatever the test host happens to have).
+**And the fixture must reach the section:** 3.2 parses a process substitution only when it executes
+it, so a suite whose fixtures skipped that branch stayed green on the broken form under both shells.
+Where the interpreter is pinned — a container image, a declared runtime — this reduces to testing
+under that one.
+
 ## An edit addressed by REGION is a claim about every line in that region
 
 **"Delete lines N to M" asserts that all of them are dead.** Addressing a change by position rather
