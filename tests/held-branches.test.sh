@@ -89,6 +89,42 @@ mkdir -p "$TMP/noremote"; git -C "$TMP/noremote" init -q
 rc=0; "$HB" "$TMP/noremote" >/dev/null 2>&1 || rc=$?
 check "fetch failure ⇒ exit 2, never a report on stale refs" "[ '$rc' = '2' ]"
 
+# --- --local: commits that exist ONLY on this machine ---------------------------------------------
+# Measured: two finished fixes sat unpushed on local branches for three weeks across rotations. The
+# remote scan cannot see a branch that was never pushed; this is the case the flag exists for.
+O2="$TMP/origin2.git"; C2="$TMP/clone2"
+git init -q --bare -b main "$O2"; git clone -q "$O2" "$C2" 2>/dev/null
+h() { git -C "$C2" "$@"; }
+c2() { printf '%s\n' "$2" > "$C2/$1"; h add "$1"; h commit -qm "$3"; }
+c2 base base "base"; h push -q origin main
+h switch -qc merge/lane; h push -q origin merge/lane; h switch -q main
+h switch -qc fix/never-pushed; c2 np np "finished fix, never pushed"
+h switch -qc feat/pushed main; c2 pu pu "pushed, not folded"; h push -q origin feat/pushed
+h switch -qc fix/landed-newhash main; c2 lh lh "landed under a new hash"
+h switch -q main; h cherry-pick fix/landed-newhash >/dev/null; h push -q origin main
+h switch -qc fix/folded-newhash main; c2 fh fh "folded under a new hash"
+h switch -q merge/lane; h cherry-pick fix/folded-newhash >/dev/null; h push -q origin merge/lane
+h switch -q main; c2 um um "unpushed commit on main"
+# a local branch whose ONLY local-only commit is a merge: no work of its own is at risk
+h switch -qc merge-only origin/feat/pushed 2>/dev/null; h merge -q --no-ff origin/merge/lane -m "Merge branch 'merge/lane' into merge-only"; h switch -q main
+
+rc=0; "$HB" --no-fetch "$C2" >"$TMP/out" 2>"$TMP/err" || rc=$?
+check "WITHOUT --local, a never-pushed fix is invisible (the gap the flag closes)" \
+  "! grep -q 'fix/never-pushed' '$TMP/out'"
+rc=0; "$HB" --no-fetch --local "$C2" >"$TMP/out" 2>"$TMP/err" || rc=$?
+check "--local: exit 1 when this machine holds the only copy of anything" "[ '$rc' = '1' ]"
+check "--local: a never-pushed fix is reported as the ONLY copy" \
+  "grep -q 'fix/never-pushed (local)  1 commit(s) ONLY ON THIS MACHINE' '$TMP/out'"
+check "--local: an unpushed commit on the default branch is reported too" "grep -q ' main (local)  1 commit' '$TMP/out'"
+check "--local: a PUSHED branch gets no (local) row — the remote row covers it, never listed twice" \
+  "! grep -q 'feat/pushed (local)' '$TMP/out' && grep -q 'origin/feat/pushed ' '$TMP/out'"
+check "--local: a local commit that landed on main under a new hash is not reported" "! grep -q 'fix/landed-newhash' '$TMP/out'"
+check "--local: a local commit folded onto a pushed rolling branch under a new hash is not reported" \
+  "! grep -q 'fix/folded-newhash (local)' '$TMP/out'"
+check "--local: stderr says a (local) row is the only copy" "grep -q 'ONLY copy' '$TMP/err'"
+check "--local: a branch whose only local-only commit is a MERGE gets no row (first live run's noise)" \
+  "! grep -q 'merge-only (local)' '$TMP/out'"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
