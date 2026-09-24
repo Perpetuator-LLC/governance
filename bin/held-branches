@@ -29,15 +29,26 @@
 #   bin/held-branches                 # the current repo
 #   bin/held-branches <repo> [repo…]  # these repos
 #   bin/held-branches --no-fetch      # skip `git fetch --prune` (fast, but reads stale refs)
+#   bin/held-branches --local         # ALSO report local branches holding commits on NO remote
+#
+# --local answers a different question: not "pushed and never folded" but "THIS MACHINE HOLDS THE
+# ONLY COPY". Measured: two finished fixes sat unpushed on local branches for three weeks across
+# rotations — the remote scan cannot see a branch that was never pushed, and a release step that
+# counts unpushed commits on the integration branch cannot see a local branch at all. A commit counts
+# as local-only when no remote-tracking ref reaches it (`git rev-list <b> --not --remotes`) AND no
+# patch-equivalent is on the default or a rolling branch. Pushed-but-unfolded work is the remote
+# scan's row, so it is never listed twice.
 #
 # Exit: 0 nothing unfolded · 1 findings · 2 usage/setup error
 set -uo pipefail
 FETCH=1
+LOCAL=0
 REPOS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-fetch) FETCH=0; shift ;;
-    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --local) LOCAL=1; shift ;;
+    -h|--help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "unknown flag: $1" >&2; exit 2 ;;
     *) REPOS+=("$1"); shift ;;
   esac
@@ -93,11 +104,39 @@ for R in "${REPOS[@]}"; do
     fi
   done < <(git -C "$R" branch -r --no-merged "origin/$D" --format='%(refname:short)')
   [ "$folded_branches" -gt 0 ] && echo "$R  ($folded_branches branch(es) fully folded onto a rolling branch, pending its PR — not listed)"
+
+  if [ "$LOCAL" = 1 ]; then
+    while IFS= read -r b; do
+      [ -n "$b" ] || continue
+      only=0
+      while IFS= read -r sha; do
+        [ -n "$sha" ] || continue
+        # Landed on the default branch under a new hash?
+        git -C "$R" cherry "origin/$D" "$sha" "$sha^" 2>/dev/null | grep -q '^-' && continue
+        # …or on a pushed rolling branch under a new hash?
+        eq=0
+        for m in ${ROLL[@]+"${ROLL[@]}"}; do
+          git -C "$R" cherry "$m" "$sha" "$sha^" 2>/dev/null | grep -q '^-' && { eq=1; break; }
+        done
+        [ "$eq" = 1 ] && continue
+        only=$((only + 1))
+      # --no-merges: a local-only MERGE commit carries no work of its own (its parents are elsewhere);
+      # counted, it made "Merge branch main into x" read as a held fix on the first live run.
+      done < <(git -C "$R" rev-list --no-merges "refs/heads/$b" --not --remotes 2>/dev/null)
+      if [ "$only" -gt 0 ]; then
+        findings=$((findings + 1))
+        printf '%s  %s (local)  %d commit(s) ONLY ON THIS MACHINE · last %s by %s · "%s"\n' "$R" "$b" "$only" \
+          "$(git -C "$R" log -1 --format=%cr "refs/heads/$b")" "$(git -C "$R" log -1 --format=%an "refs/heads/$b")" \
+          "$(git -C "$R" log -1 --format=%s "refs/heads/$b")"
+      fi
+    done < <(git -C "$R" for-each-ref --format='%(refname:short)' refs/heads/)
+  fi
 done
 
 if [ "$findings" -gt 0 ]; then
   echo "held-branches: $findings branch(es) with work on neither the default branch nor a rolling branch." >&2
   echo "  Each is a DROPPED HOLD or someone's work in progress. Adjudicate by CONTENT before acting — a squash merge also appears here." >&2
+  [ "$LOCAL" = 1 ] && echo "  A (local) row is the ONLY copy: push it or hand it over before this seat or machine goes." >&2
   exit 1
 fi
 exit 0
