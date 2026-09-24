@@ -852,6 +852,32 @@ dependency or vulnerability audit, a licence database — can pass and then fail
 minutes apart, so a green observed earlier is not a current green. For those gates, the merge-ready
 claim names the run and its time, and is re-checked at merge.
 
+## A hold on a pull request lives in the forge's own WIP / draft gate — never only in a comment
+
+**A reviewer sees the title, not the thread.** A lock, a hold comment and a "please don't merge yet"
+note all share one weakness: they work only if the merger reads them. Most forges already implement
+that intent as a **server-side gate**: a title prefix (`WIP:`) or a draft flag makes a pull request
+un-mergeable, with the merge button disabled rather than merely discouraged. Where the forge has one,
+**a hold is expressed there**, set by whoever owns the branch and cleared when the work is ready. It
+turns a request into a constraint, and costs one word in a title.
+
+**It fits a rolling integration branch especially well.** Such a branch is *normally* not ready: it
+accumulates commits until a coherent set is green. So mark the PR held at creation and clear the hold
+when the merge-ready claim is posted. Readiness is then explicit and enforced, instead of implied by
+the absence of an objection.
+
+- **It fails safe.** Forget to set it and you get the behaviour without it. Forget to clear it and
+  the worst case is a merge that waits, never a merge that should not have happened. The failure mode
+  is latency, not an unreviewed change.
+- **It is the ONE state that belongs in a title.** Commit counts and CI status go stale on the next
+  push and belong in the per-head claim. A hold marker is different because the forge ACTS on it.
+- **Verify once that the forge enforces it.** Prefix support is configurable and the token varies.
+  Read the pull request's own state back (its draft/mergeable field should flip); a prefix the server
+  does not recognise is just a comment in the title.
+- **It does not replace the merge-ready claim.** The hold answers *"may this be merged at all?"*;
+  the claim answers *"is THIS head green, by which gate?"*. A cleared hold with no claim invites a
+  merge of an unverified head.
+
 ## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
 
 **`git diff main..branch` shows what REPLACING main with the branch would do. A merge does not do
