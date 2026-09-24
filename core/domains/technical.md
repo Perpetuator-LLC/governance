@@ -877,6 +877,12 @@ the absence of an objection.
 - **It does not replace the merge-ready claim.** The hold answers *"may this be merged at all?"*;
   the claim answers *"is THIS head green, by which gate?"*. A cleared hold with no claim invites a
   merge of an unverified head.
+- **A green run on a held PR may have run NOTHING.** Some CI guards its jobs with `if: draft != true`:
+  on a held PR every job is skipped, the run concludes SUCCESS in seconds, and clearing the hold
+  emits no new event, so no real run ever follows. **A merge-ready claim names a run whose JOBS
+  EXECUTED on the claimed head. Read the jobs, not the run's conclusion.** Where CI skips drafts,
+  the order is: clear the hold, push (an empty commit if nothing changed), claim that run. Better
+  still, let the gating jobs run on drafts, so the hold and the evidence stop competing.
 
 ## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
 
