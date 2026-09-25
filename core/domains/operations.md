@@ -367,6 +367,30 @@ times; an unpushed state would have been destroyed silently.
    past-due one-time tasks** — the platform does not auto-disable reliably, so the sweep is the
    backstop.
 
+## A context reset releases nothing — walk what the session holds before it
+
+Clearing or compacting an agent's context in place keeps the seat and destroys its memory. Every
+hold that lives **outside** the context — a timer, a pinned model, a worktree, an uncommitted file,
+a task queued in the harness — survives the reset **with no one left who knows it exists**, and the
+reset reports nothing. So before a reset, **enumerate the holds by class and record each result,
+including the empty ones**. A generic "release your resources" catches only the holds that announce
+themselves, which are the ones that never needed the rule.
+
+- **List the classes that stay silent:** armed timers and self-scheduled wake-ups; resident model
+  pins; "building" claims in a resource registry; worktrees and locks; a staged index; commits that
+  exist only on this machine; and **items queued in the harness's own interface — a suggested
+  follow-up task waiting for the human to click it.** No tool lists those back, and a reset can drop
+  them without an error.
+- **For each hold: finish it, withdraw it, or carry it** into the continuation record — verbatim for
+  a queued task (its title and full prompt), because that record is the only thing the next context
+  reads.
+- **Release and hand over are different verbs.** A hold meant to outlive the reset is declared, not
+  released: what it is, why it runs, how to see it, how to stop it.
+- **Scope:** holds this session created. Another session's or the human's items are named, never
+  withdrawn. A harness that demonstrably keeps a queue across the reset needs no walk for that queue;
+  prove that once, on that harness, and record it. **Handing off to a NEW session loses the same
+  holds more slowly** — the old context survives, but nobody reads it — so the walk runs there too.
+
 ## North Star — enduring goals that outlive a session
 
 A **North Star** is a human-set, agent-immutable enduring goal that orients work across sessions and

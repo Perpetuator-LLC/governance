@@ -266,6 +266,23 @@ prompt: the human is the *authorizer*, not the *reviewer of last resort*.
 - **Hand-over shape:** agent output = a committed/scripted plan step + the planfile path + the
   reviewed summary; human input = enable-key (if gated) → `tofu apply <planfile>` → disable-key.
   Wrap both sides in the repo's script (`plan.sh` / `deploy.sh`) when the root is used more than once.
+- **A planfile is a plaintext secret with a lifetime: write it OUTSIDE the checkout, and delete it
+  when the step that consumes it ends.** A saved plan carries the resolved input variables, including
+  any credential passed as a variable, plus a copy of prior state. Written into the repo tree, it
+  outlives the task and is read by every backup and indexer that sweeps the tree. The delete depends
+  on the flow, and the rule for one flow is wrong for the other:
+  - *One process plans and applies* (a wrapper script): plan into `mktemp -d` (0700) and remove that
+    directory in an `EXIT` trap. **The trap alone is not enough.** It runs on INT, TERM and HUP. A
+    SIGKILL skips it (a harness timeout, `kill -9`, a crash). The out-of-tree directory is what keeps
+    that leftover out of the repo.
+  - *Split flow* (the agent plans, the human applies later): an `EXIT` trap on the plan step would
+    delete the reviewed plan before the human applies it. Plan into a durable private directory, not a
+    temp directory the OS may reap first. The **apply** wrapper deletes the planfile afterwards,
+    **whether apply succeeded or failed**.
+  - **Detect what both miss.** Sweep for planfiles by NAME, flagging any older than a day. Match every
+    name shape in use: `*.tfplan`, bare `tfplan`, and `*.plan` beside `*.tf`. Measured: a sweep for one
+    extension missed 7 of 15. Never open a found planfile to triage it. Name, path and age are enough
+    to ask its owner whether it is still to be applied.
 - **The agent-run plan IS the ceremony pre-flight — it exercises the ENTIRE auth path, backend
   included.** `tofu init`+`plan` touch the state bucket AND the lock table before any provider call;
   a hand-over composed without the agent running them first ships untested auth. Measured: a
@@ -1030,6 +1047,13 @@ from an abandoned one — only its owner can. Protect other seats' refs explicit
 - **For what IS reported as unmerged:** a `+` from `git cherry` means the PATCH is not upstream, never
   that the CONTENT is not. A fix that landed as a different patch looks unmerged — adjudicate by
   content before deleting anything.
+- **`git cherry` never lists a commit the upstream already contains** — it compares only the
+  commits in `upstream..head`, so a commit merged into the upstream as itself gets neither `+` nor
+  `-`. A detector asking *"is this commit folded into branch X?"* needs `git merge-base
+  --is-ancestor` beside it: ancestry answers *merged as this very commit*, cherry's `-` answers
+  *landed as an equivalent patch*, and cherry's silence alone is no verdict. Calibrated on a
+  fixture: a commit merged into X gives empty cherry output and ancestry true; the control, not
+  merged, gives `+`.
 
 ## Agent attribution lives in the BODY — the author field is one shared identity
 
@@ -1600,6 +1624,26 @@ longer than a line goes in a file whose `#!/usr/bin/env bash` shebang **selects 
 the shebang is the fix, not the quoting. **Scope:** a script run by path executes under its shebang
 and is unaffected; the hazard is inline commands, `eval`, and command snippets pasted into
 instructions, which run under whatever shell the reader has.
+
+**A second zsh trap on the same path: `$var:<letter>` is a MODIFIER, even inside double quotes.**
+`:r`, `:h`, `:t`, `:e` and others edit the value (root, head, tail, extension), so in zsh
+`"$sha:refs/heads/x"` becomes `abc123efs/heads/x`: the `:r` is consumed. bash prints it as written.
+As a `git push origin $sha:refs/heads/x`, that silently targets a mangled ref. `$h:$port` is safe,
+because a colon followed by `$` is not a modifier. **Brace any variable followed by a colon:
+`${sha}:refs/…`, `${host}:${port}`.** It costs nothing and removes the letter-by-letter question.
+
+**…and a command NAME may not be the binary.** An agent's tool shell can define common commands as
+**functions or aliases** (measured: one coding-agent harness wraps `grep` around a bundled search tool
+via its shell snapshot). The wrapper matches the binary on the common path and differs on a rarer flag
+combination. There, `printf 'a\nb\n' | grep -qv '^a$'` returned **1**, where POSIX returns 0, while
+`grep -v`, `grep -q`, `command grep`, `/usr/bin/grep` and `bash -c` all behaved. So a watcher built
+as `… | grep -qv <old>` to notice something new **could never fire**, and a condition that can never
+fire looks exactly like one that has not fired yet.
+
+So in a detector or watcher typed into the tool shell, **call the binary** (`command grep`, or a
+script with a shebang, which starts a fresh interpreter without the wrappers), and **prove the
+condition TRUE on a known positive before arming it.** The positive control is what separates
+"nothing happened" from "the check cannot see it happen".
 
 ## An edit addressed by REGION is a claim about every line in that region
 
