@@ -852,6 +852,40 @@ dependency or vulnerability audit, a licence database — can pass and then fail
 minutes apart, so a green observed earlier is not a current green. For those gates, the merge-ready
 claim names the run and its time, and is re-checked at merge.
 
+## A hold on a pull request lives in the forge's own WIP / draft gate — never only in a comment
+
+**A reviewer sees the title, not the thread.** A lock, a hold comment and a "please don't merge yet"
+note all share one weakness: they work only if the merger reads them. Most forges already implement
+that intent as a **server-side gate**: a title prefix (`WIP:`) or a draft flag makes a pull request
+un-mergeable, with the merge button disabled rather than merely discouraged. Where the forge has one,
+**a hold is expressed there**, set by whoever owns the branch and cleared when the work is ready. It
+turns a request into a constraint, and costs one word in a title.
+
+**It fits a rolling integration branch especially well.** Such a branch is *normally* not ready: it
+accumulates commits until a coherent set is green. So mark the PR held at creation and clear the hold
+when the merge-ready claim is posted. Readiness is then explicit and enforced, instead of implied by
+the absence of an objection.
+
+- **It fails safe.** Forget to set it and you get the behaviour without it. Forget to clear it and
+  the worst case is a merge that waits, never a merge that should not have happened. The failure mode
+  is latency, not an unreviewed change.
+- **It is the ONE state that belongs in a title.** Commit counts and CI status go stale on the next
+  push and belong in the per-head claim. A hold marker is different because the forge ACTS on it.
+- **Verify once that the forge enforces it.** Prefix support is configurable and the token varies.
+  Read the pull request's own state back (its draft/mergeable field should flip); a prefix the server
+  does not recognise is just a comment in the title.
+- **It does not replace the merge-ready claim.** The hold answers *"may this be merged at all?"*;
+  the claim answers *"is THIS head green, by which gate?"*. A cleared hold with no claim invites a
+  merge of an unverified head.
+- **A green run on a held PR may have run NOTHING.** Some CI guards its jobs with `if: draft != true`:
+  on a held PR every job is skipped, the run concludes SUCCESS in seconds, and clearing the hold
+  emits no new event, so no real run ever follows. **A merge-ready claim names a run whose JOBS
+  EXECUTED on the claimed head. Read the jobs, not the run's conclusion.** Where CI skips drafts,
+  clear the hold, then trigger a real run: **close and reopen the PR** where the workflow listens
+  to `reopened` (no commit needed; on GitHub-Actions-compatible runners an omitted `types` includes
+  it, so verify once on your forge), **else push** an empty commit. Claim that run. Better still,
+  let the gating jobs run on drafts, so the hold and the evidence stop competing.
+
 ## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
 
 **`git diff main..branch` shows what REPLACING main with the branch would do. A merge does not do
@@ -972,6 +1006,30 @@ reads as settled.
 across harnesses mean the text is not the variable, and "sharpen the wording" is then a fix aimed at
 the wrong layer. Establish in order: did the branch exist, did the record name it, did the record
 agree with the convention, and only then whether the instruction was read.
+
+## In a checkout several seats share, delete only the branches you own — containment never proves abandonment
+
+**A blanket cleanup — `git branch --merged | xargs git branch -d` — deletes branches by a property,
+and in a checkout several seats or worktrees share, the property is true of other seats' work.**
+Measured on a fixture, the two ways it takes a branch that is not on the default branch:
+
+| branch | bare `git branch --merged` (run from a rolling branch) | `--merged origin/main` | `branch-reap` |
+|---|---|---|---|
+| folded onto the rolling branch, **not on main** | **listed** — bare `--merged` compares with **HEAD** | kept | kept, "a human decides" |
+| another seat's hold, created, **no commits yet** | **listed** | **listed** | **would reap** |
+
+So: **never run `--merged` bare** — it answers "is this in the branch I am standing on?", and a rolling
+branch contains work main does not. Compare with the default branch (`--merged origin/<default>`, or a
+tool that does, such as `bin/branch-reap`). **And delete only branches you own, by name.** A branch
+with no commits of its own is contained in everything, so no containment test can tell a fresh hold
+from an abandoned one — only its owner can. Protect other seats' refs explicitly (`branch-reap
+--protect`), or leave cleanup of a shared checkout to the one seat that owns it.
+
+- **Scope:** a checkout only one seat uses can reap what is contained in the default branch — that is
+  what `branch-reap` is for. The hazard is sharing.
+- **For what IS reported as unmerged:** a `+` from `git cherry` means the PATCH is not upstream, never
+  that the CONTENT is not. A fix that landed as a different patch looks unmerged — adjudicate by
+  content before deleting anything.
 
 ## Agent attribution lives in the BODY — the author field is one shared identity
 
@@ -1523,6 +1581,25 @@ explicitly** (`/bin/bash`, never `bash` from `PATH`, which is whatever the test 
 it, so a suite whose fixtures skipped that branch stayed green on the broken form under both shells.
 Where the interpreter is pinned — a container image, a declared runtime — this reduces to testing
 under that one.
+
+**The same holds for the SHELL an agent's command runs in, and there the difference is not age.** An
+agent's shell tool runs an inline command under the user's login shell, which on macOS is usually
+**zsh**, not bash. **zsh does not word-split an unquoted parameter expansion:** `for x in $list`
+iterates **once**, over the whole string, where bash iterates per word. Nothing errors. The loop
+simply runs once, so a probe written for bash returns a confident false negative, or a count of one.
+Calibrated:
+
+| construct | zsh | bash |
+|---|---|---|
+| `l="a b c"; for x in $l` | **1** iteration | 3 |
+| `for x in $(printf "a b c")` | 3 | 3 |
+| `a=(a b c); for x in "${a[@]}"` | 3 | 3 |
+
+So iterate over an **array** or a `while IFS= read -r` loop, never an unquoted variable. Anything
+longer than a line goes in a file whose `#!/usr/bin/env bash` shebang **selects the interpreter** —
+the shebang is the fix, not the quoting. **Scope:** a script run by path executes under its shebang
+and is unaffected; the hazard is inline commands, `eval`, and command snippets pasted into
+instructions, which run under whatever shell the reader has.
 
 ## An edit addressed by REGION is a claim about every line in that region
 
