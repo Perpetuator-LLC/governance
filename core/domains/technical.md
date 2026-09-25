@@ -1047,6 +1047,13 @@ from an abandoned one — only its owner can. Protect other seats' refs explicit
 - **For what IS reported as unmerged:** a `+` from `git cherry` means the PATCH is not upstream, never
   that the CONTENT is not. A fix that landed as a different patch looks unmerged — adjudicate by
   content before deleting anything.
+- **`git cherry` never lists a commit the upstream already contains** — it compares only the
+  commits in `upstream..head`, so a commit merged into the upstream as itself gets neither `+` nor
+  `-`. A detector asking *"is this commit folded into branch X?"* needs `git merge-base
+  --is-ancestor` beside it: ancestry answers *merged as this very commit*, cherry's `-` answers
+  *landed as an equivalent patch*, and cherry's silence alone is no verdict. Calibrated on a
+  fixture: a commit merged into X gives empty cherry output and ancestry true; the control, not
+  merged, gives `+`.
 
 ## Agent attribution lives in the BODY — the author field is one shared identity
 
