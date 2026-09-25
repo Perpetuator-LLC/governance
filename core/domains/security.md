@@ -267,8 +267,20 @@ every exposure becomes a severity debate and a backlog item.
   safe to re-run, and the value never reaches a human or an agent. It is infrastructure: when the
   topology drifts it gets fixed, not worked around, and its header names symptom → root cause →
   knobs so the next failure is diagnosable from the error text alone.
-- **An inventory:** each credential → its consumers, its rotate command and its last-rotated date.
-  Alert on any credential nobody has rotated within its class's cadence.
+- **An inventory, with the row written BEFORE the credential is minted: one row per CREDENTIAL**, not
+  per identity (one bot holding a token in two systems is two rows). The row names where the value is
+  stored (the exact path, "infrastructure state only", or "not stored"), who consumes it, the
+  committed script that mints and rotates it, and its last-rotated date. Alert on any credential
+  nobody has rotated within its class's cadence.
+  - **Recorded in the wrong place is a migration item; unrecorded is authority nobody can find,
+    rotate or revoke.** So conformance is a COLUMN in the inventory, never a precondition for having
+    a row: a credential that already exists when the rule is adopted gets its row that day, as-is.
+  - **Scope:** once credentials are minted by more than one actor or live in more than one system.
+    **Not per instance for short-lived, per-run credentials** (a join key valid for minutes, a CI
+    job's token): record the minting path once, not every value it issues.
+  - **Pair it with a detector** that lists what actually exists on each system and diffs it against
+    the inventory. Without one, the inventory is only as complete as its last manual sweep, and a
+    credential minted outside the process is exactly the one it will never show.
 - **Exercise it on a cadence, like a restore drill.** A rotation path that has never run is broken on
   the day you need it; a routine rotation proves the path and shrinks every exposure window at once.
 - **Post-disclosure cleanup is scripted too:** one command takes a secret *shape* and a list of
