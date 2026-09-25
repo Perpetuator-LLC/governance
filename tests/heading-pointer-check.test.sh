@@ -49,6 +49,45 @@ check "an EMPTY scan refuses (exit 2), never reads as clean" "[ '$rc' = '2' ]"
 rc="$(run --root "$TMP/r" "$TMP/r/docs/missing.md")"
 check "a nonexistent path refuses (exit 2)" "[ '$rc' = '2' ]"
 
+# --- layers (governance#122): an adapter doc points into the RENDERED doc, core + adapter ---------------
+mkdir -p "$TMP/r/core/domains" "$TMP/adp/domains" "$TMP/adp/skills/worker" "$TMP/adp/skills/orchestrator" "$TMP/loose"
+printf '## Core rule\nbody\n' > "$TMP/r/core/domains/ops2.md"
+printf '# core\n## Precedence\n' > "$TMP/r/core/AGENTS.md"
+printf '# adapter\n## Workflow\n' > "$TMP/adp/AGENTS.md"
+printf '## Adapter rule\nbody\n' > "$TMP/adp/domains/ops2.md"
+cat > "$TMP/adp/domains/tech.md" <<'DOC'
+See `governance/ops2.md` → *Core rule* · *Adapter rule*, and `global/CLAUDE.md` → *Workflow* · *Precedence*.
+DOC
+rc="$(run --root "$TMP/r" "$TMP/adp/domains/tech.md")"
+check "an adapter doc's pointers resolve against core + its OWN layer, as rendered (exit 0)" \
+  "[ '$rc' = '0' ] && grep -q '4 pointer(s), 0 dangling' '$TMP/out'"
+echo 'See `governance/ops2.md` → *A rule no layer has*.' > "$TMP/adp/domains/planted.md"
+rc="$(run --root "$TMP/r" "$TMP/adp/domains/planted.md")"
+check "POSITIVE CONTROL: a planted dangling pointer in an adapter doc is still caught as DANGLING" \
+  "[ '$rc' = '1' ] && grep -q 'DANGLING .*A rule no layer has' '$TMP/out'"
+echo 'See `governance/nosuch.md` → *Anything*.' > "$TMP/adp/domains/nodoc.md"
+rc="$(run --root "$TMP/r" "$TMP/adp/domains/nodoc.md")"
+check "a doc in NO layer is NO-SUCH-DOC" "[ '$rc' = '1' ] && grep -q 'NO-SUCH-DOC' '$TMP/out'"
+
+echo 'See `ops2.md` → *Adapter rule*.' > "$TMP/loose/x.md"
+rc="$(run --root "$TMP/r" "$TMP/loose/x.md")"
+check "a file in no known layer: a miss is NOT-IN-THIS-LAYER (a scope limit), never NO-SUCH-DOC" \
+  "[ '$rc' = '1' ] && grep -q 'NOT-IN-THIS-LAYER' '$TMP/out' && ! grep -q 'NO-SUCH-DOC' '$TMP/out'"
+rc="$(run --root "$TMP/r" --layer "$TMP/adp" "$TMP/loose/x.md")"
+check "…and --layer names the layer that renders it (exit 0)" "[ '$rc' = '0' ]"
+
+mkdir -p "$TMP/home/.claude/governance"
+printf '<!-- rendered by governance — DO NOT EDIT: change a layer, then re-render. sha256=%064d -->\n## Core rule\n## Adapter rule\n' 0 > "$TMP/home/.claude/governance/ops2.md"
+printf '<!-- rendered by governance — DO NOT EDIT: change a layer, then re-render. sha256=%064d -->\nSee `governance/ops2.md` → *Adapter rule*. And `governance/ops2.md` → *Gone rule*.\n' 0 > "$TMP/home/.claude/governance/tech.md"
+rc="$(run --root "$TMP/r" "$TMP/home/.claude/governance/tech.md")"
+check "a RENDERED doc resolves against its rendered home, and a real miss there is still DANGLING" \
+  "[ '$rc' = '1' ] && grep -q '2 pointer(s), 1 dangling' '$TMP/out' && grep -q 'DANGLING .*Gone rule' '$TMP/out'"
+
+printf '## Attribution\n' > "$TMP/adp/skills/orchestrator/G.md"
+echo 'Follow `orchestrator/G.md` → *Attribution*.' > "$TMP/adp/skills/worker/SKILL.md"
+rc="$(run --root "$TMP/r" "$TMP/adp/skills/worker/SKILL.md")"
+check "a relative prefix resolves against an ANCESTOR (skills/worker → skills/orchestrator)" "[ '$rc' = '0' ]"
+
 # --- the gate: this tree -------------------------------------------------------------
 rc="$(run --root "$ROOT")"
 check "THIS TREE has no dangling pointer" "[ '$rc' = '0' ]"
