@@ -56,9 +56,12 @@ jobs:
       # deliberately NOT available to pull_request runs (a PR author controls the code that would
       # read it), so on a PR the leg reports NOT CHECKED (exit 3) and the push-to-main run is the
       # one that must pass it. A missing secret on main is a FAILURE, never a clean scan.
+      # ⚠️ The expression is the grant, not the comment above: this line was unconditional, so pull-request
+      # runs received the list (governance#124, measured on run 8779). Push only, until #124 decides whether
+      # CI keeps the list at all. Its multi-line value is still printed unmasked on push: #124.
       - name: Redaction gate (shape leg on every run; private-name leg on main)
         env:
-          GOVERNANCE_PRIVATE_PATTERNS_CONTENT: ${{ secrets.GOVERNANCE_PRIVATE_PATTERNS }}
+          GOVERNANCE_PRIVATE_PATTERNS_CONTENT: ${{ github.event_name == 'push' && secrets.GOVERNANCE_PRIVATE_PATTERNS || '' }}
         run: |
           # The runner executes this under `bash -e`: a bare `cmd; rc=$?` aborts before rc is read.
           set -uo pipefail
