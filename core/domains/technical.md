@@ -1601,6 +1601,19 @@ the shebang is the fix, not the quoting. **Scope:** a script run by path execute
 and is unaffected; the hazard is inline commands, `eval`, and command snippets pasted into
 instructions, which run under whatever shell the reader has.
 
+**…and a command NAME may not be the binary.** An agent's tool shell can define common commands as
+**functions or aliases** (measured: one coding-agent harness wraps `grep` around a bundled search tool
+via its shell snapshot). The wrapper matches the binary on the common path and differs on a rarer flag
+combination. There, `printf 'a\nb\n' | grep -qv '^a$'` returned **1**, where POSIX returns 0, while
+`grep -v`, `grep -q`, `command grep`, `/usr/bin/grep` and `bash -c` all behaved. So a watcher built
+as `… | grep -qv <old>` to notice something new **could never fire**, and a condition that can never
+fire looks exactly like one that has not fired yet.
+
+So in a detector or watcher typed into the tool shell, **call the binary** (`command grep`, or a
+script with a shebang, which starts a fresh interpreter without the wrappers), and **prove the
+condition TRUE on a known positive before arming it.** The positive control is what separates
+"nothing happened" from "the check cannot see it happen".
+
 ## An edit addressed by REGION is a claim about every line in that region
 
 **"Delete lines N to M" asserts that all of them are dead.** Addressing a change by position rather
