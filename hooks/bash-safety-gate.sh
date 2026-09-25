@@ -16,7 +16,9 @@ tool_field() {  # tool_field <json> <.path> [<.path> ...]  -> first non-empty st
   if command -v jq >/dev/null 2>&1; then
     local k v
     for k in "$@"; do
-      v=$(printf '%s' "$json" | jq -r "$k // empty" 2>/dev/null)
+      # `strings`: a non-string value is unreadable, as in the python branch. Without it jq printed an
+      # array as JSON text, so one payload got two verdicts depending on which parser the host had.
+      v=$(printf '%s' "$json" | jq -r "($k | strings) // empty" 2>/dev/null)
       [[ -n "$v" ]] && { printf '%s' "$v"; return 0; }
     done
   elif python3 -c '' >/dev/null 2>&1; then
@@ -51,10 +53,23 @@ fi
 if [[ -z "$input" && -z "${CLAUDE_TOOL_INPUT:-}" ]]; then
   echo "safety gate: no tool input on stdin or in CLAUDE_TOOL_INPUT; nothing was checked" >&2
 fi
-cmd=$(tool_field "$input" .tool_input.command)
+# camelCase is Grok's own spelling. Captured 2026-09-25 it sends both, but its documentation shows only
+# camelCase, and a harness that drops the alias would leave this gate reading nothing.
+cmd=$(tool_field "$input" .tool_input.command .toolInput.command)
 [[ -z "$cmd" && -n "${CLAUDE_TOOL_INPUT:-}" ]] && cmd=$(tool_field "$CLAUDE_TOOL_INPUT" .command)
 
 if [[ -z "$cmd" ]]; then
+  # A payload arrived, it is (or may be) a shell call, and there is no command this gate can read: the
+  # gate is BLIND, not the call empty. Allowing here is how a harness with a different schema gets a
+  # floor that allows everything while looking installed. A payload naming some OTHER tool is not ours.
+  if [[ -n "$input" ]]; then
+    tool=$(tool_field "$input" .tool_name .toolName)
+    case "$tool" in
+      ""|Bash|run_terminal_command)
+        echo "BLOCKED: this safety gate cannot read the command in this ${tool:-unnamed} tool payload; refusing rather than allowing it unchecked." >&2
+        exit 2 ;;
+    esac
+  fi
   exit 0
 fi
 

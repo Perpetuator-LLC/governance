@@ -262,6 +262,58 @@ check "…and no claude output" "[ ! -e '$HG/.claude' ]"
 rc="$(gov check --home "$HG")"
 check "…in sync" "[ '$rc' = '0' ]"
 
+# governance#119: Grok ran with NO floor. Its gates are the merged PreToolUse wiring, re-matched to Grok's
+# tool names (from a captured payload) and pointed at the scripts themselves, since ~/.claude may not exist.
+grok_floor_ok() {
+  python3 - "$HG/.grok/hooks/governance-floor.json" "$C" "$A1" <<'PY2'
+import json, os, sys
+f, core, a1 = sys.argv[1:]
+text = open(f).read()
+groups = json.loads(text)["hooks"]["PreToolUse"]
+got = {g["matcher"]: [h["command"] for h in g["hooks"]] for g in groups}
+assert got == {"run_terminal_command": [f"bash {core}/hooks/gate.sh"],
+               "write|search_replace": [f"bash {a1}/hooks/extra.sh"]}, got
+assert "~/.claude" not in text and "Bash" not in text
+for cmds in got.values():
+    for c in cmds:
+        assert os.path.isfile(c.split()[-1]), c
+PY2
+}
+check "grok: hooks/governance-floor.json wires every PreToolUse gate, Bash → run_terminal_command, Write → write|search_replace, scripts by source path" \
+  "grok_floor_ok"
+rc="$(gov check --home "$HG")"
+check "…check --home names no DEAD HOOK when every script exists" "[ '$rc' = '0' ] && ! grep -q 'DEAD HOOK' '$TMP/stdout'"
+
+A3="$TMP/adapter-unmapped"
+put "$A3/AGENTS.md" "# adapter three"
+put "$A3/settings/claude.json" '{"hooks": {"PreToolUse": [{"matcher": "Read", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/gate.sh"}]}]}}'
+HU="$TMP/home-unmapped"; mkdir -p "$HU"
+rc="$(gov install --home "$HU" --repo "$C" --adapter "$A3" --harness grok)"
+check "grok: a PreToolUse matcher with no known Grok tool name is REFUSED, never dropped" \
+  "[ '$rc' = '2' ] && grep -q 'no known Grok tool name' '$TMP/stderr' && [ -z \"\$(ls -A '$HU')\" ]"
+rc="$(gov install --home "$HU" --repo "$C" --adapter "$A3" --harness claude)"
+check "…the same adapter installs for claude, where the matcher is native (control)" "[ '$rc' = '0' ]"
+A4="$TMP/adapter-missing-hook"
+put "$A4/AGENTS.md" "# adapter four"
+put "$A4/settings/claude.json" '{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/nowhere.sh"}]}]}}'
+HM="$TMP/home-missing-hook"; mkdir -p "$HM"
+rc="$(gov install --home "$HM" --repo "$C" --adapter "$A4" --harness grok)"
+check "grok: a PreToolUse command naming a hook no layer provides is REFUSED (the harness would fail open)" \
+  "[ '$rc' = '2' ] && grep -q 'no layer provides' '$TMP/stderr'"
+
+# check --home: a hook config naming a missing script. Every harness fails OPEN on it, so it is no gate.
+put "$HG/.codex/hooks.json" '{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.codex/hooks/gone.sh"}, {"type": "command", "command": "echo inline"}]}]}}'
+put "$HG/.grok/hooks/other.json" '{"hooks": {"PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "bash '"'$HG/nothere/x.sh'"' log grok"}]}]}}'
+rc="$(gov check --home "$HG")"
+check "check --home reports a DEAD HOOK in codex's hooks.json, which the install does not own" \
+  "[ '$rc' = '1' ] && grep -q 'DEAD HOOK .*hooks.json: PreToolUse\[Bash\] runs ~/.codex/hooks/gone.sh' '$TMP/stdout'"
+check "…and in any ~/.grok/hooks/*.json, quoted absolute path and arguments included" \
+  "grep -q 'DEAD HOOK .*other.json: PreToolUse\[\*\] runs $HG/nothere/x.sh' '$TMP/stdout'"
+check "…an inline command is not a script, and is not reported" "! grep -q 'inline' '$TMP/stdout'"
+put "$HG/.codex/hooks/gone.sh" "exit 0"; put "$HG/nothere/x.sh" "exit 0"
+rc="$(gov check --home "$HG")"
+check "…once the scripts exist, in sync again (control)" "[ '$rc' = '0' ] && ! grep -q 'DEAD HOOK' '$TMP/stdout'"
+
 echo "governance install — THIS repository as core"
 HR="$TMP/home-real"; mkdir -p "$HR"
 rc="$(gov install --home "$HR" --adapter "$A2")"
@@ -281,6 +333,21 @@ check "…every hook the settings wire is installed" \
   "( for h in bash-safety-gate.sh write-safety-gate.sh script-audit.sh post-edit-lint.sh; do [ -L '$HR/.claude/hooks/'\$h ] || exit 1; done )"
 rc="$(gov check --home "$HR")"
 check "…in sync" "[ '$rc' = '0' ]"
+HRG="$TMP/home-real-grok"; mkdir -p "$HRG"
+rc="$(gov install --home "$HRG" --adapter "$A2" --harness grok)"
+real_grok_ok() {
+  python3 - "$HRG/.grok/hooks/governance-floor.json" "$ROOT" <<'PY2'
+import json, sys
+groups = json.load(open(sys.argv[1]))["hooks"]["PreToolUse"]
+wired = {(g["matcher"], h["command"]) for g in groups for h in g["hooks"]}
+root = sys.argv[2]
+for m, hook in (("run_terminal_command", "bash-safety-gate.sh"), ("run_terminal_command", "script-audit.sh"),
+                ("write|search_replace", "write-safety-gate.sh")):
+    assert (m, f"bash {root}/hooks/{hook}") in wired, (m, hook, wired)
+PY2
+}
+check "THIS repository's floor installs for grok: the bash, script-audit and write gates, on Grok's tool names" \
+  "[ '$rc' = '0' ] && real_grok_ok"
 rc="$(python3 "$HR/.claude/bin/governance" render --out "$TMP/via-link.md" >/dev/null 2>&1; echo $?)"
 check "the installed bin/governance finds its own core through the symlink" "[ '$rc' = '0' ]"
 

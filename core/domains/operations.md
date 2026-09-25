@@ -391,6 +391,23 @@ themselves, which are the ones that never needed the rule.
   prove that once, on that harness, and record it. **Handing off to a NEW session loses the same
   holds more slowly** — the old context survives, but nobody reads it — so the walk runs there too.
 
+**The record is dated; the work does not stop at the date.** A continuation record describes the
+session at the moment it was written, and a session that keeps working until the reset leaves that
+later work only in its activity log. So the successor's half of the walk is to **read the
+predecessor's activity after the record's newest stamp**, sorted by time.
+
+- **What that tail created or touched is the successor's own**: a worktree, a branch, a half-written
+  file, a promise made on a ticket. Finish it or carry it.
+- **What the tail did not touch stays unattributed** until its content says whose it is. *Newer than
+  the record* is not ownership wherever other writers share the checkout: another agent, a reviewer,
+  the human. Claiming it by timestamp is how one seat commits another's work in progress.
+- **The predecessor still writes the record last**, or appends a dated update for anything done
+  after it. The successor's read is the backstop, and it can only attribute what the log visibly
+  touched.
+- **Scope:** this needs a readable log of the predecessor's actions. Where the harness keeps none,
+  the record is all there is, and writing it last stops being a courtesy and becomes the only
+  control.
+
 ## North Star — enduring goals that outlive a session
 
 A **North Star** is a human-set, agent-immutable enduring goal that orients work across sessions and
