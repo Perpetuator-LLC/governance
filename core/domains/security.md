@@ -526,6 +526,21 @@ scanner with production credentials, a linter reading an internal allowlist, a t
 customer records — raises the same question and takes the same answer: **move the control to the
 data, never the data to the control.**
 
+⚠️ **If a secret must reach a job anyway, its reach is what the EXPRESSION grants, and its masking
+is by WHOLE VALUE.** Two measured ways the wiring said one thing and did another:
+- **Reach.** A step comment read "deliberately not available to pull-request runs" above an `env:`
+  line that passed the secret unconditionally. Pull-request runs received it. The comment is a claim;
+  the expression is the grant. Gate the expression on the trigger (push only, or a protected
+  environment), then prove it from **a pull-request run's own log**, not from the workflow text.
+- **Masking.** A runner that prints each step's environment masks a secret by finding its whole value
+  on one output line. **A multi-line secret never appears whole on one line, so none of it is
+  masked:** every run printed all 49 lines of the private list, with nothing hidden. Store a secret
+  that must travel as **one line** (base64 of the file, decoded in the step), and prove the mask from
+  the first run's log: the variable shows as masked, and no continuation lines follow it.
+- **Scope:** runners that print step environments, or any log a secret's value can reach. Masking is
+  the last line, not the design: a transformed value (reversed, split, re-encoded) is never masked,
+  which is why moving the control to the data stays the answer above.
+
 ⚠️ **THE LAUNCHING ENVIRONMENT IS PART OF THE DEPLOYMENT — a privacy or egress control must
 OVERWRITE inherited values, never DEFAULT them.** `${VAR:-safe}` means *use the caller's value if
 there is one*: right for a convenience setting, inverted for a control whose whole job is to
