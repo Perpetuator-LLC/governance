@@ -17,7 +17,21 @@ Forms recognised:
   `doc.md` → *Target* · *Another target*
   `doc.md → Target text`            (the whole pointer inside one code span)
 
-Usage:  heading-pointer-check [--json] [--root DIR] [PATHS...]
+LAYERS. An instruction doc is RENDERED from layers, so a pointer from one layer names a doc that
+exists only as their concatenation: an adapter rule pointing at `governance/operations.md` means core's
+operations.md followed by the adapter's. A pointer that does not resolve in isolation is therefore
+retried against the layer set that renders its doc: core (<root>/core), the scanned file's own layer (the
+nearest ancestor holding AGENTS.md, for a file outside <root>), and each --layer. `CLAUDE.md` and
+`AGENTS.md` name each layer's AGENTS.md (a --layer FILE, such as a local layer, joins that set);
+any other doc names each layer's domains/<doc>. A file that is itself RENDERED (it carries the render
+header) resolves against the rendered home it sits in, which already holds every layer.
+
+  NO-SUCH-DOC        the doc is in no layer, or in no layer the scan can see
+  NOT-IN-THIS-LAYER  a miss (no doc, or no target) for a file that belongs to no known layer: the scan
+                     cannot see that file's own layer, so it cannot call the miss real — pass --layer
+  DANGLING           the doc exists, but not the target
+
+Usage:  heading-pointer-check [--json] [--root DIR] [--layer DIR|FILE ...] [PATHS...]
         default PATHS: README.md core adapter-template agents templates
 Exit:   0 all resolved · 1 dangling pointer(s) · 2 cannot run, or no pointers found
 """
@@ -28,6 +42,8 @@ ARROW = r"\s*(?:→|->)\s*"
 FORM_A = re.compile(DOC + r"`?\)?" + ARROW + r"(?P<targets>\*[^*\n]{2,160}\*(?:\s*·\s*\*[^*\n]{2,160}\*)*)")
 FORM_B = re.compile(r"`" + DOC + ARROW + r"(?P<target>[^`\n*]{2,160})`")
 DEFAULT_PATHS = ["README.md", "core", "adapter-template", "agents", "templates"]
+INSTRUCTION_DOCS = {"CLAUDE.md", "AGENTS.md"}
+RENDERED = "<!-- rendered by governance"
 
 
 def norm(text):
@@ -68,6 +84,12 @@ def resolve_doc(root, source, doc, prefix=None):
     cands = []
     if prefix:
         cands += [os.path.join(root, prefix, doc), os.path.join(os.path.dirname(source), prefix, doc)]
+        # A relative prefix may be relative to an ANCESTOR: `orchestrator/X.md` written in
+        # skills/worker/SKILL.md means skills/orchestrator/X.md.
+        d = os.path.dirname(os.path.abspath(source))
+        while d != os.path.dirname(d) and not prefix.startswith("/"):
+            d = os.path.dirname(d)
+            cands.append(os.path.join(d, prefix, doc))
     else:
         cands += [os.path.join(os.path.dirname(source), doc), os.path.join(root, "core", doc),
                   os.path.join(root, doc)]
@@ -80,10 +102,54 @@ def resolve_doc(root, source, doc, prefix=None):
     return hits[0] if len(hits) == 1 else None
 
 
+def is_rendered(path):
+    with open(path, encoding="utf-8", errors="ignore") as fh:
+        return fh.readline().startswith(RENDERED)
+
+
+def own_layer(root, source):
+    """The nearest ancestor of a file OUTSIDE root that holds AGENTS.md: the layer the file belongs to.
+    Files inside root keep today's resolution, whose layer is core."""
+    src = os.path.abspath(source)
+    if src.startswith(root + os.sep):
+        return None
+    d = os.path.dirname(src)
+    while d != os.path.dirname(d):
+        if os.path.isfile(os.path.join(d, "AGENTS.md")):
+            return d
+        d = os.path.dirname(d)
+    return None
+
+
+def layered_docs(root, source, doc, extra):
+    """(files whose concatenation is the doc as rendered, whether the layer set is known)."""
+    if is_rendered(source):
+        d = os.path.dirname(os.path.abspath(source))
+        home = os.path.dirname(d) if os.path.basename(d) == "governance" else d
+        cands = [os.path.join(home, n) for n in ("CLAUDE.md", "AGENTS.md")] if doc in INSTRUCTION_DOCS \
+            else [os.path.join(home, "governance", doc)]
+        return [c for c in cands if os.path.isfile(c)][:1], True
+    mine = own_layer(root, source)
+    layers = [os.path.join(root, "core")] + ([mine] if mine else []) + extra
+    files = []
+    for layer in dict.fromkeys(layers):
+        if os.path.isfile(layer):
+            cand = layer if doc in INSTRUCTION_DOCS else None
+        elif doc in INSTRUCTION_DOCS:
+            cand = os.path.join(layer, "AGENTS.md")
+        else:
+            cand = os.path.join(layer, "domains", doc)
+        if cand and os.path.isfile(cand):
+            files.append(cand)
+    known = bool(mine or extra) or os.path.abspath(source).startswith(root + os.sep)
+    return files, known
+
+
 def main():
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("paths", nargs="*")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--layer", action="append", default=[])
     ap.add_argument("--root", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
     ap.add_argument("-h", "--help", action="store_true")
     a = ap.parse_args()
@@ -93,34 +159,52 @@ def main():
     root = os.path.abspath(a.root)
     paths = a.paths or [os.path.join(root, p) for p in DEFAULT_PATHS]
     files, missing = md_files(paths)
+    missing += [l for l in a.layer if not os.path.exists(l)]
     if missing:
         print("error: no such path: " + ", ".join(missing), file=sys.stderr)
         return 2
+    extra = [os.path.abspath(l) for l in a.layer]
 
     cache, results = {}, []
+
+    def lookup(docpaths, target):
+        heads, body = [], []
+        for dp in docpaths:
+            if dp not in cache:
+                raw = open(dp, encoding="utf-8", errors="ignore").read()
+                cache[dp] = ([norm(h) for h in re.findall(r"^#{1,6}\s+(.*)$", raw, re.M)], norm(raw))
+            heads += cache[dp][0]
+            body.append(cache[dp][1])
+        t = norm(target)
+        return "heading" if any(t in h for h in heads) else ("text" if any(t in b for b in body) else "dangling")
+
     for f in files:
         for line, prefix, doc, target in find_pointers(f):
             docpath = resolve_doc(root, f, doc, prefix)
-            if docpath is None:
-                status = "no-such-doc"
-            else:
-                if docpath not in cache:
-                    raw = open(docpath, encoding="utf-8", errors="ignore").read()
-                    heads = [norm(h) for h in re.findall(r"^#{1,6}\s+(.*)$", raw, re.M)]
-                    cache[docpath] = (heads, norm(raw))
-                heads, body = cache[docpath]
-                t = norm(target)
-                status = "heading" if any(t in h for h in heads) else ("text" if t in body else "dangling")
+            status = lookup([docpath], target) if docpath else None
+            if status in (None, "dangling"):
+                layered, known = layered_docs(root, f, doc, extra)
+                if layered:
+                    status = lookup(layered, target)
+                elif status is None:
+                    status = "no-such-doc"
+                # A file in no known layer cannot see its own layer's copy of the doc, so any miss is a
+                # scope limit, not a verdict: the target may be in exactly the layer it cannot see.
+                if not known and status in ("dangling", "no-such-doc"):
+                    status = "not-in-this-layer"
             results.append({"file": os.path.relpath(f, root), "line": line, "doc": doc,
                             "target": target, "status": status})
 
-    bad = [r for r in results if r["status"] in ("dangling", "no-such-doc")]
+    bad = [r for r in results if r["status"] in ("dangling", "no-such-doc", "not-in-this-layer")]
     if a.json:
         print(json.dumps({"pointers": len(results), "dangling": bad, "files_scanned": len(files)}, indent=2))
     else:
         print(f"heading-pointer-check — {len(files)} file(s), {len(results)} pointer(s), {len(bad)} dangling")
         for r in bad:
             print(f"  {r['status'].upper():12} {r['file']}:{r['line']}  {r['doc']} → *{r['target']}*")
+        if any(r["status"] == "not-in-this-layer" for r in bad):
+            print("  (NOT-IN-THIS-LAYER is a scope limit, not a verdict: pass --layer for the layers that "
+                  "render the doc)")
     if not results:
         print("error: found NO pointers — a pattern that stopped matching reads as clean; refusing.",
               file=sys.stderr)

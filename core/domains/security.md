@@ -267,8 +267,20 @@ every exposure becomes a severity debate and a backlog item.
   safe to re-run, and the value never reaches a human or an agent. It is infrastructure: when the
   topology drifts it gets fixed, not worked around, and its header names symptom → root cause →
   knobs so the next failure is diagnosable from the error text alone.
-- **An inventory:** each credential → its consumers, its rotate command and its last-rotated date.
-  Alert on any credential nobody has rotated within its class's cadence.
+- **An inventory, with the row written BEFORE the credential is minted: one row per CREDENTIAL**, not
+  per identity (one bot holding a token in two systems is two rows). The row names where the value is
+  stored (the exact path, "infrastructure state only", or "not stored"), who consumes it, the
+  committed script that mints and rotates it, and its last-rotated date. Alert on any credential
+  nobody has rotated within its class's cadence.
+  - **Recorded in the wrong place is a migration item; unrecorded is authority nobody can find,
+    rotate or revoke.** So conformance is a COLUMN in the inventory, never a precondition for having
+    a row: a credential that already exists when the rule is adopted gets its row that day, as-is.
+  - **Scope:** once credentials are minted by more than one actor or live in more than one system.
+    **Not per instance for short-lived, per-run credentials** (a join key valid for minutes, a CI
+    job's token): record the minting path once, not every value it issues.
+  - **Pair it with a detector** that lists what actually exists on each system and diffs it against
+    the inventory. Without one, the inventory is only as complete as its last manual sweep, and a
+    credential minted outside the process is exactly the one it will never show.
 - **Exercise it on a cadence, like a restore drill.** A rotation path that has never run is broken on
   the day you need it; a routine rotation proves the path and shrinks every exposure window at once.
 - **Post-disclosure cleanup is scripted too:** one command takes a secret *shape* and a list of
@@ -525,6 +537,21 @@ absence-as-health defect — the other way to make a control worse than nothing.
 scanner with production credentials, a linter reading an internal allowlist, a test needing real
 customer records — raises the same question and takes the same answer: **move the control to the
 data, never the data to the control.**
+
+⚠️ **If a secret must reach a job anyway, its reach is what the EXPRESSION grants, and its masking
+is by WHOLE VALUE.** Two measured ways the wiring said one thing and did another:
+- **Reach.** A step comment read "deliberately not available to pull-request runs" above an `env:`
+  line that passed the secret unconditionally. Pull-request runs received it. The comment is a claim;
+  the expression is the grant. Gate the expression on the trigger (push only, or a protected
+  environment), then prove it from **a pull-request run's own log**, not from the workflow text.
+- **Masking.** A runner that prints each step's environment masks a secret by finding its whole value
+  on one output line. **A multi-line secret never appears whole on one line, so none of it is
+  masked:** every run printed all 49 lines of the private list, with nothing hidden. Store a secret
+  that must travel as **one line** (base64 of the file, decoded in the step), and prove the mask from
+  the first run's log: the variable shows as masked, and no continuation lines follow it.
+- **Scope:** runners that print step environments, or any log a secret's value can reach. Masking is
+  the last line, not the design: a transformed value (reversed, split, re-encoded) is never masked,
+  which is why moving the control to the data stays the answer above.
 
 ⚠️ **THE LAUNCHING ENVIRONMENT IS PART OF THE DEPLOYMENT — a privacy or egress control must
 OVERWRITE inherited values, never DEFAULT them.** `${VAR:-safe}` means *use the caller's value if

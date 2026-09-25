@@ -14,7 +14,10 @@ pass=0; fail=0
 ok()   { echo "  ✅ $1"; pass=$((pass+1)); }
 bad()  { echo "  ❌ $1"; fail=$((fail+1)); }
 check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
-run()  { python3 "$CHECK" "$@" >"$TMP/out" 2>"$TMP/err"; echo $?; }
+# HOME is isolated: the machine's own ~/.governance/private-patterns would otherwise answer for the
+# fixtures, and "no private list ⇒ exit 3" would pass or fail depending on the machine it ran on.
+mkdir -p "$TMP/home"
+run()  { HOME="$TMP/home" env -u GOVERNANCE_PRIVATE_PATTERNS python3 "$CHECK" "$@" >"$TMP/out" 2>"$TMP/err"; echo $?; }
 kind() { grep -q "\"kind\": \"$1\"" "$TMP/out"; }
 
 echo "redaction-check"
@@ -51,6 +54,15 @@ check "no private list ⇒ exit 3, not 0" "[ '$rc' = '3' ]"
 check "no private list ⇒ says SKIPPED" "grep -q 'SKIPPED' '$TMP/out'"
 
 printf 'literal:host-01.corp\n' > "$TMP/private.txt"
+# The machine-local default engages the leg with no flag and no env var, and says where the list came from.
+mkdir -p "$TMP/home/.governance"; ln -s "$TMP/private.txt" "$TMP/home/.governance/private-patterns"
+mkdir -p "$TMP/d"; echo 'the box host-01.corp is full' > "$TMP/d/default.md"
+rc="$(run --enforce "$TMP/d/default.md")"
+check "no flag, no env: ~/.governance/private-patterns engages the name leg (exit 1 on a private name)" \
+  "[ '$rc' = '1' ] && grep -q 'ran — 1 pattern(s) from' '$TMP/out'"
+rc="$(run "$TMP/c/clean.md")"
+check "…and a clean file is CHECKED (exit 0), not SKIPPED" "[ '$rc' = '0' ] && ! grep -q 'SKIPPED' '$TMP/out'"
+rm "$TMP/home/.governance/private-patterns"
 rc="$(run --private-patterns "$TMP/private.txt" "$TMP/c/clean.md")"
 check "with a private list, a clean file exits 0" "[ '$rc' = '0' ]"
 echo 'the box host-01.corp is full; hostX01Xcorp is not it' > "$TMP/c/host.md"

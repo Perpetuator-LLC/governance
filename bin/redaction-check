@@ -21,7 +21,10 @@ patterns that match ordinary English.
 
 Usage:  redaction-check [--enforce] [--private-patterns FILE] [--json] [PATHS...]
         default PATHS: README.md core adapter-template agents templates   (Markdown files only)
-        env GOVERNANCE_PRIVATE_PATTERNS is used when --private-patterns is not given
+        env GOVERNANCE_PRIVATE_PATTERNS is used when --private-patterns is not given, and
+        ~/.governance/private-patterns (a file, or a symlink to the note in the private layer) when
+        neither is: a leg that runs only when someone remembers a flag is a report, not a gate.
+        The machine-local default never exists on a CI runner, so CI stays as it is.
 Exit:   0 clean, or findings without --enforce · 1 findings with --enforce · 2 cannot run ·
         3 the instance-name leg was not checked
 """
@@ -55,6 +58,7 @@ SHAPE_PATTERNS = [
 SKIP_LINE = re.compile(r"^\s*(?:#|//)|^\s{4,}[$>]|^\s*```")
 FENCE_TAG = "redaction-instances"
 DEFAULT_PATHS = ["README.md", "core", "adapter-template", "agents", "templates"]
+DEFAULT_PRIVATE = os.path.join(os.path.expanduser("~"), ".governance", "private-patterns")
 
 
 def fenced_lines(raw, tag=FENCE_TAG):
@@ -150,7 +154,7 @@ def main():
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("paths", nargs="*")
     ap.add_argument("--enforce", action="store_true")
-    ap.add_argument("--private-patterns", default=os.environ.get("GOVERNANCE_PRIVATE_PATTERNS"))
+    ap.add_argument("--private-patterns", default=os.environ.get("GOVERNANCE_PRIVATE_PATTERNS") or None)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")
     a = ap.parse_args()
@@ -170,7 +174,12 @@ def main():
         print("error: no files to scan — refusing to report a clean result on an empty set.", file=sys.stderr)
         return 2
 
-    private, note = load_private(a.private_patterns)
+    source = a.private_patterns
+    if not source and os.path.exists(DEFAULT_PRIVATE):
+        source = DEFAULT_PRIVATE
+    private, note = load_private(source)
+    if private is not None and source == DEFAULT_PRIVATE:
+        note += f" from {DEFAULT_PRIVATE}"
     findings, unreadable = scan(paths, list(SHAPE_PATTERNS) + (private or []))
     if unreadable:
         print(f"refusing to report: {len(unreadable)} of {len(paths)} path(s) could not be read.", file=sys.stderr)
