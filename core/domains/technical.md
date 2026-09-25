@@ -1601,6 +1601,13 @@ the shebang is the fix, not the quoting. **Scope:** a script run by path execute
 and is unaffected; the hazard is inline commands, `eval`, and command snippets pasted into
 instructions, which run under whatever shell the reader has.
 
+**A second zsh trap on the same path: `$var:<letter>` is a MODIFIER, even inside double quotes.**
+`:r`, `:h`, `:t`, `:e` and others edit the value (root, head, tail, extension), so in zsh
+`"$sha:refs/heads/x"` becomes `abc123efs/heads/x`: the `:r` is consumed. bash prints it as written.
+As a `git push origin $sha:refs/heads/x`, that silently targets a mangled ref. `$h:$port` is safe,
+because a colon followed by `$` is not a modifier. **Brace any variable followed by a colon:
+`${sha}:refs/…`, `${host}:${port}`.** It costs nothing and removes the letter-by-letter question.
+
 **…and a command NAME may not be the binary.** An agent's tool shell can define common commands as
 **functions or aliases** (measured: one coding-agent harness wraps `grep` around a bundled search tool
 via its shell snapshot). The wrapper matches the binary on the common path and differs on a rarer flag
