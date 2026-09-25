@@ -266,6 +266,23 @@ prompt: the human is the *authorizer*, not the *reviewer of last resort*.
 - **Hand-over shape:** agent output = a committed/scripted plan step + the planfile path + the
   reviewed summary; human input = enable-key (if gated) → `tofu apply <planfile>` → disable-key.
   Wrap both sides in the repo's script (`plan.sh` / `deploy.sh`) when the root is used more than once.
+- **A planfile is a plaintext secret with a lifetime: write it OUTSIDE the checkout, and delete it
+  when the step that consumes it ends.** A saved plan carries the resolved input variables, including
+  any credential passed as a variable, plus a copy of prior state. Written into the repo tree, it
+  outlives the task and is read by every backup and indexer that sweeps the tree. The delete depends
+  on the flow, and the rule for one flow is wrong for the other:
+  - *One process plans and applies* (a wrapper script): plan into `mktemp -d` (0700) and remove that
+    directory in an `EXIT` trap. **The trap alone is not enough.** It runs on INT, TERM and HUP. A
+    SIGKILL skips it (a harness timeout, `kill -9`, a crash). The out-of-tree directory is what keeps
+    that leftover out of the repo.
+  - *Split flow* (the agent plans, the human applies later): an `EXIT` trap on the plan step would
+    delete the reviewed plan before the human applies it. Plan into a durable private directory, not a
+    temp directory the OS may reap first. The **apply** wrapper deletes the planfile afterwards,
+    **whether apply succeeded or failed**.
+  - **Detect what both miss.** Sweep for planfiles by NAME, flagging any older than a day. Match every
+    name shape in use: `*.tfplan`, bare `tfplan`, and `*.plan` beside `*.tf`. Measured: a sweep for one
+    extension missed 7 of 15. Never open a found planfile to triage it. Name, path and age are enough
+    to ask its owner whether it is still to be applied.
 - **The agent-run plan IS the ceremony pre-flight — it exercises the ENTIRE auth path, backend
   included.** `tofu init`+`plan` touch the state bucket AND the lock table before any provider call;
   a hand-over composed without the agent running them first ships untested auth. Measured: a
