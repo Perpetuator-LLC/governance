@@ -1632,6 +1632,21 @@ As a `git push origin $sha:refs/heads/x`, that silently targets a mangled ref. `
 because a colon followed by `$` is not a modifier. **Brace any variable followed by a colon:
 `${sha}:refs/…`, `${host}:${port}`.** It costs nothing and removes the letter-by-letter question.
 
+**A third: a word that BEGINS with `=` is a command lookup.** zsh replaces `=name` with the path of the
+command `name` (`echo =ls` prints `/bin/ls`), and when no such command exists it is a **fatal error
+that aborts the whole command line**, not just the word. The common casualty is bash's test syntax:
+`[ "$a" == "$b" ]` passes `==` as a word, zsh looks up a command named `=`, and fails. Calibrated:
+
+| inline command | zsh | bash |
+|---|---|---|
+| `if [ a == a ]; then echo yes; else echo no; fi; echo next` | `= not found`, **nothing else runs**, exit 1 | `yes`, `next` |
+| `echo before; echo =====; echo after` | `before`, then `==== not found`; `after` never runs | all three |
+| `[ a = a ]` · `[[ a == a ]]` · `echo "====="` | work | work |
+
+Neither branch of the `if` runs, so a probe reports neither its positive nor its negative. It
+reports an error that reads like a typo. **Use POSIX `=` inside `[ ]`, or `[[ ]]`, and quote any
+argument that starts with `=`.** A separator line of `=` signs is the other way to hit it.
+
 **…and a command NAME may not be the binary.** An agent's tool shell can define common commands as
 **functions or aliases** (measured: one coding-agent harness wraps `grep` around a bundled search tool
 via its shell snapshot). The wrapper matches the binary on the common path and differs on a rarer flag
