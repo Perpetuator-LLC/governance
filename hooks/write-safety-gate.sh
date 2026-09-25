@@ -16,7 +16,9 @@ tool_field() {  # tool_field <json> <.path> [<.path> ...]  -> first non-empty st
   if command -v jq >/dev/null 2>&1; then
     local k v
     for k in "$@"; do
-      v=$(printf '%s' "$json" | jq -r "$k // empty" 2>/dev/null)
+      # `strings`: a non-string value is unreadable, as in the python branch. Without it jq printed an
+      # array as JSON text, so one payload got two verdicts depending on which parser the host had.
+      v=$(printf '%s' "$json" | jq -r "($k | strings) // empty" 2>/dev/null)
       [[ -n "$v" ]] && { printf '%s' "$v"; return 0; }
     done
   elif python3 -c '' >/dev/null 2>&1; then
@@ -51,10 +53,20 @@ fi
 if [[ -z "$input" && -z "${CLAUDE_TOOL_INPUT:-}" ]]; then
   echo "safety gate: no tool input on stdin or in CLAUDE_TOOL_INPUT; nothing was checked" >&2
 fi
-path=$(tool_field "$input" .tool_input.file_path .tool_input.path)
+path=$(tool_field "$input" .tool_input.file_path .tool_input.path .toolInput.file_path .toolInput.path)
 [[ -z "$path" && -n "${CLAUDE_TOOL_INPUT:-}" ]] && path=$(tool_field "$CLAUDE_TOOL_INPUT" .file_path .path)
 
 if [[ -z "$path" ]]; then
+  # A write payload with no path this gate can read is a BLIND gate, not a pathless write: refuse.
+  # `write` and `search_replace` are Grok's names for Write and Edit (captured 2026-09-25).
+  if [[ -n "$input" ]]; then
+    tool=$(tool_field "$input" .tool_name .toolName)
+    case "$tool" in
+      ""|Write|Edit|MultiEdit|write|search_replace)
+        echo "BLOCKED: this safety gate cannot read the file path in this ${tool:-unnamed} tool payload; refusing rather than allowing it unchecked." >&2
+        exit 2 ;;
+    esac
+  fi
   exit 0
 fi
 

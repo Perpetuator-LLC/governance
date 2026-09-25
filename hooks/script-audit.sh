@@ -33,7 +33,9 @@ tool_field() {  # tool_field <json> <.path> [<.path> ...]  -> first non-empty st
   if command -v jq >/dev/null 2>&1; then
     local k v
     for k in "$@"; do
-      v=$(printf '%s' "$json" | jq -r "$k // empty" 2>/dev/null)
+      # `strings`: a non-string value is unreadable, as in the python branch. Without it jq printed an
+      # array as JSON text, so one payload got two verdicts depending on which parser the host had.
+      v=$(printf '%s' "$json" | jq -r "($k | strings) // empty" 2>/dev/null)
       [[ -n "$v" ]] && { printf '%s' "$v"; return 0; }
     done
   elif python3 -c '' >/dev/null 2>&1; then
@@ -57,7 +59,7 @@ is_json() {
   if command -v jq >/dev/null 2>&1; then printf '%s' "$1" | jq -e . >/dev/null 2>&1
   else printf '%s' "$1" | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null 2>&1; fi
 }
-cmd=$(tool_field "$input" .tool_input.command)
+cmd=$(tool_field "$input" .tool_input.command .toolInput.command)
 [[ -z "$cmd" && -n "${CLAUDE_TOOL_INPUT:-}" ]] && cmd=$(tool_field "$CLAUDE_TOOL_INPUT" .command)
 [[ -z "$cmd" ]] && exit 0
 

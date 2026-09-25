@@ -16,7 +16,9 @@ tool_field() {  # tool_field <json> <.path> [<.path> ...]  -> first non-empty st
   if command -v jq >/dev/null 2>&1; then
     local k v
     for k in "$@"; do
-      v=$(printf '%s' "$json" | jq -r "$k // empty" 2>/dev/null)
+      # `strings`: a non-string value is unreadable, as in the python branch. Without it jq printed an
+      # array as JSON text, so one payload got two verdicts depending on which parser the host had.
+      v=$(printf '%s' "$json" | jq -r "($k | strings) // empty" 2>/dev/null)
       [[ -n "$v" ]] && { printf '%s' "$v"; return 0; }
     done
   elif python3 -c '' >/dev/null 2>&1; then

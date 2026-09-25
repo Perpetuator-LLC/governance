@@ -39,7 +39,10 @@ INSTALL builds a harness home from CORE (--repo, default this repository) and ea
                           list or object but never replace it, so core deny rules and hook wiring
                           survive every adapter; disableAllHooks is refused outright.
 --harness codex renders <home>/.codex/AGENTS.md; --harness grok renders
-<home>/.grok/rules/00-governance.md and assembles <home>/.grok/skills/ like the claude skills.
+<home>/.grok/rules/00-governance.md, assembles <home>/.grok/skills/ like the claude skills, and renders
+<home>/.grok/hooks/governance-floor.json: the PreToolUse gates of the merged settings, matchers mapped to
+Grok's tool names, commands pointing at the hook scripts themselves. An unmappable matcher, or a command
+naming a hook no layer provides, is refused: a floor gate is never dropped silently.
 The harness list is declarative: a re-install without a harness removes that harness's outputs.
 
 UNDO FIRST. Before anything is touched, the prior state of every path the install will change — missing,
@@ -56,6 +59,8 @@ CHECK --home re-derives the install from the recorded invocation and reports eac
   EDITED BY HAND   a rendered file differs from what was installed      → move the edit into a layer
   LINK MOVED       a symlink points somewhere else                       → re-install
   MISSING          an output is gone                                     → re-install
+  DEAD HOOK        a hook config under the home (claude, codex or grok) names a script that does not
+                   exist; every harness fails OPEN on a hook it cannot run → fix the config or the script
 
 DISCOVER lists, read-only, the git repositories and vaults (directories holding .obsidian/ or a root
 GOVERNANCE.md) under --root and which directories look like adapters (AGENTS.md plus any of skills/
@@ -91,7 +96,7 @@ Exit: 0 done / in sync · 1 drift, or reconcile or scaffold refused an item · 2
       or source is missing, the output is absent or has no header, the install was refused, there is
       nothing to restore, there is no manifest, or there is no such template)
 """
-import argparse, datetime, hashlib, json, os, re, shutil, sys
+import argparse, datetime, hashlib, json, os, re, shlex, shutil, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))  # realpath: bin/ is installed as a symlink
 HEADER = "<!-- rendered by governance — DO NOT EDIT: change a layer, then re-render. sha256={} -->\n"
@@ -106,6 +111,13 @@ GOV_MD, CLAUDE_MD, IMPORT_LINE = "GOVERNANCE.md", "CLAUDE.md", "@GOVERNANCE.md"
 MARK_BEGIN, MARK_END = "<!-- governance:begin -->", "<!-- governance:end -->"
 HARNESSES = ("claude", "codex", "grok")
 LINKED_PARTS = ("skills", "hooks", "agents", "bin")
+# Grok's names for the tools a Claude matcher names: its documented alias table, checked against a captured
+# payload (governance#119). Grok aliases `Bash` itself, but its file-CREATE tool is `write`, lowercase and
+# absent from that table, so a `Write` matcher left to the alias would miss every new file. Map explicitly.
+GROK_TOOLS = {"Bash": ("run_terminal_command",), "Write": ("write", "search_replace"),
+              "Edit": ("search_replace",), "MultiEdit": ("search_replace",)}
+GROK_FLOOR = ".grok/hooks/governance-floor.json"
+CLAUDE_HOOK_REF = re.compile(r"~/\.claude/hooks/([A-Za-z0-9._-]+)")
 DISCOVER_SKIP = {"node_modules", "__pycache__", "venv"}
 
 
@@ -293,7 +305,42 @@ def merged_settings(plan, layers):
         merged = merge(merged, data, "", name)
     if merged.get("disableAllHooks"):
         raise Refusal("the merged settings set disableAllHooks, which switches off the floor hooks — no layer may")
-    return json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
+    return merged
+
+
+def dump_json(data):
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
+def grok_floor(settings, hooks):
+    """The merged settings' PreToolUse gates, wired for Grok, or None when there are none.
+
+    Only PreToolUse: that is the floor. The other events carry Claude-specific behaviour (a SessionStart
+    hook that writes .claude/ files) that has never been run on Grok. Each command names the hook
+    script by its source path, because ~/.claude/hooks exists only when claude is installed too."""
+    groups = []
+    for g in (settings.get("hooks") or {}).get("PreToolUse") or []:
+        names = []
+        for m in (g.get("matcher") or "").split("|"):
+            if not m:
+                continue
+            if m not in GROK_TOOLS:
+                raise Refusal(f"PreToolUse matcher `{m}` has no known Grok tool name, so its gate cannot be wired "
+                              f"for grok; add the name to GROK_TOOLS from a captured payload, never a guess")
+            names += [n for n in GROK_TOOLS[m] if n not in names]
+        handlers = []
+        for h in g.get("hooks") or []:
+            cmd = h.get("command", "")
+            for ref in CLAUDE_HOOK_REF.findall(cmd):
+                if ref not in hooks:
+                    raise Refusal(f"PreToolUse command `{cmd}` names hooks/{ref}, which no layer provides; "
+                                  f"a harness fails open on a missing hook script")
+            cmd = CLAUDE_HOOK_REF.sub(lambda mo: shlex.quote(hooks[mo.group(1)]), cmd)
+            if "~/.claude" in cmd:
+                raise Refusal(f"PreToolUse command `{cmd}` reaches into ~/.claude, which grok does not own")
+            handlers.append(dict(h, command=cmd))
+        groups.append({"matcher": "|".join(names), "hooks": handlers})
+    return {"hooks": {"PreToolUse": groups}} if groups else None
 
 
 def build_plan(repo, adapters, local, harnesses):
@@ -320,9 +367,10 @@ def build_plan(repo, adapters, local, harnesses):
     if len(providers) > 1:
         raise Refusal("scheduled-tasks is provided by more than one adapter ("
                       + ", ".join(f"{n}: {p}" for n, p in providers) + ") — at most one may provide it")
-    grok_parts = ("skills", "agents")
+    grok_parts = ("skills", "agents", "hooks")
     parts = LINKED_PARTS if "claude" in harnesses else grok_parts if "grok" in harnesses else ()
     links = {part: link_sources(layers, part, plan.notes) for part in parts}
+    settings = merged_settings(plan, layers) if {"claude", "grok"} & set(harnesses) else {}
 
     for h in harnesses:
         if h == "claude":
@@ -339,7 +387,7 @@ def build_plan(repo, adapters, local, harnesses):
                     plan.link(f".claude/{part}/{entry}", src)
             if providers:
                 plan.link(".claude/scheduled-tasks", providers[0][1])
-            plan.file(".claude/settings.json", merged_settings(plan, layers))
+            plan.file(".claude/settings.json", dump_json(settings))
         elif h == "codex":
             plan.dir(".codex")
             plan.file(".codex/AGENTS.md", instruction)
@@ -370,6 +418,10 @@ def build_plan(repo, adapters, local, harnesses):
                 plan.dir(".grok/agents")
                 for entry, src in sorted(grok_agents.items()):
                     plan.link(f".grok/agents/{entry}", src)
+            floor = grok_floor(settings, links["hooks"])
+            if floor:
+                plan.dir(".grok/hooks")
+                plan.file(GROK_FLOOR, dump_json(floor))
     return plan
 
 
@@ -732,7 +784,53 @@ def check_home(home):
         if rel not in recorded:
             drift += 1
             lines.append(f"LAYERS CHANGED  {os.path.join(home, rel)} is produced by the layers but not installed — re-install")
-    return lines, drift, None
+    dead = dead_hooks(home)
+    return lines + dead, drift + len(dead), None
+
+
+HOOK_INTERPRETERS = {"bash", "sh", "zsh", "python", "python3", "node"}
+
+
+def dead_hooks(home):
+    """A line per hook command, in any harness's hook config under HOME, whose script does not exist.
+
+    Every harness fails OPEN on a hook it cannot run, so a floor gate naming a missing file is no gate,
+    and nothing else says so: the config parses, the harness starts, every call is allowed. Checked for
+    configs this install does not own too (codex's hooks.json), because that is where it was found."""
+    grok = os.path.join(home, ".grok", "hooks")
+    configs = [".claude/settings.json", ".codex/hooks.json"] + (
+        sorted(f".grok/hooks/{f}" for f in os.listdir(grok) if f.endswith(".json")) if os.path.isdir(grok) else [])
+    out = []
+    for rel in configs:
+        p = os.path.join(home, rel)
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except ValueError:
+            out.append(f"DEAD HOOK  {p} is not valid JSON, so none of its hooks load")
+            continue
+        for event, groups in ((data.get("hooks") or {}) if isinstance(data, dict) else {}).items():
+            for g in groups if isinstance(groups, list) else []:
+                for h in (g.get("hooks") or []) if isinstance(g, dict) else []:
+                    cmd = h.get("command") if isinstance(h, dict) else None
+                    try:
+                        toks = shlex.split(cmd) if isinstance(cmd, str) else []
+                    except ValueError:
+                        continue
+                    # The script an interpreter runs, else the program itself when it is a path.
+                    script = toks[1] if len(toks) > 1 and os.path.basename(toks[0]) in HOOK_INTERPRETERS else \
+                        toks[0] if toks else None
+                    if script and script.startswith("$HOME/"):
+                        script = "~/" + script[6:]
+                    if not script or "/" not in script or "$" in script:   # inline, or unresolvable here
+                        continue
+                    path = os.path.join(home, script[2:]) if script.startswith("~/") else script
+                    if not os.path.exists(path):
+                        out.append(f"DEAD HOOK  {p}: {event}[{g.get('matcher') or '*'}] runs {script}, which does "
+                                   f"not exist; the harness fails open on it — fix the config or install the script")
+    return out
 
 
 def cmd_check_home(a):
