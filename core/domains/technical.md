@@ -1889,6 +1889,53 @@ Sibling of *a name or description that asserts what the code does not check*: th
 with nothing enforcing it; here, the enforcement exists and points at the wrong reference. Both
 produce an artifact that is confidently, checkably wrong.
 
+### The constructive half: the standard way to test a calculation is a SCENARIO with a hand-derived answer
+
+The rule above says where an expected value must NOT come from. This is where it should come from,
+and it is the default process for any code whose output is a computed result: a balance, a schedule,
+a price, a count, a decision taken over a sequence of inputs.
+
+1. **Construct an input whose right answer follows from the requirement by arithmetic a reviewer can
+   check.** Choose shapes that make the answer obvious: a flat input where nothing may change, a
+   monotone input where a trigger must never fire, a steady decline where it must fire every step, or
+   a shape with a closed-form result.
+2. **Write the expected outcome in words first**, where a reviewer reads it (the test's docstring or
+   name): *"in a market that never moves, every plan ends where it started."* If the words are wrong,
+   the scenario is wrong, and a reviewer can see it without running anything.
+3. **Compute the expected value inside the test, from the inputs the scenario fixed, by a different
+   route from the code:** a closed form, a hand-listed sequence, or a count. Never call the code under
+   test to get it. Never read an intermediate back from its output either (a fill price, a chosen
+   date, a selected row). That checks the code against itself on exactly the step it may have got
+   wrong. If an intermediate matters, derive it independently and assert it as well.
+4. **Only then run the code and require it to match.**
+
+**When the scenario and the code disagree, either one can be wrong. Re-derive from the stated rule
+before changing either.** Measured: six scenarios were written for an order-execution simulator, and
+one failed on its first run. The *expectation* was wrong: it assumed an order filled at the price when
+it was decided, but the stated rule fills it at the next bar's open. The code was right. The
+correction went to the words and the arithmetic. Copying the code's number into the test would have
+turned the scenario into the lock this section warns about. The same scenario first read one
+intermediate (the fill prices) back from the code's log. Deriving those prices by hand was what made
+it a check of the execution rule rather than a restatement of it.
+
+**Scope: where scenarios are not enough on their own.**
+
+- **Simple inputs skip branches that real data takes.** A flat input never reaches the error path, the
+  settlement path or the capacity limit. Choose each scenario to drive a NAMED branch, and list the
+  branches that no scenario reaches. That list is part of the test's claim.
+- **Some behaviour has no closed form**, such as a result accumulated over years of real data, so no
+  hand-derived number exists for it. For that behaviour, assert invariants that must hold on every
+  step (conservation of value; no effect before its cause; no read of data from after the decision)
+  and keep a change-detector that is labelled as one.
+- **The process assumes the code is deterministic and its inputs can be injected.** Where they cannot
+  (a live service, the wall clock, randomness), inject a fake or a seed first. A scenario you cannot
+  construct is a finding about the missing seam, never a reason to skip the test.
+
+**Pair it with a picture of what the code DID, taken from its own record.** For code that acts over
+time, render a run with every action marked from the system's own event log. Never re-derive the marks
+from what the logic intended. Then read a sample against that log. This catches what no one thought to
+construct, and a person can check it at a glance.
+
 ## A fix can invalidate the DIAGNOSTIC that found the bug
 
 **When a fix changes a mechanism's TYPE rather than its value, every detector written against the
