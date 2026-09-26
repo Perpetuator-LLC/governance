@@ -2163,6 +2163,29 @@ Litmus: if the fix would have to be repeated on the next device, it's at the wro
 Measured: an internal DNS name resolved on the LAN but died on the VPN; the answer was VPN
 split-DNS + DHCP, and the hand-made per-machine resolver file became removable.
 
+## A declared-state list that SHRINKS is a finding, not a diff
+
+**A list that declares what must be true (permission rules, scheduled jobs, allowed hosts, installed
+components) is compared against its reviewed source, and any SHRINK is reported loudly.** Tools that
+round-trip such a file re-emit only the entries they model, so a rewrite drops an entry with no error,
+and an absent deny rule denies nothing. Measured twice: a settings file lost its one deny rule whose
+syntax the rewriting parser mis-read; later, a scheduled job's definition lost every key the writer
+did not model.
+
+⚠️ **It binds hardest where the list is one side of a reconcile.** The second case did not make the
+job malformed: it removed the job from the declared set entirely, and the reconcile, which diffs
+declared against actual, had nothing left to report. An item deleted from the declaration is not
+drift to a tool that only compares the items still declared. **So a reconcile asserts the SIZE and
+MEMBERSHIP of its declared set** (against the reviewed source, or a recorded count), not only the
+differences within it.
+
+- **Detect, then restore.** Silently restoring from the source repairs the file and destroys the
+  evidence that something keeps rewriting it. Report the loss with what dropped, then restore.
+- **The detector must survive the file's type changing.** A check written as *"compare the file with
+  HEAD of the repo it links into"* goes silent the day the file stops being a link. Measured: the
+  shrink detector for a settings file stopped running when the file became rendered, and nothing said
+  so. Re-prove the detector (a known shrink → a finding) whenever the file's delivery changes.
+
 ## Configure the GENERATOR, never the artifact it generates
 
 **A service manager that generates its unit file will regenerate it, and a hand-edit disappears with
