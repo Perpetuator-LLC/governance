@@ -1532,16 +1532,34 @@ accident — so the defect cannot appear in them. Two properties that do it:
   mutation landing **between** the two reads exposes it (a row silently never returned), while the
   identical mutation applied **before** or **after** them passes **20/20 against the same broken
   code**. Nothing in the fixture looks wrong, because nothing is.
+- **Entry-blocked — a stub for a PRECONDITION fails, so the code under test is never reached.** Stubs
+  that catch unwanted calls should fail loudly; a stub that gates ENTRY (a lock, an auth probe, an
+  "already running?" check) must succeed, or the code takes its early exit and every negative
+  assertion after it ("no side effect ran") is true of code that never ran. Measured: every external
+  command stubbed to fail, the lock included, sent a script down its "another run holds the lock"
+  exit in its first lines, and every "nothing happened" assertion passed. **So each case first
+  asserts that it REACHED the decision point**, with one positive marker, before any negative
+  assertion is believed. *Scope:* when the precondition's failure is itself the case under test, that
+  stub fails, and the marker is the early exit.
+- **Perturbed unlike the real mechanism — same visible result, different MECHANICS.** A fixture that
+  stands in for something that mutates the system under test (replacing a file, restarting a process,
+  rotating a credential, swapping a link) must reproduce how the mutation happens, not only what it
+  leaves behind. Measured: production replaces a file by rename, so a process still executing from it
+  keeps its original inode; the fixture copied in place, rewriting the same inode, and the running
+  process read past the new end and exited 0 mid-run. The suite failed at the wrong assertion,
+  describing a defect that does not exist, while the path under test was never entered. Ask: *what
+  does the real mechanism do that my stand-in does differently, and could anything under test observe
+  it?* An open file handle, a socket or a cached descriptor usually can.
 
 **One sentence subsumes every shape above: state the property of the REAL input that makes the defect
 appear, and show the fixture has it.** Both halves carry weight. Naming the property is what stops
 you reaching for a plausible extreme instead — and *"make it maximally different"* is exactly the
 instinct that produces an unfalsifiable test, because extremity is not the same as exercising the
-mechanism. Showing the fixture has the property is what catches the four failures above, each of
-which was a fixture nobody had checked against the property it was supposed to embody.
+mechanism. Showing the fixture has the property is what catches the failures above, each of which
+was a fixture nobody had checked against the property it was supposed to embody.
 
 ⚠️ **The shapes are not a checklist to run down.** They are what "lacks the property" happened to
-look like four times; the next one will look like something else. The property is the invariant, and
+look like so far; the next one will look like something else. The property is the invariant, and
 it has to be written down before the fixture is built, because afterwards every fixture looks like it
 has it.
 
@@ -1549,7 +1567,10 @@ has it.
 green one.** Core already requires a detector to be proven against a known-bad control; this is the
 same requirement aimed at the fixture rather than the detector, and it is the one that is routinely
 skipped — because a green test looks like success, and a fixture that cannot fail looks exactly like
-a fixture that passes.
+a fixture that passes. **Read the control per ASSERTION, not per suite:** run the suite against the
+known-bad version and the fixed one, and every assertion that does not flip between them is not about
+your change. Measured: 5 of 10 flipped; the other 5 were passing for structural reasons, including
+the entry-blocked case above.
 
 ### The same instrument failure in a STATIC CHECKER: validating FORM cannot see a defect in MEANING
 
