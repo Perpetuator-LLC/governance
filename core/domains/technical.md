@@ -691,6 +691,29 @@ there. **Keep the plain name in the forge; prefix the local directory with the o
 (`org-a-secrets`, `org-b-secrets`). Never infer which organisation a checkout belongs to from its
 directory name: read its remote.
 
+## Environment facts are STATED in a registry, never inferred
+
+**Which systems exist, which hosts are production, and which merges deploy are facts to look up,
+never to infer.** An inference from one repository's history, a session's transcripts, or a naming
+pattern returns confident wrong answers, and its errors fall in the unsafe direction: *"cloud
+providers: none"* reads as *"nothing here to protect"*.
+
+- **Production hosts are listed BY NAME.** A heuristic such as "hosts whose name contains `prod`" is
+  not a safety control. It is a list of the hosts that happen to be named conveniently, and it
+  silently exempts every production host that is not. Measured: an automated environment scan
+  concluded "no cloud providers, no deploy targets" for a machine managing several, and its hostname
+  heuristic missed the largest production host.
+- **Write the facts machine-readably, in one authoritative place:** providers, production hosts,
+  and which merges deploy. Where a pull-based deployer watches a branch, **a merge is the deploy**,
+  so release-scope rules apply at merge time. Anything that makes a safety decision (a classifier, a
+  permission rule, an agent choosing whether a command is risky) reads that place.
+- **A roster assembled from memory has the same defect one layer up.** Count members from the
+  registry rather than recalling them; a hand list that drops one entry is indistinguishable from a
+  complete one.
+- **Scope:** any decision that depends on *"is this production?"* or *"what systems exist?"*. The
+  registry is only as good as the process that writes it, so provisioning writes the row before it
+  creates the resource.
+
 ## Deploys & health — pull-based
 
 - **Boxes deploy themselves** (webhook, HMAC-verified, + catch-up timer gated on CI-green
