@@ -286,6 +286,23 @@ paraphrase, which reintroduces the hedge property 1 exists to forbid.
 Same family as refusing an unmeasured rationale below: both are about a document whose confidence
 exceeds its evidence, and in both the damage lands on whoever reads it next.
 
+## A decision is made only when it lands in the field its consumers read
+
+**A triage, re-prioritisation, retirement or change of direction recorded only in a comment, summary
+or report, while the label, status field, registry row or title that downstream readers query still
+says the old thing, has not been made.** Consumers read the field, not the thread. Measured: a
+complete triage classified nine tickets as mislabelled, with a rationale for each, and changed
+nothing: a day later all nine still carried the old priority, a migration gate was computed from the
+old labels, and every "list the queue and work it" reader followed the labels.
+
+- **Execute in the same act as recording:** move the labels, edit the field, update the row. Then
+  verify by re-running the **consumer's own query** after the writes, not by re-reading your comment.
+- **The comment is the rationale, never the mechanism.**
+- **Where two registries share a word with different vocabularies, name the enum at the schema.** A
+  value that is meaningful in prose but absent from the enum consumers string-match is a silent miss:
+  a status written in one registry's vocabulary into another registry's field makes the row invisible
+  to every sweep that matches the correct values.
+
 ## Refuse to write a RATIONALE you have not measured, even when the CONCLUSION is right
 
 **An unmeasured rationale is a durable liability in a way an unmeasured conclusion is not — because
@@ -336,6 +353,19 @@ draft that restates a mechanism **cites the correction it post-dates**; where th
 such citation, that is the signal to re-read the source rather than the memory. Measured: a filing
 written three weeks after a mechanism had been retracted *three separate times* led with that
 mechanism, and nothing in the authoring caught it.
+
+## Fixing an instance of a class: check your own diff against the class first
+
+**Working on a defect class does not protect you from committing it, and may be when you are least
+protected**, because attention is on the instance and the class is one level up. Measured: four
+sessions in one day, unaware of each other, each reproduced the defect they were fixing, for example
+a fix for a dead hard-coded path that introduced a new hard-coded path. Three were caught by their
+authors, one only by luck.
+
+- **Before committing, name the class in one sentence, then grep your own diff for it**, as an act,
+  not an intention. This is the route-before-write reflex pointed at the diff instead of at the canon.
+- **Where a working precedent exists in the repository, open it.** A precedent is a control; your own
+  draft is not.
 
 ## Routines are infrastructure — they migrate, or they silently die
 

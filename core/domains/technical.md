@@ -1179,6 +1179,22 @@ pre-pass's number **as if it were the model's** — a silent regex-only score ma
 score, which is **absence-as-health in eval flavor**. Assert non-empty output per item and fail the
 run; never let a missing answer be scored as an answer.
 
+## An "exactly once per period" writer marks the no-op path too; a dry run emits no real side effects
+
+**A job that must act at most once per period records that the period was handled on EVERY path that
+completes it, including "nothing to do".** A marker written only when there was work leaves an idle
+period unmarked, and the next invocation in the same period runs the work again, the double send
+or double charge the marker exists to prevent. Write the marker on the no-op path, and test the
+second invocation in the same period on both paths.
+
+**A dry run must not produce the real run's side effects:** no messages sent, no markers written, no
+external state touched. A rehearsal that emits the real effect is the thing it was rehearsing, and
+when it also writes the period marker, the real run that follows is skipped as already done. Keep
+the effects behind one switch, and assert in a test that a dry run leaves every sink untouched.
+
+- **Scope:** writers with at-most-once semantics per period or per key (digests, invoices,
+  notifications, scheduled reports). An idempotent writer that may safely repeat needs neither half.
+
 ## A test double must FAIL the way the real collaborator fails
 
 **A double that RETURNS an error where production RAISES one — or returns a shape production never
@@ -1246,6 +1262,26 @@ your mistakes.
 
 Same principle as *a probe that cannot distinguish the thing from a REFERENCE to it, or its own
 FAILURE from a negative, is not evidence* — one layer down, in the suite rather than the probe.
+
+## A single red is a HYPOTHESIS, not a baseline
+
+**Re-run before publishing any failure as the expected state.** A published wrong baseline tells the
+next reader to expect that failure and move past it, and it survives in hand-off records long after
+the flake that produced it. Measured: one full-suite run under heavy machine load showed four failed
+assertions; "nineteen of twenty is the baseline" went to a PR body, a hand-off and the human, from
+that one observation. It was a flake.
+
+Two shapes produce flakes that read as real failures (or real passes). Audit a suite for both:
+- **A fixed sleep standing in for "the subprocess is ready".** It holds on an idle machine and fails
+  exactly when the machine is busy. Wait on the artifact itself (a file, a port, a log line) with a
+  named timeout that says what it waited for.
+- **A negative assertion with no positive control.** *"X must not appear"* is satisfied by an
+  instrument that never ran; an empty log passes it. Pair every negative with a marker proving the
+  instrument ran and reached the point where X would have appeared.
+
+**Reproduce under the condition that caused it** (loop the suite under deliberate load), and capture
+the failing output, not only the exit code, so a recurrence names its own cause. **Do not chase an
+unreproduced flake speculatively:** record it with its output and move on until it recurs.
 
 ## REACHABILITY IS A LADDER — each rung proves only its own layer
 
@@ -2176,6 +2212,29 @@ Litmus: if the fix would have to be repeated on the next device, it's at the wro
 Measured: an internal DNS name resolved on the LAN but died on the VPN; the answer was VPN
 split-DNS + DHCP, and the hand-made per-machine resolver file became removable.
 
+## A declared-state list that SHRINKS is a finding, not a diff
+
+**A list that declares what must be true (permission rules, scheduled jobs, allowed hosts, installed
+components) is compared against its reviewed source, and any SHRINK is reported loudly.** Tools that
+round-trip such a file re-emit only the entries they model, so a rewrite drops an entry with no error,
+and an absent deny rule denies nothing. Measured twice: a settings file lost its one deny rule whose
+syntax the rewriting parser mis-read; later, a scheduled job's definition lost every key the writer
+did not model.
+
+⚠️ **It binds hardest where the list is one side of a reconcile.** The second case did not make the
+job malformed: it removed the job from the declared set entirely, and the reconcile, which diffs
+declared against actual, had nothing left to report. An item deleted from the declaration is not
+drift to a tool that only compares the items still declared. **So a reconcile asserts the SIZE and
+MEMBERSHIP of its declared set** (against the reviewed source, or a recorded count), not only the
+differences within it.
+
+- **Detect, then restore.** Silently restoring from the source repairs the file and destroys the
+  evidence that something keeps rewriting it. Report the loss with what dropped, then restore.
+- **The detector must survive the file's type changing.** A check written as *"compare the file with
+  HEAD of the repo it links into"* goes silent the day the file stops being a link. Measured: the
+  shrink detector for a settings file stopped running when the file became rendered, and nothing said
+  so. Re-prove the detector (a known shrink → a finding) whenever the file's delivery changes.
+
 ## Configure the GENERATOR, never the artifact it generates
 
 **A service manager that generates its unit file will regenerate it, and a hand-edit disappears with
@@ -2293,6 +2352,24 @@ harvest when it is not. On a long extraction you should expect to meet several o
   total is what catches silently-missing rows; without it, an export that skipped a whole class of
   items still looks finished.
 - **A tool-call timeout does not mean the work stopped.** Poll the store; do not restart the loop.
+
+## Reading a file at a ref must not WRITE the working tree
+
+**To read content at a ref, use `git show <ref>:<path>` or `git cat-file`. Never
+`git checkout <ref> -- <pathspec>`:** that command overwrites the working tree and the index from the
+ref, and with `-- .` it does so for the whole repository. It reads as a read ("check out main's
+version of these files"), it is one word from the command that is one, and it is silent both when it
+does nothing and when it destroys uncommitted work.
+
+- **For many files at a ref**, read them with `git show`, or materialise the tree somewhere
+  disposable (`git worktree add --detach <scratch>`, or `git archive <ref> | tar -x -C <tmpdir>`).
+  Never into a live checkout, and above all never into one another agent or person works in.
+- **A survey command never redirects its errors away.** A read has nothing to hide; silencing the
+  errors of a command that might write silences exactly the warning that matters.
+- **Mirror of the audit rule below:** that one says *read from the ref, not the working tree*. This
+  one says the reading must not write. Following the first while typing `checkout -- .` still
+  destroys the checkout. Measured: a nightly survey ran `checkout origin/main -- .` against a peer's
+  checkout; it did no harm only because that checkout happened to be clean and already at the ref.
 
 ## A fleet audit measures against the FORGE, never against `refs/remotes/*` as found
 
