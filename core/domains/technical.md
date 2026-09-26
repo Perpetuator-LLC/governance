@@ -1156,6 +1156,22 @@ pre-pass's number **as if it were the model's** — a silent regex-only score ma
 score, which is **absence-as-health in eval flavor**. Assert non-empty output per item and fail the
 run; never let a missing answer be scored as an answer.
 
+## An "exactly once per period" writer marks the no-op path too; a dry run emits no real side effects
+
+**A job that must act at most once per period records that the period was handled on EVERY path that
+completes it, including "nothing to do".** A marker written only when there was work leaves an idle
+period unmarked, and the next invocation in the same period runs the work again, the double send
+or double charge the marker exists to prevent. Write the marker on the no-op path, and test the
+second invocation in the same period on both paths.
+
+**A dry run must not produce the real run's side effects:** no messages sent, no markers written, no
+external state touched. A rehearsal that emits the real effect is the thing it was rehearsing, and
+when it also writes the period marker, the real run that follows is skipped as already done. Keep
+the effects behind one switch, and assert in a test that a dry run leaves every sink untouched.
+
+- **Scope:** writers with at-most-once semantics per period or per key (digests, invoices,
+  notifications, scheduled reports). An idempotent writer that may safely repeat needs neither half.
+
 ## A test double must FAIL the way the real collaborator fails
 
 **A double that RETURNS an error where production RAISES one — or returns a shape production never
