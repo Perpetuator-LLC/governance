@@ -23,8 +23,8 @@ Usage:  token-usage.py [--root DIR] [--days YYYY-MM-DD] [--since ISO-TIME] [--al
 
 The context CEILING is a property of one thread, so it is keyed on the TRANSCRIPT, not the directory:
 a context clear starts a new transcript in the same directory, and grouping by directory blended the
-pre-clear tail into the live thread (governance#32 — it raised ROTATE for five seats right after
-they had rotated). Only each seat's LATEST transcript of the day can raise ROTATE; earlier ones are
+pre-clear tail into the live thread (measured: it raised ROTATE for five seats right after they
+had rotated). Only each seat's LATEST transcript of the day can raise ROTATE; earlier ones are
 listed as rotated. The billed series still sums every transcript: that one is a per-day total.
 Exit:   0 no seat over the alarm · 1 at least one over · 2 cannot run
 """
