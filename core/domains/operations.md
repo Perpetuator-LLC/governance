@@ -79,6 +79,33 @@ rules; it is that we keep writing rules with a door in them.
 4. **When you catch one, fix the WORDING, not just the instance** — "X is not an exemption" bolted
    on is a symptom, and the fourth one should have been a rule about rules.
 
+## A report's CLASSIFICATION is computed from the value the reader ACTS on
+
+**A report that labels its rows must derive each label from the same value the reader's action
+depends on.** If a row's action is *"lift this constraint"*, its label comes from what the constraint
+actually blocks, not from the newest, largest or most striking related value. A label computed from a
+different value is not a summary of the finding; it is **a different finding in the same row**, and
+its label tells the reader to skip the real one.
+
+**The test, for a report you did not write:** name the value the reader will act on, then name the
+value the label was computed from. If they differ, the report can route a live finding into the
+"no action" bucket, and it will do so on every run.
+
+- **One row, one action.** When a row genuinely carries two facts with two actions, print two lines.
+  A row that stands for both lets the cheaper action absorb the urgent one.
+- **Why it survives:** such a report is usually informational, so it is always green, and every row
+  is individually true. What is missing is the line that was never printed. Measured: a
+  dependency-constraint report labelled each row by the newest version overall, usually a major jump,
+  and so read as an optional migration. 13 of 15 such rows were in fact blocking a same-line patch
+  release that had been available for about twelve days. A ticket opened about the ignored report
+  copied the mislabel in as a finding; only re-deriving the values from the source exposed it.
+- **Binds the report's AUTHOR.** The careful reader is the one who got captured, so "read reports
+  carefully" does not help. Make the classification and the action share an input.
+- **Scope:** reports whose rows carry an action. A pure inventory that asks nothing of its reader has
+  no action for a label to disagree with.
+- **Sibling:** an instrument that inspects nothing must not read green. There the population is empty;
+  here the population is right and its **description** is wrong.
+
 ## Hand the human a SCRIPT, not steps — self-logging by design
 
 When the human must run something, the deliverable is **one committed script invoked by one line**
