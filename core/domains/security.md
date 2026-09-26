@@ -175,6 +175,34 @@ a QR login mints a new linking capability on the spot. **Two flows that read ide
 runbook — "log in to the bridge" — differ in whether following the instruction creates a credential.**
 Check which kind you are handing over.
 
+## A delete is an encrypted archive, a soak, and a scheduled purge — never one irreversible step
+
+**Removing data from a live surface and destroying it are separate acts, and only the second is
+irreversible.** So a delete is done in three stages:
+
+1. **Archive, encrypted, to backup storage whose readers are narrower than the source's.** Encrypt to
+   a key the deleting actor does not hold, and prove the archive restores (read it back, decrypt a
+   sample, compare counts) before stage 2.
+2. **Remove from the live surface.** This step is now reversible, so it is ordinary work under the
+   same gates as any reversible change, not a special permission.
+3. **Purge after a soak window, by schedule:** the backup storage's own retention or lifecycle rule,
+   configured once, never a hand-run command per case. The default soak is **90 days**, long enough to
+   span a quarterly review, so a wrong delete is noticed while it can still be undone.
+
+The purge is the only permanent step. Moving it out of the moment of decision, into a policy set
+once, is what makes the decision safe to take quickly.
+
+- **Record every archive:** what, from where, why, the key it is encrypted to, and the purge date.
+  An archive nobody can find is a delete with extra steps.
+- **Scope: where retention is wrong, purge directly.**
+  - **An erasure obligation** (a data-subject request, a contract or a law that requires the data be
+    gone) forbids keeping a copy; the soak would itself be the violation.
+  - **A live credential** is rotated first. Archiving a live secret keeps it exploitable for the whole
+    soak; archiving a revoked one is harmless.
+- **The archive must not widen exposure.** If the reason for the delete was *who could read it*, a
+  backup location that more people (or more machines) can read defeats it. Readership is part of the
+  destination's specification, not an afterthought.
+
 ## MISPLACED is the finder's call; SENSITIVE is the owner's
 
 ⚠️ **A finder can establish that data is in the WRONG PLACE. Only the owner can establish that it
