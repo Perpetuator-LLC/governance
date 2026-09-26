@@ -2009,7 +2009,13 @@ it a check of the execution rule rather than a restatement of it.
   and keep a change-detector that is labelled as one.
 - **The process assumes the code is deterministic and its inputs can be injected.** Where they cannot
   (a live service, the wall clock, randomness), inject a fake or a seed first. A scenario you cannot
-  construct is a finding about the missing seam, never a reason to skip the test.
+  construct is a finding about the missing seam, never a reason to skip the test. **Inject it on
+  EVERY path the test drives, not only the call it makes directly.** A test that hands a fixed
+  `now` to one call while a second path under test falls back to the real clock (a `now=None`
+  default, a cache that rebuilds) agrees with itself only until the fixture's timestamps age out of
+  the window the code applies. It then goes red by itself, with no change in the repository, one
+  window after it was written. The mirror case is safe: fixtures derived from the clock the code
+  reads, at run time, never age.
 - **When the code under test IS the closed form** (a formula transcribed from a specification),
   computing the expected value "by a different route" degenerates into typing the same formula twice,
   and the test then checks only the transcription. There, take expected values from inputs whose
