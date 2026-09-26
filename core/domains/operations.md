@@ -327,6 +327,19 @@ such citation, that is the signal to re-read the source rather than the memory. 
 written three weeks after a mechanism had been retracted *three separate times* led with that
 mechanism, and nothing in the authoring caught it.
 
+## Fixing an instance of a class: check your own diff against the class first
+
+**Working on a defect class does not protect you from committing it, and may be when you are least
+protected**, because attention is on the instance and the class is one level up. Measured: four
+sessions in one day, unaware of each other, each reproduced the defect they were fixing, for example
+a fix for a dead hard-coded path that introduced a new hard-coded path. Three were caught by their
+authors, one only by luck.
+
+- **Before committing, name the class in one sentence, then grep your own diff for it**, as an act,
+  not an intention. This is the route-before-write reflex pointed at the diff instead of at the canon.
+- **Where a working precedent exists in the repository, open it.** A precedent is a control; your own
+  draft is not.
+
 ## Routines are infrastructure — they migrate, or they silently die
 
 **Every scheduled task and skill is migration payload, equal to threads and tickets.** A migration
