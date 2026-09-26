@@ -1951,6 +1951,11 @@ it a check of the execution rule rather than a restatement of it.
 - **The process assumes the code is deterministic and its inputs can be injected.** Where they cannot
   (a live service, the wall clock, randomness), inject a fake or a seed first. A scenario you cannot
   construct is a finding about the missing seam, never a reason to skip the test.
+- **When the code under test IS the closed form** (a formula transcribed from a specification),
+  computing the expected value "by a different route" degenerates into typing the same formula twice,
+  and the test then checks only the transcription. There, take expected values from inputs whose
+  answer is known WITHOUT the formula: a degenerate or boundary input (zero, one, equal legs, a
+  single period) or a published worked example, cited in the test.
 
 **Pair it with a picture of what the code DID, taken from its own record.** For code that acts over
 time, render a run with every action marked from the system's own event log. Never re-derive the marks
