@@ -95,6 +95,37 @@ out=$("$BIN" --root "$TMP/proj" --json 2>/dev/null)
   && pass "a low-p50 seat with one huge turn still trips the max limb" \
   || fail "max limb did not fire for seatD"
 
+# --- governance#32: the ceiling is a property of ONE THREAD. A clear starts a new transcript in the
+# same directory; grouping by directory blended the pre-clear tail into the live thread and raised
+# ROTATE right after the seat had rotated. Replay a clear-day: pre-clear thread hot, post-clear cool.
+mkdir -p "$TMP/clr/${P}seatR"
+tturn() { # tturn <file> <iso-time> <context>
+  printf '{"timestamp":"%s","message":{"usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":%s}}}\n' "$2" "$3" >> "$1"
+}
+for h in 09 10 11; do tturn "$TMP/clr/${P}seatR/before.jsonl" "2030-02-01T${h}:00:00Z" 700000; done
+for h in 13 14; do tturn "$TMP/clr/${P}seatR/after.jsonl" "2030-02-01T${h}:00:00Z" 120000; done
+out=$("$BIN" --root "$TMP/clr" --json 2>/dev/null); rc=$?
+[[ $rc -eq 0 && "$(get 'd["rotate"]')" == "[]" ]] \
+  && pass "clear-day replay: the live (post-clear) thread is under the alarm, so no ROTATE (the hand result)" \
+  || fail "clear-day replay raised ROTATE (rc=$rc): $(get 'd["rotate"]')"
+[[ "$(get 'sorted((s["transcript"], s["rotated"]) for s in d["seats"])')" == "[('after', False), ('before', True)]" ]] \
+  && pass "the pre-clear thread is listed and marked rotated; the ceiling is keyed per transcript" \
+  || fail "per-transcript rows wrong: $(get 'sorted((s["transcript"], s["rotated"]) for s in d["seats"])')"
+[[ "$(get '[s["transcripts_that_day"] for s in d["seats"] if not s["rotated"]][0]')" == "2" ]] \
+  && pass "a multi-transcript day is visibly marked (2 threads)" || fail "multi-transcript day not marked"
+"$BIN" --root "$TMP/clr" 2>/dev/null | grep -q '↻ 2 threads today' \
+  && pass "…and the text report says so" || fail "text report does not mark the rotation"
+# Positive control: the SAME hot thread alone must still raise ROTATE.
+mkdir -p "$TMP/hot/${P}seatR"; cp "$TMP/clr/${P}seatR/before.jsonl" "$TMP/hot/${P}seatR/"
+"$BIN" --root "$TMP/hot" --json >/dev/null 2>&1
+[[ $? -eq 1 ]] && pass "control: the hot thread on its own still raises ROTATE (exit 1)" || fail "control: hot thread did not alarm"
+# --since restricts the scan to turns at or after the clear.
+out=$("$BIN" --root "$TMP/clr" --since 2030-02-01T12:00 --json 2>/dev/null)
+[[ "$(get 'd["scan"]["turns"]')" == "2" && "$(get '[s["transcript"] for s in d["seats"]]')" == "['after']" ]] \
+  && pass "--since keeps only turns at or after the given time" || fail "--since wrong: turns=$(get 'd["scan"]["turns"]')"
+"$BIN" --root "$TMP/clr" --since yesterday >/dev/null 2>&1
+[[ $? -eq 2 ]] && pass "--since refuses a non-ISO value (exit 2)" || fail "--since accepted a non-ISO value"
+
 # Exit code must separate "clean" from "over ceiling" — a tool that always exits 0 cannot gate.
 "$BIN" --root "$TMP/proj" --alarm-p50 999999999 --alarm-max 999999999 >/dev/null 2>&1
 [[ $? -eq 0 ]] && pass "no seat over the alarm exits 0" || fail "clean run did not exit 0"
