@@ -2220,6 +2220,31 @@ environment is fully declared by the thing that starts it — a unit whose `Envi
 whole of it, a container with no inherited env — there is nothing unexpected to inherit, and the check
 reduces to reading that declaration.
 
+## A test of an UNATTENDED job, run from an interactive session, borrows that session's credentials
+
+**Reproducing a scheduled or unattended job by hand proves the job works only if the hand run has
+nothing the job lacks.** An interactive session carries authentication that outlives the moment it
+was given: a multiplexed connection socket (OpenSSH `ControlMaster`), a loaded key agent, an unlocked
+keychain, a cached ticket or token. A call made from that session can ride any of them, and it
+succeeds **for a reason the unattended job will not have**.
+
+⚠️ **This one fails as a POSITIVE, which is the harder direction to notice.** A probe that is
+structurally blind usually returns a vacuous zero and invites suspicion. This one returns *"works"*,
+and the green result is the thing that gets cited when the 03:00 run fails. The same trap runs in
+reverse: an unattended failure "reproduced" by hand succeeds, and the report is closed as not
+reproducible.
+
+- **Probe the way the job runs:** a fresh connection (`ssh -o ControlPath=none`, or the harness's
+  equivalent), no forwarded agent, the job's own identity and environment (its user, `env -i`, the
+  scheduler's working directory). Where the job can run under its real scheduler on demand, trigger
+  it there instead of imitating it.
+- **Record the state the job will run under** next to the result: whether a socket, an agent or an
+  unlocked store was present during the probe. A result without that line cannot be compared with the
+  real run.
+- **Scope:** any credential or session cache that survives between an interactive login and a later
+  call. The mechanism names differ by tool; the question does not: *what did this call authenticate
+  with, and will the unattended run have it?*
+
 ## A long browser harvest checkpoints to the PAGE, because the session is the fragile part
 
 When an agent harvests data through a browser over many steps, the accumulated result belongs in the
