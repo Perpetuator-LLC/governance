@@ -691,6 +691,29 @@ there. **Keep the plain name in the forge; prefix the local directory with the o
 (`org-a-secrets`, `org-b-secrets`). Never infer which organisation a checkout belongs to from its
 directory name: read its remote.
 
+## Environment facts are STATED in a registry, never inferred
+
+**Which systems exist, which hosts are production, and which merges deploy are facts to look up,
+never to infer.** An inference from one repository's history, a session's transcripts, or a naming
+pattern returns confident wrong answers, and its errors fall in the unsafe direction: *"cloud
+providers: none"* reads as *"nothing here to protect"*.
+
+- **Production hosts are listed BY NAME.** A heuristic such as "hosts whose name contains `prod`" is
+  not a safety control. It is a list of the hosts that happen to be named conveniently, and it
+  silently exempts every production host that is not. Measured: an automated environment scan
+  concluded "no cloud providers, no deploy targets" for a machine managing several, and its hostname
+  heuristic missed the largest production host.
+- **Write the facts machine-readably, in one authoritative place:** providers, production hosts,
+  and which merges deploy. Where a pull-based deployer watches a branch, **a merge is the deploy**,
+  so release-scope rules apply at merge time. Anything that makes a safety decision (a classifier, a
+  permission rule, an agent choosing whether a command is risky) reads that place.
+- **A roster assembled from memory has the same defect one layer up.** Count members from the
+  registry rather than recalling them; a hand list that drops one entry is indistinguishable from a
+  complete one.
+- **Scope:** any decision that depends on *"is this production?"* or *"what systems exist?"*. The
+  registry is only as good as the process that writes it, so provisioning writes the row before it
+  creates the resource.
+
 ## Deploys & health — pull-based
 
 - **Boxes deploy themselves** (webhook, HMAC-verified, + catch-up timer gated on CI-green
@@ -1156,6 +1179,22 @@ pre-pass's number **as if it were the model's** — a silent regex-only score ma
 score, which is **absence-as-health in eval flavor**. Assert non-empty output per item and fail the
 run; never let a missing answer be scored as an answer.
 
+## An "exactly once per period" writer marks the no-op path too; a dry run emits no real side effects
+
+**A job that must act at most once per period records that the period was handled on EVERY path that
+completes it, including "nothing to do".** A marker written only when there was work leaves an idle
+period unmarked, and the next invocation in the same period runs the work again, the double send
+or double charge the marker exists to prevent. Write the marker on the no-op path, and test the
+second invocation in the same period on both paths.
+
+**A dry run must not produce the real run's side effects:** no messages sent, no markers written, no
+external state touched. A rehearsal that emits the real effect is the thing it was rehearsing, and
+when it also writes the period marker, the real run that follows is skipped as already done. Keep
+the effects behind one switch, and assert in a test that a dry run leaves every sink untouched.
+
+- **Scope:** writers with at-most-once semantics per period or per key (digests, invoices,
+  notifications, scheduled reports). An idempotent writer that may safely repeat needs neither half.
+
 ## A test double must FAIL the way the real collaborator fails
 
 **A double that RETURNS an error where production RAISES one — or returns a shape production never
@@ -1223,6 +1262,26 @@ your mistakes.
 
 Same principle as *a probe that cannot distinguish the thing from a REFERENCE to it, or its own
 FAILURE from a negative, is not evidence* — one layer down, in the suite rather than the probe.
+
+## A single red is a HYPOTHESIS, not a baseline
+
+**Re-run before publishing any failure as the expected state.** A published wrong baseline tells the
+next reader to expect that failure and move past it, and it survives in hand-off records long after
+the flake that produced it. Measured: one full-suite run under heavy machine load showed four failed
+assertions; "nineteen of twenty is the baseline" went to a PR body, a hand-off and the human, from
+that one observation. It was a flake.
+
+Two shapes produce flakes that read as real failures (or real passes). Audit a suite for both:
+- **A fixed sleep standing in for "the subprocess is ready".** It holds on an idle machine and fails
+  exactly when the machine is busy. Wait on the artifact itself (a file, a port, a log line) with a
+  named timeout that says what it waited for.
+- **A negative assertion with no positive control.** *"X must not appear"* is satisfied by an
+  instrument that never ran; an empty log passes it. Pair every negative with a marker proving the
+  instrument ran and reached the point where X would have appeared.
+
+**Reproduce under the condition that caused it** (loop the suite under deliberate load), and capture
+the failing output, not only the exit code, so a recurrence names its own cause. **Do not chase an
+unreproduced flake speculatively:** record it with its output and move on until it recurs.
 
 ## REACHABILITY IS A LADDER — each rung proves only its own layer
 
@@ -1532,16 +1591,34 @@ accident — so the defect cannot appear in them. Two properties that do it:
   mutation landing **between** the two reads exposes it (a row silently never returned), while the
   identical mutation applied **before** or **after** them passes **20/20 against the same broken
   code**. Nothing in the fixture looks wrong, because nothing is.
+- **Entry-blocked — a stub for a PRECONDITION fails, so the code under test is never reached.** Stubs
+  that catch unwanted calls should fail loudly; a stub that gates ENTRY (a lock, an auth probe, an
+  "already running?" check) must succeed, or the code takes its early exit and every negative
+  assertion after it ("no side effect ran") is true of code that never ran. Measured: every external
+  command stubbed to fail, the lock included, sent a script down its "another run holds the lock"
+  exit in its first lines, and every "nothing happened" assertion passed. **So each case first
+  asserts that it REACHED the decision point**, with one positive marker, before any negative
+  assertion is believed. *Scope:* when the precondition's failure is itself the case under test, that
+  stub fails, and the marker is the early exit.
+- **Perturbed unlike the real mechanism — same visible result, different MECHANICS.** A fixture that
+  stands in for something that mutates the system under test (replacing a file, restarting a process,
+  rotating a credential, swapping a link) must reproduce how the mutation happens, not only what it
+  leaves behind. Measured: production replaces a file by rename, so a process still executing from it
+  keeps its original inode; the fixture copied in place, rewriting the same inode, and the running
+  process read past the new end and exited 0 mid-run. The suite failed at the wrong assertion,
+  describing a defect that does not exist, while the path under test was never entered. Ask: *what
+  does the real mechanism do that my stand-in does differently, and could anything under test observe
+  it?* An open file handle, a socket or a cached descriptor usually can.
 
 **One sentence subsumes every shape above: state the property of the REAL input that makes the defect
 appear, and show the fixture has it.** Both halves carry weight. Naming the property is what stops
 you reaching for a plausible extreme instead — and *"make it maximally different"* is exactly the
 instinct that produces an unfalsifiable test, because extremity is not the same as exercising the
-mechanism. Showing the fixture has the property is what catches the four failures above, each of
-which was a fixture nobody had checked against the property it was supposed to embody.
+mechanism. Showing the fixture has the property is what catches the failures above, each of which
+was a fixture nobody had checked against the property it was supposed to embody.
 
 ⚠️ **The shapes are not a checklist to run down.** They are what "lacks the property" happened to
-look like four times; the next one will look like something else. The property is the invariant, and
+look like so far; the next one will look like something else. The property is the invariant, and
 it has to be written down before the fixture is built, because afterwards every fixture looks like it
 has it.
 
@@ -1549,7 +1626,10 @@ has it.
 green one.** Core already requires a detector to be proven against a known-bad control; this is the
 same requirement aimed at the fixture rather than the detector, and it is the one that is routinely
 skipped — because a green test looks like success, and a fixture that cannot fail looks exactly like
-a fixture that passes.
+a fixture that passes. **Read the control per ASSERTION, not per suite:** run the suite against the
+known-bad version and the fixed one, and every assertion that does not flip between them is not about
+your change. Measured: 5 of 10 flipped; the other 5 were passing for structural reasons, including
+the entry-blocked case above.
 
 ### The same instrument failure in a STATIC CHECKER: validating FORM cannot see a defect in MEANING
 
@@ -1930,6 +2010,11 @@ it a check of the execution rule rather than a restatement of it.
 - **The process assumes the code is deterministic and its inputs can be injected.** Where they cannot
   (a live service, the wall clock, randomness), inject a fake or a seed first. A scenario you cannot
   construct is a finding about the missing seam, never a reason to skip the test.
+- **When the code under test IS the closed form** (a formula transcribed from a specification),
+  computing the expected value "by a different route" degenerates into typing the same formula twice,
+  and the test then checks only the transcription. There, take expected values from inputs whose
+  answer is known WITHOUT the formula: a degenerate or boundary input (zero, one, equal legs, a
+  single period) or a published worked example, cited in the test.
 
 **Pair it with a picture of what the code DID, taken from its own record.** For code that acts over
 time, render a run with every action marked from the system's own event log. Never re-derive the marks
@@ -2127,6 +2212,29 @@ Litmus: if the fix would have to be repeated on the next device, it's at the wro
 Measured: an internal DNS name resolved on the LAN but died on the VPN; the answer was VPN
 split-DNS + DHCP, and the hand-made per-machine resolver file became removable.
 
+## A declared-state list that SHRINKS is a finding, not a diff
+
+**A list that declares what must be true (permission rules, scheduled jobs, allowed hosts, installed
+components) is compared against its reviewed source, and any SHRINK is reported loudly.** Tools that
+round-trip such a file re-emit only the entries they model, so a rewrite drops an entry with no error,
+and an absent deny rule denies nothing. Measured twice: a settings file lost its one deny rule whose
+syntax the rewriting parser mis-read; later, a scheduled job's definition lost every key the writer
+did not model.
+
+⚠️ **It binds hardest where the list is one side of a reconcile.** The second case did not make the
+job malformed: it removed the job from the declared set entirely, and the reconcile, which diffs
+declared against actual, had nothing left to report. An item deleted from the declaration is not
+drift to a tool that only compares the items still declared. **So a reconcile asserts the SIZE and
+MEMBERSHIP of its declared set** (against the reviewed source, or a recorded count), not only the
+differences within it.
+
+- **Detect, then restore.** Silently restoring from the source repairs the file and destroys the
+  evidence that something keeps rewriting it. Report the loss with what dropped, then restore.
+- **The detector must survive the file's type changing.** A check written as *"compare the file with
+  HEAD of the repo it links into"* goes silent the day the file stops being a link. Measured: the
+  shrink detector for a settings file stopped running when the file became rendered, and nothing said
+  so. Re-prove the detector (a known shrink → a finding) whenever the file's delivery changes.
+
 ## Configure the GENERATOR, never the artifact it generates
 
 **A service manager that generates its unit file will regenerate it, and a hand-edit disappears with
@@ -2194,6 +2302,31 @@ environment is fully declared by the thing that starts it — a unit whose `Envi
 whole of it, a container with no inherited env — there is nothing unexpected to inherit, and the check
 reduces to reading that declaration.
 
+## A test of an UNATTENDED job, run from an interactive session, borrows that session's credentials
+
+**Reproducing a scheduled or unattended job by hand proves the job works only if the hand run has
+nothing the job lacks.** An interactive session carries authentication that outlives the moment it
+was given: a multiplexed connection socket (OpenSSH `ControlMaster`), a loaded key agent, an unlocked
+keychain, a cached ticket or token. A call made from that session can ride any of them, and it
+succeeds **for a reason the unattended job will not have**.
+
+⚠️ **This one fails as a POSITIVE, which is the harder direction to notice.** A probe that is
+structurally blind usually returns a vacuous zero and invites suspicion. This one returns *"works"*,
+and the green result is the thing that gets cited when the 03:00 run fails. The same trap runs in
+reverse: an unattended failure "reproduced" by hand succeeds, and the report is closed as not
+reproducible.
+
+- **Probe the way the job runs:** a fresh connection (`ssh -o ControlPath=none`, or the harness's
+  equivalent), no forwarded agent, the job's own identity and environment (its user, `env -i`, the
+  scheduler's working directory). Where the job can run under its real scheduler on demand, trigger
+  it there instead of imitating it.
+- **Record the state the job will run under** next to the result: whether a socket, an agent or an
+  unlocked store was present during the probe. A result without that line cannot be compared with the
+  real run.
+- **Scope:** any credential or session cache that survives between an interactive login and a later
+  call. The mechanism names differ by tool; the question does not: *what did this call authenticate
+  with, and will the unattended run have it?*
+
 ## A long browser harvest checkpoints to the PAGE, because the session is the fragile part
 
 When an agent harvests data through a browser over many steps, the accumulated result belongs in the
@@ -2219,6 +2352,24 @@ harvest when it is not. On a long extraction you should expect to meet several o
   total is what catches silently-missing rows; without it, an export that skipped a whole class of
   items still looks finished.
 - **A tool-call timeout does not mean the work stopped.** Poll the store; do not restart the loop.
+
+## Reading a file at a ref must not WRITE the working tree
+
+**To read content at a ref, use `git show <ref>:<path>` or `git cat-file`. Never
+`git checkout <ref> -- <pathspec>`:** that command overwrites the working tree and the index from the
+ref, and with `-- .` it does so for the whole repository. It reads as a read ("check out main's
+version of these files"), it is one word from the command that is one, and it is silent both when it
+does nothing and when it destroys uncommitted work.
+
+- **For many files at a ref**, read them with `git show`, or materialise the tree somewhere
+  disposable (`git worktree add --detach <scratch>`, or `git archive <ref> | tar -x -C <tmpdir>`).
+  Never into a live checkout, and above all never into one another agent or person works in.
+- **A survey command never redirects its errors away.** A read has nothing to hide; silencing the
+  errors of a command that might write silences exactly the warning that matters.
+- **Mirror of the audit rule below:** that one says *read from the ref, not the working tree*. This
+  one says the reading must not write. Following the first while typing `checkout -- .` still
+  destroys the checkout. Measured: a nightly survey ran `checkout origin/main -- .` against a peer's
+  checkout; it did no harm only because that checkout happened to be clean and already at the ref.
 
 ## A fleet audit measures against the FORGE, never against `refs/remotes/*` as found
 

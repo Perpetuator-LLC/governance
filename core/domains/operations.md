@@ -79,6 +79,33 @@ rules; it is that we keep writing rules with a door in them.
 4. **When you catch one, fix the WORDING, not just the instance** — "X is not an exemption" bolted
    on is a symptom, and the fourth one should have been a rule about rules.
 
+## A report's CLASSIFICATION is computed from the value the reader ACTS on
+
+**A report that labels its rows must derive each label from the same value the reader's action
+depends on.** If a row's action is *"lift this constraint"*, its label comes from what the constraint
+actually blocks, not from the newest, largest or most striking related value. A label computed from a
+different value is not a summary of the finding; it is **a different finding in the same row**, and
+its label tells the reader to skip the real one.
+
+**The test, for a report you did not write:** name the value the reader will act on, then name the
+value the label was computed from. If they differ, the report can route a live finding into the
+"no action" bucket, and it will do so on every run.
+
+- **One row, one action.** When a row genuinely carries two facts with two actions, print two lines.
+  A row that stands for both lets the cheaper action absorb the urgent one.
+- **Why it survives:** such a report is usually informational, so it is always green, and every row
+  is individually true. What is missing is the line that was never printed. Measured: a
+  dependency-constraint report labelled each row by the newest version overall, usually a major jump,
+  and so read as an optional migration. 13 of 15 such rows were in fact blocking a same-line patch
+  release that had been available for about twelve days. A ticket opened about the ignored report
+  copied the mislabel in as a finding; only re-deriving the values from the source exposed it.
+- **Binds the report's AUTHOR.** The careful reader is the one who got captured, so "read reports
+  carefully" does not help. Make the classification and the action share an input.
+- **Scope:** reports whose rows carry an action. A pure inventory that asks nothing of its reader has
+  no action for a label to disagree with.
+- **Sibling:** an instrument that inspects nothing must not read green. There the population is empty;
+  here the population is right and its **description** is wrong.
+
 ## Hand the human a SCRIPT, not steps — self-logging by design
 
 When the human must run something, the deliverable is **one committed script invoked by one line**
@@ -259,6 +286,23 @@ paraphrase, which reintroduces the hedge property 1 exists to forbid.
 Same family as refusing an unmeasured rationale below: both are about a document whose confidence
 exceeds its evidence, and in both the damage lands on whoever reads it next.
 
+## A decision is made only when it lands in the field its consumers read
+
+**A triage, re-prioritisation, retirement or change of direction recorded only in a comment, summary
+or report, while the label, status field, registry row or title that downstream readers query still
+says the old thing, has not been made.** Consumers read the field, not the thread. Measured: a
+complete triage classified nine tickets as mislabelled, with a rationale for each, and changed
+nothing: a day later all nine still carried the old priority, a migration gate was computed from the
+old labels, and every "list the queue and work it" reader followed the labels.
+
+- **Execute in the same act as recording:** move the labels, edit the field, update the row. Then
+  verify by re-running the **consumer's own query** after the writes, not by re-reading your comment.
+- **The comment is the rationale, never the mechanism.**
+- **Where two registries share a word with different vocabularies, name the enum at the schema.** A
+  value that is meaningful in prose but absent from the enum consumers string-match is a silent miss:
+  a status written in one registry's vocabulary into another registry's field makes the row invisible
+  to every sweep that matches the correct values.
+
 ## Refuse to write a RATIONALE you have not measured, even when the CONCLUSION is right
 
 **An unmeasured rationale is a durable liability in a way an unmeasured conclusion is not — because
@@ -309,6 +353,19 @@ draft that restates a mechanism **cites the correction it post-dates**; where th
 such citation, that is the signal to re-read the source rather than the memory. Measured: a filing
 written three weeks after a mechanism had been retracted *three separate times* led with that
 mechanism, and nothing in the authoring caught it.
+
+## Fixing an instance of a class: check your own diff against the class first
+
+**Working on a defect class does not protect you from committing it, and may be when you are least
+protected**, because attention is on the instance and the class is one level up. Measured: four
+sessions in one day, unaware of each other, each reproduced the defect they were fixing, for example
+a fix for a dead hard-coded path that introduced a new hard-coded path. Three were caught by their
+authors, one only by luck.
+
+- **Before committing, name the class in one sentence, then grep your own diff for it**, as an act,
+  not an intention. This is the route-before-write reflex pointed at the diff instead of at the canon.
+- **Where a working precedent exists in the repository, open it.** A precedent is a control; your own
+  draft is not.
 
 ## Routines are infrastructure — they migrate, or they silently die
 

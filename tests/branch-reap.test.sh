@@ -101,8 +101,8 @@ grep -qi 'default branch' <<<"$err" && pass "no-origin repo is skipped, not gues
 # --- 6b. THE `-d` BELT ITSELF, pinned at the source ---
 # Honest note on why this is a source assertion and not a behavioural one: the
 # containment check (`git log origin/$def..$b` empty) already filters unmerged
-# branches out before `-d` is ever reached, so `-d` is DEFENCE IN DEPTH and the
-# behavioural path cannot be reached without first breaking containment. That makes
+# branches out before `-d` is ever reached, so `-d` is DEFENCE IN DEPTH, and its
+# refusal is reachable only where the two checks disagree (6c). That makes
 # the mutation `-d` -> `-D` invisible to every behavioural test here — it was, when
 # this suite was mutation-tested. The property is real and worth pinning anyway,
 # because the two checks can disagree (`-d` measures merged-into-HEAD-or-upstream,
@@ -112,6 +112,30 @@ if grep -qE 'branch +-D' "$BR"; then
   fail "the script contains 'branch -D' — force-delete must never appear"
 else
   pass "no 'branch -D' anywhere in the script (-d only)"
+fi
+
+# --- 6c. THE REFUSAL PATH, reached behaviourally (#31) ---
+# 6b says -d cannot be reached without breaking containment. It can: a branch whose commits are all in
+# origin/main but NOT in its own upstream. -d compares against the upstream and refuses. That is the
+# production refusal, every night: git printed three lines and the report showed only the last hint.
+R2=$(mkrepo r2)
+git -C "$R2" checkout -q -b feat/up
+echo a > "$R2/a"; git -C "$R2" add a; git -C "$R2" commit -qm a
+git -C "$R2" push -q -u origin feat/up 2>/dev/null                  # upstream = origin/feat/up at A
+echo b > "$R2/b"; git -C "$R2" add b; git -C "$R2" commit -qm b     # local feat/up at B, upstream still A
+git -C "$R2" checkout -q main; git -C "$R2" merge -q --ff-only feat/up; git -C "$R2" push -q origin main
+out=$("$BR" --apply --repo "$R2" --log "$TMP/r2.log" 2>&1)
+if grep -q 'REFUSED feat/up' <<<"$out"; then
+  pass "the upstream-disagreement case reaches git's refusal (a real refusal, not a mock)"
+  grep -q 'REFUSED feat/up — git says: .*not fully merged' <<<"$out" \
+    && pass "the reason printed is git's error: line" || fail "reason is not git's error: line: $(grep 'REFUSED feat/up' <<<"$out")"
+  grep -q 'REFUSED feat/up — git says: .*[Dd]isable this message' <<<"$out" \
+    && fail "the reason printed is still git's advice hint" || pass "no advice hint printed as the reason"
+  grep -q 'every commit IS in origin/main; git compared against origin/feat/up' <<<"$out" \
+    && pass "says the work IS on the default branch, and names what -d compared against" || fail "no containment line naming the upstream"
+  git -C "$R2" rev-parse --verify --quiet feat/up >/dev/null && pass "the refused branch still exists" || fail "REFUSED BRANCH WAS DELETED"
+else
+  fail "fixture did not reach a refusal: $(printf '%s' "$out" | tr '\n' '|')"
 fi
 
 # --- 7. a repo roster is honoured, and an EMPTY or unreadable one aborts ---

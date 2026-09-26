@@ -18,8 +18,14 @@ A "seat" is a transcript directory. Claude Code names each one after the working
 every separator turned into '-'; the encoded home directory (and a following `projects-`) is
 stripped so the seat reads as the project name.
 
-Usage:  token-usage.py [--root DIR] [--days YYYY-MM-DD] [--alarm-p50 N] [--alarm-max N]
-                       [--target-p50 N] [--json]
+Usage:  token-usage.py [--root DIR] [--days YYYY-MM-DD] [--since ISO-TIME] [--alarm-p50 N]
+                       [--alarm-max N] [--target-p50 N] [--json]
+
+The context CEILING is a property of one thread, so it is keyed on the TRANSCRIPT, not the directory:
+a context clear starts a new transcript in the same directory, and grouping by directory blended the
+pre-clear tail into the live thread (measured: it raised ROTATE for five seats right after they
+had rotated). Only each seat's LATEST transcript of the day can raise ROTATE; earlier ones are
+listed as rotated. The billed series still sums every transcript: that one is a per-day total.
 Exit:   0 no seat over the alarm · 1 at least one over · 2 cannot run
 """
 import argparse, collections, glob, json, os, re, sys
@@ -41,7 +47,7 @@ def seat_name(dirname, prefixes):
     return dirname
 
 
-def walk(root, days=None):
+def walk(root, days=None, since=None):
     """Per-day billed/cached totals and per-(day, seat) context samples.
 
     BILLED = input + output + cache_creation. Cache READ is excluded on purpose: it is the cheap
@@ -51,12 +57,14 @@ def walk(root, days=None):
     getting worse" and "we are caching well" become indistinguishable.
     """
     totals = collections.defaultdict(lambda: collections.defaultdict(int))
-    ctx = collections.defaultdict(list)          # (day, seat) -> [context per turn]
+    ctx = collections.defaultdict(list)          # (day, seat, transcript) -> [context per turn]
+    last = {}                                    # (day, seat, transcript) -> latest timestamp
     stats = {"files": 0, "turns": 0, "unparseable": 0, "no_usage": 0}
     prefixes = seat_prefixes()
 
     for path in sorted(glob.glob(os.path.join(root, "*", "*.jsonl"))):
         seat = seat_name(os.path.basename(os.path.dirname(path)), prefixes)
+        tid = os.path.basename(path)[:-len(".jsonl")]
         stats["files"] += 1
         try:
             fh = open(path, encoding="utf-8", errors="ignore")
@@ -78,18 +86,22 @@ def walk(root, days=None):
                 if not isinstance(usage, dict):
                     stats["no_usage"] += 1
                     continue
-                day = (d.get("timestamp") or "")[:10]
+                ts = d.get("timestamp") or ""
+                day = ts[:10]
                 if not day:
                     continue
                 if days and day < days:
+                    continue
+                if since and ts.rstrip("Z") < since:
                     continue
                 inp, out, cw, cr = (int(usage.get(k) or 0) for k in USAGE_KEYS)
                 totals[day]["billed"] += inp + out + cw
                 totals[day]["cache_read"] += cr
                 totals[day]["output"] += out
-                ctx[(day, seat)].append(cr + cw)
+                ctx[(day, seat, tid)].append(cr + cw)
+                last[(day, seat, tid)] = max(last.get((day, seat, tid), ""), ts)
                 stats["turns"] += 1
-    return totals, ctx, stats
+    return totals, (ctx, last), stats
 
 
 def pct(values, p):
@@ -112,17 +124,28 @@ def report(totals, ctx, stats, alarm_p50, alarm_max, target_p50, latest_only=Tru
     # Per-seat context for the most recent day only: the ceiling is a rotation trigger, and a seat
     # that ran hot last week has already rotated. Averaging it across the window would hide today.
     target = days[-1] if days else None
+    ctx, last = ctx
+    # The live thread of a seat is its transcript with the latest turn that day; any earlier one was
+    # cleared or rotated away, so it can describe the day but can never be a rotation candidate.
+    latest = {}
+    for (day, seat, tid), ts in last.items():
+        if (day, seat) not in latest or ts > last[(day, seat, latest[(day, seat)])]:
+            latest[(day, seat)] = tid
+    count = collections.Counter((day, seat) for (day, seat, _t) in ctx)
     seats = []
-    for (day, seat), vals in ctx.items():
+    for (day, seat, tid), vals in ctx.items():
         if latest_only and day != target:
             continue
-        seats.append({"seat": seat, "day": day, "turns": len(vals),
-                      "p50": pct(vals, 50), "p90": pct(vals, 90), "max": max(vals)})
-    seats.sort(key=lambda r: -r["p50"])
+        seats.append({"seat": seat, "transcript": tid, "day": day, "turns": len(vals),
+                      "p50": pct(vals, 50), "p90": pct(vals, 90), "max": max(vals),
+                      "transcripts_that_day": count[(day, seat)],
+                      "rotated": latest[(day, seat)] != tid})
+    seats.sort(key=lambda r: (r["rotated"], -r["p50"]))
+    live = [s for s in seats if not s["rotated"]]
     # A seat trips on EITHER limit: a healthy median hides a turn that nearly filled the window,
     # and it is the max that actually degrades a run.
-    over = [s for s in seats if s["p50"] > alarm_p50 or s["max"] > alarm_max]
-    above_target = [s for s in seats if s["p50"] > target_p50]
+    over = [s for s in live if s["p50"] > alarm_p50 or s["max"] > alarm_max]
+    above_target = [s for s in live if s["p50"] > target_p50]
     return rows, seats, over, above_target, target
 
 
@@ -139,6 +162,8 @@ def main():
     # "Boot" also needs a definition before it is a measurement: RESIDENT boot (the first
     # usage-bearing turn) and TO-FIRST-ACTION boot (resident plus whatever a seat loads before it can
     # act) are different numbers, and the gap between them is the boot-diet target.
+    ap.add_argument("--since", default=None,
+                    help="only count turns at or after this ISO time, e.g. 2026-09-25T15:00 (the clear)")
     ap.add_argument("--alarm-p50", type=int, default=400_000,
                     help="p50 context/turn above which a seat should ROTATE")
     ap.add_argument("--alarm-max", type=int, default=600_000,
@@ -155,7 +180,12 @@ def main():
         print(f"error: no transcript root at {a.root}", file=sys.stderr)
         return 2
 
-    totals, ctx, stats = walk(a.root, a.days)
+    since = a.since.rstrip("Z") if a.since else None
+    if since and not re.match(r"^\d{4}-\d\d-\d\d(T\d\d(:\d\d(:\d\d(\.\d+)?)?)?)?$", since):
+        print(f"error: --since must be an ISO date or time (YYYY-MM-DD[THH[:MM[:SS]]]), got {a.since!r}",
+              file=sys.stderr)
+        return 2
+    totals, ctx, stats = walk(a.root, a.days, since)
     if not totals:
         # An empty result is not a clean bill of health: it means the walk found nothing, which is
         # far more likely to be a wrong --root than a machine that used no tokens.
@@ -183,21 +213,26 @@ def main():
         print(f"context per turn (cache_read + cache_creation), {target or 'n/a'}")
         print(f"  ROTATE alarm: p50 > {a.alarm_p50:,} or any turn > {a.alarm_max:,}"
               f"   ·   target: p50 < {a.target_p50:,}")
-        print(f"{'seat':24} {'turns':>6} {'p50':>12} {'p90':>12} {'max':>12}")
+        print(f"{'seat':24} {'thread':9} {'turns':>6} {'p50':>12} {'p90':>12} {'max':>12}")
         for s in seats[:15]:
-            if s["p50"] > a.alarm_p50 or s["max"] > a.alarm_max:
+            if s["rotated"]:
+                flag = "  (rotated — earlier thread, not a candidate)"
+            elif s["p50"] > a.alarm_p50 or s["max"] > a.alarm_max:
                 flag = "  ⚠️ ROTATE"
             elif s["p50"] > a.target_p50:
                 flag = "  · above target"          # progress, NOT an action row
             else:
                 flag = ""
-            print(f"{s['seat']:24} {s['turns']:>6} {s['p50']:>12,} {s['p90']:>12,} "
-                  f"{s['max']:>12,}{flag}")
+            if s["transcripts_that_day"] > 1 and not s["rotated"]:
+                flag += f"  ↻ {s['transcripts_that_day']} threads today"
+            print(f"{s['seat']:24} {s['transcript'][:8]:9} {s['turns']:>6} {s['p50']:>12,} "
+                  f"{s['p90']:>12,} {s['max']:>12,}{flag}")
         print()
         # Progress against the target: ALWAYS printed, never an action row. Being above target is
         # a normal state while the boot footprint is large; reporting it as a rotation would ask
         # every seat to fix something no rotation can fix.
-        print(f"target: {len(seats) - len(above_target)}/{len(seats)} seats at or under the "
+        n_live = sum(1 for s in seats if not s["rotated"])
+        print(f"target: {n_live - len(above_target)}/{n_live} live threads at or under the "
               f"{a.target_p50:,} p50 target (a trend to drive down, NOT an alarm).")
         if over:
             print(f"⚠️  ROTATE: {len(over)} seat(s) over the alarm — "
