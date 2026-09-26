@@ -33,6 +33,11 @@
 #   bin/branch-reap --log <path>         # where to append the undo log
 
 set -uo pipefail
+first_line() {  # first_line <prefix> <text> -> the first line of <text> that starts with <prefix>
+  local l
+  while IFS= read -r l; do case "$l" in "$1"*) printf '%s' "$l"; return 0 ;; esac; done <<<"$2"
+  return 1
+}
 
 APPLY=0; REPOS=(); PROTECT=(); LOG=""; REPOS_FROM=""
 while [ $# -gt 0 ]; do
@@ -123,7 +128,15 @@ for repo in "${REPOS[@]}"; do
         echo "      reaped $b ($(printf '%.9s' "$sha"))"
         total_del=$((total_del+1))
       else
-        echo "      REFUSED $b — git says: ${out##*: }"
+        # git's REASON is its first `error:` line (else `warning:`). `${out##*: }` selected the LAST
+        # ": " in the capture, which is always an advice `hint:` line (#31). Parsed without a pipe:
+        # `printf | grep -m1` under pipefail can report a match as a failure (SIGPIPE).
+        reason=$(first_line 'error:' "$out" || first_line 'warning:' "$out" || printf '%s' "${out%%$'\n'*}")
+        up=$(git -C "$repo" rev-parse --abbrev-ref "$b@{upstream}" 2>/dev/null)
+        echo "      REFUSED $b — git says: ${reason#*: }"
+        # A branch reaches -d only when every commit is already in origin/$def (the containment
+        # check above), so git's refusal is never unmerged work: `-d` measured a DIFFERENT base.
+        echo "              every commit IS in origin/$def; git compared against ${up:-the checked-out HEAD} instead"
         total_kept=$((total_kept+1)); rc=1
       fi
     else
