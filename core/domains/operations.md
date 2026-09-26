@@ -259,6 +259,23 @@ paraphrase, which reintroduces the hedge property 1 exists to forbid.
 Same family as refusing an unmeasured rationale below: both are about a document whose confidence
 exceeds its evidence, and in both the damage lands on whoever reads it next.
 
+## A decision is made only when it lands in the field its consumers read
+
+**A triage, re-prioritisation, retirement or change of direction recorded only in a comment, summary
+or report, while the label, status field, registry row or title that downstream readers query still
+says the old thing, has not been made.** Consumers read the field, not the thread. Measured: a
+complete triage classified nine tickets as mislabelled, with a rationale for each, and changed
+nothing: a day later all nine still carried the old priority, a migration gate was computed from the
+old labels, and every "list the queue and work it" reader followed the labels.
+
+- **Execute in the same act as recording:** move the labels, edit the field, update the row. Then
+  verify by re-running the **consumer's own query** after the writes, not by re-reading your comment.
+- **The comment is the rationale, never the mechanism.**
+- **Where two registries share a word with different vocabularies, name the enum at the schema.** A
+  value that is meaningful in prose but absent from the enum consumers string-match is a silent miss:
+  a status written in one registry's vocabulary into another registry's field makes the row invisible
+  to every sweep that matches the correct values.
+
 ## Refuse to write a RATIONALE you have not measured, even when the CONCLUSION is right
 
 **An unmeasured rationale is a durable liability in a way an unmeasured conclusion is not — because
