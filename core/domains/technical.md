@@ -1240,6 +1240,26 @@ your mistakes.
 Same principle as *a probe that cannot distinguish the thing from a REFERENCE to it, or its own
 FAILURE from a negative, is not evidence* — one layer down, in the suite rather than the probe.
 
+## A single red is a HYPOTHESIS, not a baseline
+
+**Re-run before publishing any failure as the expected state.** A published wrong baseline tells the
+next reader to expect that failure and move past it, and it survives in hand-off records long after
+the flake that produced it. Measured: one full-suite run under heavy machine load showed four failed
+assertions; "nineteen of twenty is the baseline" went to a PR body, a hand-off and the human, from
+that one observation. It was a flake.
+
+Two shapes produce flakes that read as real failures (or real passes). Audit a suite for both:
+- **A fixed sleep standing in for "the subprocess is ready".** It holds on an idle machine and fails
+  exactly when the machine is busy. Wait on the artifact itself (a file, a port, a log line) with a
+  named timeout that says what it waited for.
+- **A negative assertion with no positive control.** *"X must not appear"* is satisfied by an
+  instrument that never ran; an empty log passes it. Pair every negative with a marker proving the
+  instrument ran and reached the point where X would have appeared.
+
+**Reproduce under the condition that caused it** (loop the suite under deliberate load), and capture
+the failing output, not only the exit code, so a recurrence names its own cause. **Do not chase an
+unreproduced flake speculatively:** record it with its output and move on until it recurs.
+
 ## REACHABILITY IS A LADDER — each rung proves only its own layer
 
 **ICMP proves the kernel answers. It proves nothing about any service.** In a forge outage a host
