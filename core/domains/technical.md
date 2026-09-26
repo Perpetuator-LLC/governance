@@ -2220,6 +2220,24 @@ harvest when it is not. On a long extraction you should expect to meet several o
   items still looks finished.
 - **A tool-call timeout does not mean the work stopped.** Poll the store; do not restart the loop.
 
+## Reading a file at a ref must not WRITE the working tree
+
+**To read content at a ref, use `git show <ref>:<path>` or `git cat-file`. Never
+`git checkout <ref> -- <pathspec>`:** that command overwrites the working tree and the index from the
+ref, and with `-- .` it does so for the whole repository. It reads as a read ("check out main's
+version of these files"), it is one word from the command that is one, and it is silent both when it
+does nothing and when it destroys uncommitted work.
+
+- **For many files at a ref**, read them with `git show`, or materialise the tree somewhere
+  disposable (`git worktree add --detach <scratch>`, or `git archive <ref> | tar -x -C <tmpdir>`).
+  Never into a live checkout, and above all never into one another agent or person works in.
+- **A survey command never redirects its errors away.** A read has nothing to hide; silencing the
+  errors of a command that might write silences exactly the warning that matters.
+- **Mirror of the audit rule below:** that one says *read from the ref, not the working tree*. This
+  one says the reading must not write. Following the first while typing `checkout -- .` still
+  destroys the checkout. Measured: a nightly survey ran `checkout origin/main -- .` against a peer's
+  checkout; it did no harm only because that checkout happened to be clean and already at the ref.
+
 ## A fleet audit measures against the FORGE, never against `refs/remotes/*` as found
 
 **`origin/<default>` is a local file.** It is a pointer cached by the last fetch, and its *spelling*
