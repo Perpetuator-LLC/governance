@@ -191,6 +191,16 @@ check "reconcile fixes it: home fixed, drift ok, a backup holding the edit" \
 rc="$(gov check --home "$H")"
 check "…and check --home is in sync again" "[ '$rc' = '0' ]"
 
+# A DEAD HOOK in a config the install does not own is its own item, never "refused drift": a peer read
+# that wording as "reconcile refused to render" while the render had in fact landed.
+mkdir -p "$H/.codex"; printf '{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.codex/hooks/gone.sh"}]}]}}\n' > "$H/.codex/hooks.json"
+rc="$(gov reconcile --home "$H")"
+check "a dead hook outside the install: drift is ok, a separate hooks item refuses (exit 1)" \
+  "[ '$rc' = '1' ] && status_of ok \"drift $H\" && grep -q '^refused *hooks .*OUTSIDE this install' '$TMP/stdout'"
+rm "$H/.codex/hooks.json"
+rc="$(gov reconcile --home "$H")"
+check "…and without it, no hooks item and exit 0 (control)" "[ '$rc' = '0' ] && ! grep -q 'hooks ' '$TMP/stdout'"
+
 echo "governance reconcile — adapter shape and refusals"
 mv "$ORG/.governance/AGENTS.md" "$TMP/org-agents.bak"
 rc="$(gov reconcile --home "$H")"
