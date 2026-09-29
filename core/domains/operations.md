@@ -422,6 +422,53 @@ authors, one only by luck.
 - **Where a working precedent exists in the repository, open it.** A precedent is a control; your own
   draft is not.
 
+## Reproduce a bug before fixing it, on the current code, and record it on the ticket
+
+**A bug ticket describes the code as it was when it was filed.** Where several lanes land changes in
+parallel, a reported defect is often already gone, removed as a side effect of another fix. A fix
+written against the report then fixes nothing, or solves a solved problem a second time in a shape
+that conflicts with the first.
+
+**Before writing a fix, reproduce the report on the current default branch** (or on the deployed
+build it was reported against) **and record on the ticket:** the steps or command, observed versus
+expected, and the commit it ran against.
+- **It reproduces** → that reproduction becomes the fix's first failing test.
+- **It does not reproduce** → find the change that removed it (search the history between the ticket's
+  commit and now), and close the ticket citing that change.
+- **It does not reproduce, and no removing change can be found** → do not close it as fixed. Record
+  what was tried, under which conditions, and hand it back to the reporter as *not reproduced*. A
+  failure you can no longer see, and cannot explain, is not a fix.
+
+**Scope: bug tickets**, meaning a claim that existing behaviour is wrong. Feature work and docs have
+nothing to reproduce. **Two mirrors:**
+- **An intermittent failure is not gone after one clean run.** Match the report's conditions and
+  frequency before calling it absent (`technical.md` → *A single red is a HYPOTHESIS, not a baseline*).
+- **The reproduction must not cause the harm.** A bug seen only on production data, or a security
+  flaw, is reproduced against a copy or a local instance, never by exercising it on the live system.
+
+**Observed:** the human reported, several times, a seat starting work on a bug that another change had
+already fixed.
+
+## Declare a cross-repository dependency as a LABEL the sequencer reads, not as prose
+
+When work in one repository cannot land before work in another, record it where a scheduler looks: a
+label, not a sentence in a comment. An orchestrator sequences many lanes by filtering, and a dependency
+stated in a ticket's fifth comment is invisible to a filter. The same fact as a label is one query.
+Two meanings cover it (shown in scoped-label form):
+
+| label | means | set by | cleared |
+|---|---|---|---|
+| `Status/Blocked` on a ticket | work cannot start until the linked ticket lands | the lane that learns of the dependency, the moment it learns it, with the blocking ticket linked | as part of landing the blocker, or by a check that reads the link and sees it closed |
+| `Compat/Breaking` on a change | deploying this change alone breaks a partner; the named partner repository lands first (for example, a frontend that reads a field its backend does not serve yet) | the change's author, before review | never: it records a property of that change and gates the deploy order |
+
+**The mirror: a stale `Blocked` label is its own outage.** Set and never cleared, it parks a lane on
+work that is already free, and nothing about the label looks wrong. That is why the label must name its
+blocker, and why clearing it belongs to landing the blocker.
+
+**Scope:** dependencies between repositories or lanes. Inside one repository, branch order already
+sequences the work. It depends on something reading the labels to sequence; where nothing does, they are
+still the most compact statement of the dependency, but they gate nothing.
+
 ## Routines are infrastructure — they migrate, or they silently die
 
 **Every scheduled task and skill is migration payload, equal to threads and tickets.** A migration
