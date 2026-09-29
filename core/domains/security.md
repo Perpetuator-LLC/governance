@@ -252,6 +252,13 @@ never argv. A ceremony that PRINTS a secret is worse than one that asks for it.
   you could not read, and you cannot read any of them — so a clobber is undetectable by the writer.
 - **Authenticated probes emit a status code and nothing else:** `-s -o /dev/null -w '%{http_code}'`.
   A response body is where the credential comes back.
+- **A formatter's or differ's DIFF output is a READ of every file it touches, ignored files
+  included.** Run on a directory, a formatter walks the filesystem, not the git index, so a local
+  secrets file beside the code (an ignored variables file, an env file) is formatted too, and every
+  line it would change is printed into your context. Name the tracked files you mean (from
+  `git ls-files`), or drop the diff flag so it lists files without printing them. **Scope:** the
+  hazard is directory scope plus untracked or ignored files. A differ on named, tracked paths is fine,
+  and so is `git diff`, which reads only what git tracks unless told otherwise.
 
 ⚠️ **CODE that prints a secret — and the day its output gains a reader.** The rules above bind what an
 agent does and the commands it hands a human; they say nothing about **code that prints a secret at
