@@ -27,7 +27,9 @@ ways a rendered file goes wrong, because they have different fixes:
 INSTALL builds a harness home from CORE (--repo, default this repository) and each ADAPTER directory.
 --home is required and never defaults: pass --home "$HOME" to install for real. For --harness claude
 (the default), under <home>/.claude/:
-  CLAUDE.md               rendered: core/AGENTS.md → each adapter AGENTS.md → --local
+  CLAUDE.md               rendered: core/AGENTS.md → each adapter AGENTS.md → --local. A layer's
+                          AGENTS.budget (one byte count) caps its AGENTS.md: over it, the install is
+                          refused until the file is trimmed or the budget is raised
   governance/<domain>.md  rendered: core/domains/<domain>.md → each adapter domains/<domain>.md
   skills/ hooks/ agents/ bin/
                           real directories holding one symlink per entry, core first, then adapters;
@@ -239,6 +241,12 @@ def record(rel, out):
     r = {"path": rel, "type": out["type"]}
     if out["type"] == "file":
         r["sha256"] = out["sha256"]
+        # A JSON output is compared by PARSED content (see matches), which needs the rendered text. A
+        # record holding only the hash made that comparison unreachable from `check`: an application's
+        # re-serialisation read as EDITED BY HAND every day, while `install` (which compares against the
+        # plan, text included) called the same file unchanged.
+        if rel.endswith(".json") and "text" in out:
+            r["text"] = out["text"]
     elif out["type"] == "symlink":
         r["target"] = out["target"]
     return r
@@ -362,6 +370,24 @@ def build_plan(repo, adapters, local, harnesses):
     instruction = plan.render(
         [(n, os.path.join(ir, "AGENTS.md")) for n, _, ir in layers if os.path.isfile(os.path.join(ir, "AGENTS.md"))]
         + ([("local", local)] if local else []))
+    # RESIDENT BUDGET. A layer may declare a byte budget for its AGENTS.md in AGENTS.budget (one number).
+    # That file is injected into every session, so its growth is paid on every turn, and a budget test
+    # that runs only when someone runs the suite was passed one reasonable line at a time. Rendering is
+    # the one step every change goes through, so an over-budget layer is refused HERE: trim it, or raise
+    # the budget in the same change, where the raise is one visible, reviewable line.
+    for n, _, ir in layers:
+        bf, af = os.path.join(ir, "AGENTS.budget"), os.path.join(ir, "AGENTS.md")
+        if not (os.path.isfile(bf) and os.path.isfile(af)):
+            continue
+        with open(bf, encoding="utf-8") as fh:
+            raw = fh.read().strip()
+        if not raw.isdigit():
+            raise Refusal(f"{n} AGENTS.budget must hold one byte count, got {raw!r}: {bf}")
+        plan.sources.setdefault(bf, file_sha(bf))
+        size = os.path.getsize(af)
+        if size > int(raw):
+            raise Refusal(f"{n} AGENTS.md is {size} bytes, over its budget of {raw} ({bf}): trim it, or raise "
+                          f"the budget in the same change")
     providers = [(n, os.path.join(pr, "scheduled-tasks")) for n, pr, _ in layers[1:]
                  if os.path.isdir(os.path.join(pr, "scheduled-tasks"))]
     if len(providers) > 1:
@@ -747,6 +773,12 @@ def cmd_restore(a):
 
 # --- check --home -----------------------------------------------------------------------------------
 
+def _sans_text(r):
+    """A record without its kept text: staleness is decided by the hash, the text only serves the
+    parsed comparison, and a record from before texts were kept must not read as stale."""
+    return {k: v for k, v in r.items() if k != "text"}
+
+
 def check_home(home):
     """(lines, drift count, error or None) for the install recorded in HOME."""
     try:
@@ -765,6 +797,8 @@ def check_home(home):
     recorded = {o["path"]: o for o in state["outputs"]}
     for rel, rec in recorded.items():
         cur, want, shown = inspect(home, rel), plan.outputs.get(rel), os.path.join(home, rel)
+        if rec["type"] == "file" and "text" not in rec and want and want.get("sha256") == rec.get("sha256"):
+            rec = dict(rec, text=want["text"])   # a record written before texts were kept: same render
         if cur["type"] == "missing" or (rec["type"] == "dir" and not matches(home, rel, rec, cur)):
             line = f"MISSING  {shown} — re-install"
         elif rec["type"] == "file" and not matches(home, rel, rec, cur):
@@ -773,7 +807,7 @@ def check_home(home):
             line = f"LINK MOVED  {shown} → {cur.get('target', cur['type'])} (installed → {rec['target']}) — re-install"
         elif want is None:
             line = f"LAYERS CHANGED  {shown} is no longer produced by the layers — re-install"
-        elif record(rel, want) != rec:
+        elif _sans_text(record(rel, want)) != _sans_text(rec):
             line = f"LAYERS CHANGED  {shown} is stale — re-install"
         else:
             lines.append(f"in sync  {shown}")

@@ -411,6 +411,27 @@ rc="$(gov install --home "$MH" --repo "$C" --adapter "$A1" --local "$LOCAL")"
 check "an explicit --local outranks the home's own file" \
   "[ '$rc' = '0' ] && grep -q '# local override' '$MH/.claude/CLAUDE.md' && ! grep -q '# home file' '$MH/.claude/CLAUDE.md'"
 
+# RESIDENT BUDGET: a layer's AGENTS.budget caps its AGENTS.md at render time, the one step every change
+# goes through. A test that ran only when someone ran the suite was passed one line at a time.
+AB="$TMP/adapter-budget"; HB="$TMP/home-budget"; mkdir -p "$HB"
+put "$AB/AGENTS.md" "$(printf '# budgeted adapter\n%.0s' 1 2 3 4 5)"     # a known size, measured below
+size=$(wc -c < "$AB/AGENTS.md" | tr -d ' ')
+put "$AB/AGENTS.budget" "$((size - 1))"
+rc="$(gov install --home "$HB" --repo "$C" --adapter "$AB" --harness claude --no-local)"
+check "an AGENTS.md one byte over its layer's budget REFUSES the install, and nothing is written" \
+  "[ '$rc' = '2' ] && grep -q 'over its budget of $((size - 1))' '$TMP/stderr' && [ -z \"\$(ls -A '$HB')\" ]"
+put "$AB/AGENTS.budget" "$size"
+rc="$(gov install --home "$HB" --repo "$C" --adapter "$AB" --harness claude --no-local)"
+check "…at exactly its budget, it installs" "[ '$rc' = '0' ]"
+put "$AB/AGENTS.budget" "about 25k"
+rc="$(gov check --home "$HB")"
+check "…a budget that is not a number is refused, never read as no budget" \
+  "[ '$rc' = '2' ] && grep -q 'must hold one byte count' '$TMP/stderr'"
+put "$AB/AGENTS.budget" "$size"; printf 'one more line\n' >> "$AB/AGENTS.md"
+rc="$(gov check --home "$HB")"
+check "…and growth past it after install makes check refuse to re-derive, loudly" \
+  "[ '$rc' = '2' ] && grep -q 'over its budget' '$TMP/stderr'"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

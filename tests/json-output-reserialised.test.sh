@@ -41,5 +41,43 @@ r=$(probe '{"a":1,"b":3}' '{"a":1,"b":2}')
 r=$(probe 'not json at all' '{"a":1}')
 [ "$r" = "False" ] && ok "unparseable live file is a finding, never a pass" \
                    || bad "unparseable file passed (got $r)"
+
+# THE REAL PATH. The probes above hand matches() a `want` WITH text, which a recorded entry never had:
+# record() kept only the hash, so `check --home` could not reach the parsed comparison, and the app's
+# own re-serialisation of settings.json read as EDITED BY HAND every day while `install` called the
+# same file unchanged. So: install, re-serialise as the app does, and ask `check` itself.
+A="$T/adapter"; H="$T/home"; mkdir -p "$A/settings" "$H"
+printf '# fixture adapter\n' > "$A/AGENTS.md"
+printf '{"outputStyle": "Concise", "permissions": {"deny": ["Bash(rm -rf /)"]}, "zeta": 1}\n' > "$A/settings/claude.json"
+gov() { python3 "$ROOT/bin/governance" "$@" >"$T/out" 2>"$T/err"; echo $?; }
+rc=$(gov install --home "$H" --adapter "$A" --harness claude --no-local)
+[ "$rc" = 0 ] && ok "fixture install" || bad "fixture install failed (rc $rc): $(head -2 "$T/err")"
+reserialise() { python3 - "$H/.claude/settings.json" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p))
+open(p, "w").write(json.dumps(dict(reversed(list(d.items()))), indent=4) + "\n")   # new key order, new spacing
+PY
+}
+reserialise
+rc=$(gov check --home "$H")
+[ "$rc" = 0 ] && ! grep -q 'EDITED BY HAND' "$T/out" && ok "check: an app's re-serialisation of settings.json is in sync" \
+  || bad "check reported the re-serialised settings.json (rc $rc): $(grep -v '^in sync' "$T/out" | head -2)"
+python3 - "$H/.governance-state.json" <<'PY'
+import json, sys
+p = sys.argv[1]; s = json.load(open(p))
+for o in s["outputs"]:
+    o.pop("text", None)                 # a state written before texts were kept
+open(p, "w").write(json.dumps(s))
+PY
+rc=$(gov check --home "$H")
+[ "$rc" = 0 ] && ok "check: an OLD record (no text) of the same render is still in sync, not stale" \
+  || bad "an old textless record read as drift (rc $rc): $(grep -v '^in sync' "$T/out" | head -2)"
+python3 - "$H/.claude/settings.json" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p)); d["outputStyle"] = "Verbose"; open(p, "w").write(json.dumps(d))
+PY
+rc=$(gov check --home "$H")
+[ "$rc" = 1 ] && grep -q 'EDITED BY HAND.*settings.json' "$T/out" && ok "check: a real value change is still EDITED BY HAND" \
+  || bad "a real edit was not caught (rc $rc)"
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
