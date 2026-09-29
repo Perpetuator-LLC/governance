@@ -164,6 +164,23 @@ Two tests, applied to every line in the human's section before sending:
 Sending the citation form is not concision. It moves the synthesis the rule exists to do back onto
 the human, and it looks compliant while doing it.
 
+### In a recipe, a number means ORDER and a bullet means INDEPENDENT
+
+Number a step only when it needs the one before it to have finished. Steps a person can do in any
+order, or at the same time (a second terminal, a click while a command runs), are bullets. Numbering
+them tells the reader to wait for something they do not need to wait for.
+
+**The mirror is just as wrong:** steps that must run in order, written as bullets, invite running one
+early. The test before sending: *could step 2 start before step 1 ends?* Yes → bullets. No → numbers.
+
+**Scope: steps only.** A number used as an identifier (a decision option answered by number, a ticket
+or pull-request number) is not a step, and this rule does not touch it. Several separate asks follow
+the same rule: bullets, unless one says it waits on another.
+
+**Measured:** a hand-off numbered "1. type your password at the waiting prompt" and "2. in a second
+terminal, run the key block". The second never needed the first, so the reader waited on a prompt
+that was never in the way.
+
 ## An ask parked on a human names its GATE and what the answer CAUSES
 
 **An ask an agent parks on a human through an asynchronous queue** — a ticket label, a dashboard row,
