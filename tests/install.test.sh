@@ -11,6 +11,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GOV="$ROOT/bin/governance"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+export GOVERNANCE_DENY_LOG="$TMP/deny.jsonl"   # the gates now write a deny trail: never the real one
 pass=0; fail=0
 ok()   { echo "  ✅ $1"; pass=$((pass+1)); }
 bad()  { echo "  ❌ $1"; fail=$((fail+1)); }
