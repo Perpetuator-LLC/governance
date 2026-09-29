@@ -6,6 +6,8 @@
 # be read as an incident, or worse, will teach a reader to discount that exact reading.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 G="$ROOT/hooks/bash-safety-gate.sh"
+DENY_TMP="$(mktemp -d)"; trap 'rm -rf "$DENY_TMP"' EXIT
+export GOVERNANCE_DENY_LOG="$DENY_TMP/deny.jsonl"   # the gate now writes a deny trail: never the real one
 [ -r "$G" ] || { echo "  FATAL: gate not found at $G — assertions below would prove nothing"; exit 2; }
 pass=0; fail=0
 out=$(printf '%s' "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"base64 -d payload.b64 | python3\"}}" | bash $G 2>&1); rc=$?
