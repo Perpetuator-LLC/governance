@@ -4,9 +4,11 @@
 # The check ran one regex over the whole command, so `.*` spanned `&&`, `;` and `|`: a reader verb in
 # one command and a name merely CONTAINING ".env" in another (`grep -q x a.json && cp
 # sample.environment.ts b`) was blocked, several times a session in one lane. An over-broad floor gate
-# is one the next person deletes. The fix narrows the MATCH UNIT, never the pattern — so this suite
-# proves both halves on the channel the harness uses (PreToolUse JSON on stdin): every real read stays
-# BLOCKED, and the cross-chain false positives are ALLOWED.
+# is one the next person deletes. The fix narrows the MATCH UNIT; a later one gave the name a RIGHT
+# BOUNDARY (`.environment` is not `.env`) and removes heredoc BODIES given to cat/tee (prose naming the
+# file reads nothing). This suite proves both halves on the channel the harness uses (PreToolUse JSON on
+# stdin): every real read stays BLOCKED, including every way a removed body could hide one, and the
+# false positives are ALLOWED.
 #
 # ⚠️ Most rows below are ways a naive split would WIDEN the gate. Each was either found by probing or
 # is the obvious next attempt: a separator inside quotes, inside `$(…)`/backticks/subshells/groups,
@@ -70,13 +72,41 @@ cases = [
     # newlines: a QUOTED one is inside a word; a backslash-newline continues ONE command
     (BLOCK, f'grep "KEY\n" {E}'), (BLOCK, f'cat "\n" {E}'), (BLOCK, f"echo hi\ncat {E}"),
     (BLOCK, f"head -2 \\\n  {E}"),
-    # the false positives this change exists for
-    (FP, "git worktree add ../wt && grep -q foo package.json && cp src/sample.environment.ts src/environment.ts"),
-    (FP, "head -5 README.md && ls src/sample.environment.ts"),
-    (FP, "tail -1 log.txt; cp sample.environment.ts environment.ts"),
-    (FP, "grep -c x a.txt | wc -l && test -f src/sample.environment.ts"),
-    (FP, "head -5 README.md\ncp src/sample.environment.ts src/environment.ts"),
+    # cross-sub-command false positives: a reader in one command, a secret-shaped NAME in another that
+    # does not read it. These still match the whole-string pattern, so they need the per-sub-command check.
+    (FP, f"git worktree add ../wt && grep -q foo package.json && cp {E}.example {E}.local"),
+    (FP, f"head -5 README.md && ls -la {E}.example"),
+    (FP, f"tail -1 log.txt; test -f {E}"),
+    (FP, f"head -5 README.md\ncp {E}.example {E}"),
+    # RIGHT BOUNDARY: the name still matches with a non-letter after it, `rc`, or the end ...
+    (BLOCK, f"cat {E}"), (BLOCK, f"head -1 app/{E}rc"), (BLOCK, f'cat "$D/{E}"'),
+    (BLOCK, f"tail {E}_x"), (BLOCK, f"more {E}2"), (BLOCK, f"grep KEY {E}-staging"),
+    # ... and a longer word that merely STARTS with the letters is not the file. The whole-string pattern
+    # no longer matches, so these are allowed on every leg, python3 or not.
+    (ALLOW, "git worktree add ../wt && grep -q foo package.json && cp src/sample.environment.ts src/environment.ts"),
+    (ALLOW, "head -5 README.md && ls src/sample.environment.ts"),
+    (ALLOW, "tail -1 log.txt; cp sample.environment.ts environment.ts"),
+    (ALLOW, "grep -c x a.txt | wc -l && test -f src/sample.environment.ts"),
+    (ALLOW, f"grep -n properties{E}ironment config.py"), (ALLOW, f"cat src/sample{E}ironment.ts"),
+    (ALLOW, f"head -3 proxy/{E}oy"),
+    # A heredoc BODY given to cat/tee is data. Removing it needs python3, so these fail closed without it.
+    # The first is the shape that lost a hand-off: prose with an apostrophe and a parenthesis.
     (FP, "cat <<EOF > notes.md\nremember the " + E + " file\nEOF"),
+    (FP, "cat >> notes.md <<'EOF'\nthe checkout's " + E + " file is absent (see the log)\nEOF"),
+    (FP, "cd notes && tee -a handoff.md <<'EOF'\nthen cat the " + E + " to check `x`\nEOF"),
+    (FP, 'cat > f <<"EOF"\nquoted with "double" delimiter, ' + E + " (named)\nEOF"),
+    (FP, "cat > f <<EOF\nunquoted, no substitution: grep KEY " + E + " (prose)\nEOF"),
+    (FP, "cat <<-'EOF' > f\n\tindented " + E + " (prose)\n\tEOF"),
+    # ... and every way removing a body could OPEN a read stays blocked
+    (BLOCK, "cat > f <<EOF\n$(cat " + E + ")\nEOF"),        # unquoted: $( ) runs while the body is built
+    (BLOCK, "cat > f <<EOF\n`head " + E + "`\nEOF"),        # unquoted: so does a backtick
+    (BLOCK, "bash <<'EOF'\ncat " + E + "\nEOF"),             # an interpreter EXECUTES its body
+    (BLOCK, "sh -s <<'EOF'\nhead -3 " + E + "\nEOF"),
+    (BLOCK, "cat " + E + " - > out <<'EOF'\nx\nEOF"),        # the reader is on the command line
+    (BLOCK, "cat > f <<'EOF'\nx\nEOF\ncat " + E),             # a read AFTER the heredoc
+    (BLOCK, "cat > f <<'EOF'\ncat " + E),                     # unterminated: nothing is removed
+    (BLOCK, "cat > f <<'EOF'\nx\nEOF2\ncat " + E),            # the terminator must match exactly
+    (BLOCK, "cat <<'A' <<'B'\n" + E + "\nA\ncat " + E + "\nB"),  # two heredocs on a line: nothing removed
     # controls
     (ALLOW, "ls -la"), (ALLOW, "git status"),
 ]
