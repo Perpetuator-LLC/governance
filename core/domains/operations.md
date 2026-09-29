@@ -567,6 +567,31 @@ recent. A dropped precondition — the record was incomplete at birth — is def
 being complete as far as it read. **A freshness check that asks only *"how old is this?"* passes
 this case every time.**
 
+### A drafted message is a record too: re-read the thread immediately before sending
+
+A draft covers its thread only up to the last message its author read, which is its watermark.
+Approval takes time, and the recipient keeps writing meanwhile. So an approved draft can be the most
+carefully checked message in the thread and still answer a conversation that has moved on.
+
+**Immediately before sending any message that was not composed in the same read** (a human-approved
+draft, a queued reply, a scheduled send), re-read the recipient's thread since the draft's watermark:
+- **nothing new** → send as drafted;
+- **new messages** → bring the draft to the current state *within the approved intent*. Anything the
+  rewrite adds beyond that intent — a new commitment, a new ask, a changed number — goes back to the
+  approver.
+
+**Scope: two mirrors the vivid case hides.**
+- **The message may no longer be needed.** The recipient may have answered or withdrawn their own
+  question. Check whether to send at all, not only whether the wording is current.
+- **An approved EXACT wording is not rewritten in place.** A notice, a quote, a contract term or
+  anything signed was approved as text, not as intent. New information becomes a follow-up, or goes
+  back to the approver; it is never a silent edit of the approved words.
+
+**Measured:** a reply was approved about an hour and a half after it was drafted. The re-read at send
+time found two new messages from the recipient: one reported that what the draft promised to do had
+already happened, and one added two new asks. One of the draft's four lines was stale, and both new
+asks would have gone unanswered.
+
 ## A retirement falsifies every CLAIM that names the thing, and none of the RECORDS
 
 When something is retired, renamed or moved — a repository, a service, a home for a class of
