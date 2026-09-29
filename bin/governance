@@ -27,7 +27,9 @@ ways a rendered file goes wrong, because they have different fixes:
 INSTALL builds a harness home from CORE (--repo, default this repository) and each ADAPTER directory.
 --home is required and never defaults: pass --home "$HOME" to install for real. For --harness claude
 (the default), under <home>/.claude/:
-  CLAUDE.md               rendered: core/AGENTS.md → each adapter AGENTS.md → --local
+  CLAUDE.md               rendered: core/AGENTS.md → each adapter AGENTS.md → --local. A layer's
+                          AGENTS.budget (one byte count) caps its AGENTS.md: over it, the install is
+                          refused until the file is trimmed or the budget is raised
   governance/<domain>.md  rendered: core/domains/<domain>.md → each adapter domains/<domain>.md
   skills/ hooks/ agents/ bin/
                           real directories holding one symlink per entry, core first, then adapters;
@@ -41,8 +43,11 @@ INSTALL builds a harness home from CORE (--repo, default this repository) and ea
 --harness codex renders <home>/.codex/AGENTS.md; --harness grok renders
 <home>/.grok/rules/00-governance.md, assembles <home>/.grok/skills/ like the claude skills, and renders
 <home>/.grok/hooks/governance-floor.json: the PreToolUse gates of the merged settings, matchers mapped to
-Grok's tool names, commands pointing at the hook scripts themselves. An unmappable matcher, or a command
-naming a hook no layer provides, is refused: a floor gate is never dropped silently.
+Grok's tool names, commands pointing at the hook scripts themselves. A layer that wires a matcher the core
+does not know (a tool its own installation provides) declares its Grok names in
+<layer>/harness/grok/tools.json, {"<matcher>": ["<grok tool>", ...]}; it may add a name, never change one.
+An unmappable matcher, or a command naming a hook no layer provides, is refused: a floor gate is never
+dropped silently.
 The harness list is declarative: a re-install without a harness removes that harness's outputs.
 
 UNDO FIRST. Before anything is touched, the prior state of every path the install will change — missing,
@@ -239,6 +244,12 @@ def record(rel, out):
     r = {"path": rel, "type": out["type"]}
     if out["type"] == "file":
         r["sha256"] = out["sha256"]
+        # A JSON output is compared by PARSED content (see matches), which needs the rendered text. A
+        # record holding only the hash made that comparison unreachable from `check`: an application's
+        # re-serialisation read as EDITED BY HAND every day, while `install` (which compares against the
+        # plan, text included) called the same file unchanged.
+        if rel.endswith(".json") and "text" in out:
+            r["text"] = out["text"]
     elif out["type"] == "symlink":
         r["target"] = out["target"]
     return r
@@ -312,22 +323,55 @@ def dump_json(data):
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
-def grok_floor(settings, hooks):
+def grok_tool_names(plan, layers):
+    """GROK_TOOLS, extended by each layer's harness/grok/tools.json for the matchers that layer wires.
+
+    A layer can gate a tool its own installation provides (a host app's terminal panel, say). The core
+    cannot name that tool, because the name is the installation's, yet an unmapped matcher refuses the
+    whole Grok render. So the layer that wires the matcher declares its Grok names. It may ADD a name and
+    never change one, because re-mapping a core matcher would move a floor gate off the tool it guards."""
+    names = dict(GROK_TOOLS)
+    for name, parts_root, _ in layers:
+        p = os.path.join(parts_root, "harness", "grok", "tools.json")
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except ValueError as e:
+            raise Refusal(f"{name} grok tool names are not valid JSON: {p}: {e}")
+        if not isinstance(data, dict) or not all(
+                isinstance(k, str) and k and isinstance(v, list) and v and all(isinstance(x, str) and x for x in v)
+                for k, v in data.items()):
+            raise Refusal(f"{name} grok tool names must map a matcher to a non-empty list of Grok tool names: {p}")
+        plan.sources.setdefault(p, file_sha(p))
+        for k, v in data.items():
+            if k in names and tuple(v) != tuple(names[k]):
+                raise Refusal(f"{name} re-maps `{k}` for grok to {v}, which is already mapped to {list(names[k])}; "
+                              f"a layer adds Grok tool names, never changes one")
+            names[k] = tuple(v)
+    return names
+
+
+def grok_floor(settings, hooks, tools=GROK_TOOLS):
     """The merged settings' PreToolUse gates, wired for Grok, or None when there are none.
 
     Only PreToolUse: that is the floor. The other events carry Claude-specific behaviour (a SessionStart
     hook that writes .claude/ files) that has never been run on Grok. Each command names the hook
-    script by its source path, because ~/.claude/hooks exists only when claude is installed too."""
-    groups = []
+    script by its source path, because ~/.claude/hooks exists only when claude is installed too.
+    Two Claude tools can map to one Grok tool (the shell, and a terminal panel Grok does not have), so a
+    command already wired on the same Grok matcher is not wired again: it would run twice per call."""
+    groups, wired = [], set()
     for g in (settings.get("hooks") or {}).get("PreToolUse") or []:
         names = []
         for m in (g.get("matcher") or "").split("|"):
             if not m:
                 continue
-            if m not in GROK_TOOLS:
+            if m not in tools:
                 raise Refusal(f"PreToolUse matcher `{m}` has no known Grok tool name, so its gate cannot be wired "
-                              f"for grok; add the name to GROK_TOOLS from a captured payload, never a guess")
-            names += [n for n in GROK_TOOLS[m] if n not in names]
+                              f"for grok; declare it in the wiring layer's harness/grok/tools.json (or the "
+                              f"core's GROK_TOOLS), from a captured payload, never a guess")
+            names += [n for n in tools[m] if n not in names]
         handlers = []
         for h in g.get("hooks") or []:
             cmd = h.get("command", "")
@@ -338,8 +382,12 @@ def grok_floor(settings, hooks):
             cmd = CLAUDE_HOOK_REF.sub(lambda mo: shlex.quote(hooks[mo.group(1)]), cmd)
             if "~/.claude" in cmd:
                 raise Refusal(f"PreToolUse command `{cmd}` reaches into ~/.claude, which grok does not own")
+            if ("|".join(names), cmd) in wired:
+                continue
+            wired.add(("|".join(names), cmd))
             handlers.append(dict(h, command=cmd))
-        groups.append({"matcher": "|".join(names), "hooks": handlers})
+        if handlers:
+            groups.append({"matcher": "|".join(names), "hooks": handlers})
     return {"hooks": {"PreToolUse": groups}} if groups else None
 
 
@@ -362,6 +410,24 @@ def build_plan(repo, adapters, local, harnesses):
     instruction = plan.render(
         [(n, os.path.join(ir, "AGENTS.md")) for n, _, ir in layers if os.path.isfile(os.path.join(ir, "AGENTS.md"))]
         + ([("local", local)] if local else []))
+    # RESIDENT BUDGET. A layer may declare a byte budget for its AGENTS.md in AGENTS.budget (one number).
+    # That file is injected into every session, so its growth is paid on every turn, and a budget test
+    # that runs only when someone runs the suite was passed one reasonable line at a time. Rendering is
+    # the one step every change goes through, so an over-budget layer is refused HERE: trim it, or raise
+    # the budget in the same change, where the raise is one visible, reviewable line.
+    for n, _, ir in layers:
+        bf, af = os.path.join(ir, "AGENTS.budget"), os.path.join(ir, "AGENTS.md")
+        if not (os.path.isfile(bf) and os.path.isfile(af)):
+            continue
+        with open(bf, encoding="utf-8") as fh:
+            raw = fh.read().strip()
+        if not raw.isdigit():
+            raise Refusal(f"{n} AGENTS.budget must hold one byte count, got {raw!r}: {bf}")
+        plan.sources.setdefault(bf, file_sha(bf))
+        size = os.path.getsize(af)
+        if size > int(raw):
+            raise Refusal(f"{n} AGENTS.md is {size} bytes, over its budget of {raw} ({bf}): trim it, or raise "
+                          f"the budget in the same change")
     providers = [(n, os.path.join(pr, "scheduled-tasks")) for n, pr, _ in layers[1:]
                  if os.path.isdir(os.path.join(pr, "scheduled-tasks"))]
     if len(providers) > 1:
@@ -418,7 +484,7 @@ def build_plan(repo, adapters, local, harnesses):
                 plan.dir(".grok/agents")
                 for entry, src in sorted(grok_agents.items()):
                     plan.link(f".grok/agents/{entry}", src)
-            floor = grok_floor(settings, links["hooks"])
+            floor = grok_floor(settings, links["hooks"], grok_tool_names(plan, layers))
             if floor:
                 plan.dir(".grok/hooks")
                 plan.file(GROK_FLOOR, dump_json(floor))
@@ -747,6 +813,12 @@ def cmd_restore(a):
 
 # --- check --home -----------------------------------------------------------------------------------
 
+def _sans_text(r):
+    """A record without its kept text: staleness is decided by the hash, the text only serves the
+    parsed comparison, and a record from before texts were kept must not read as stale."""
+    return {k: v for k, v in r.items() if k != "text"}
+
+
 def check_home(home):
     """(lines, drift count, error or None) for the install recorded in HOME."""
     try:
@@ -765,6 +837,8 @@ def check_home(home):
     recorded = {o["path"]: o for o in state["outputs"]}
     for rel, rec in recorded.items():
         cur, want, shown = inspect(home, rel), plan.outputs.get(rel), os.path.join(home, rel)
+        if rec["type"] == "file" and "text" not in rec and want and want.get("sha256") == rec.get("sha256"):
+            rec = dict(rec, text=want["text"])   # a record written before texts were kept: same render
         if cur["type"] == "missing" or (rec["type"] == "dir" and not matches(home, rel, rec, cur)):
             line = f"MISSING  {shown} — re-install"
         elif rec["type"] == "file" and not matches(home, rel, rec, cur):
@@ -773,7 +847,7 @@ def check_home(home):
             line = f"LINK MOVED  {shown} → {cur.get('target', cur['type'])} (installed → {rec['target']}) — re-install"
         elif want is None:
             line = f"LAYERS CHANGED  {shown} is no longer produced by the layers — re-install"
-        elif record(rel, want) != rec:
+        elif _sans_text(record(rel, want)) != _sans_text(rec):
             line = f"LAYERS CHANGED  {shown} is stale — re-install"
         else:
             lines.append(f"in sync  {shown}")

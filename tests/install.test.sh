@@ -11,6 +11,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GOV="$ROOT/bin/governance"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+export GOVERNANCE_DENY_LOG="$TMP/deny.jsonl"   # the gates now write a deny trail: never the real one
 pass=0; fail=0
 ok()   { echo "  ✅ $1"; pass=$((pass+1)); }
 bad()  { echo "  ❌ $1"; fail=$((fail+1)); }
@@ -293,6 +294,46 @@ check "grok: a PreToolUse matcher with no known Grok tool name is REFUSED, never
   "[ '$rc' = '2' ] && grep -q 'no known Grok tool name' '$TMP/stderr' && [ -z \"\$(ls -A '$HU')\" ]"
 rc="$(gov install --home "$HU" --repo "$C" --adapter "$A3" --harness claude)"
 check "…the same adapter installs for claude, where the matcher is native (control)" "[ '$rc' = '0' ]"
+
+# A layer gating a tool its OWN installation provides declares that tool's Grok names, because the core
+# cannot name it. It may add a name and never change one; a re-mapped core matcher would move a gate.
+A5="$TMP/adapter-panel"
+put "$A5/AGENTS.md" "# adapter five"
+put "$A5/hooks/panel-only.sh" 'exit 0'
+put "$A5/settings/claude.json" '{"hooks": {"PreToolUse": [{"matcher": "PanelTool", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/gate.sh"}, {"type": "command", "command": "bash ~/.claude/hooks/panel-only.sh"}]}]}}'
+put "$A5/harness/grok/tools.json" '{"PanelTool": ["run_terminal_command"]}'
+HP="$TMP/home-panel"; mkdir -p "$HP"
+rc="$(gov install --home "$HP" --repo "$C" --adapter "$A5" --harness grok)"
+panel_floor_ok() {
+  python3 - "$HP/.grok/hooks/governance-floor.json" "$C" "$A5" <<'PY2'
+import json, sys
+f, core, a5 = sys.argv[1:]
+pairs = [(g["matcher"], h["command"]) for g in json.load(open(f))["hooks"]["PreToolUse"] for h in g["hooks"]]
+want = [("run_terminal_command", f"bash {core}/hooks/gate.sh"), ("run_terminal_command", f"bash {a5}/hooks/panel-only.sh")]
+assert sorted(pairs) == sorted(want), pairs          # the shared gate once, not twice
+assert "PanelTool" not in open(f).read()
+PY2
+}
+check "grok: a layer's harness/grok/tools.json maps its own matcher; the shared gate is wired ONCE, the layer's own gate too" \
+  "[ '$rc' = '0' ] && panel_floor_ok"
+rc="$(gov check --home "$HP")"
+check "…check is in sync" "[ '$rc' = '0' ]"
+put "$A5/harness/grok/tools.json" '{"PanelTool": ["run_terminal_command"], "OtherTool": ["run_terminal_command"]}'
+rc="$(gov check --home "$HP")"
+check "…a tools.json edit that changes no rendered gate stays in sync (check compares outputs)" "[ '$rc' = '0' ]"
+put "$A5/harness/grok/tools.json" '{"PanelTool": ["run_terminal_command", "write"]}'
+rc="$(gov check --home "$HP")"
+check "…one that moves a gate is LAYERS CHANGED on the Grok floor" "[ '$rc' = '1' ] && grep -q 'LAYERS CHANGED.*governance-floor.json' '$TMP/stdout'"
+A6="$TMP/adapter-remap"
+put "$A6/AGENTS.md" "# adapter six"
+put "$A6/harness/grok/tools.json" '{"Bash": ["something_else"]}'
+HR6="$TMP/home-remap"; mkdir -p "$HR6"
+rc="$(gov install --home "$HR6" --repo "$C" --adapter "$A6" --harness grok)"
+check "grok: a layer RE-MAPPING a core matcher is refused, and nothing is written" \
+  "[ '$rc' = '2' ] && grep -q 'never changes one' '$TMP/stderr' && [ -z \"\$(ls -A '$HR6')\" ]"
+put "$A6/harness/grok/tools.json" '{"PanelTool": "run_terminal_command"}'
+rc="$(gov install --home "$HR6" --repo "$C" --adapter "$A6" --harness grok)"
+check "grok: a tools.json value that is not a list is refused" "[ '$rc' = '2' ] && grep -q 'non-empty list' '$TMP/stderr'"
 A4="$TMP/adapter-missing-hook"
 put "$A4/AGENTS.md" "# adapter four"
 put "$A4/settings/claude.json" '{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/nowhere.sh"}]}]}}'
@@ -410,6 +451,27 @@ MH="$TMP/home-explicit-wins"; mkdir -p "$MH/.claude"; put "$MH/.claude/CLAUDE.lo
 rc="$(gov install --home "$MH" --repo "$C" --adapter "$A1" --local "$LOCAL")"
 check "an explicit --local outranks the home's own file" \
   "[ '$rc' = '0' ] && grep -q '# local override' '$MH/.claude/CLAUDE.md' && ! grep -q '# home file' '$MH/.claude/CLAUDE.md'"
+
+# RESIDENT BUDGET: a layer's AGENTS.budget caps its AGENTS.md at render time, the one step every change
+# goes through. A test that ran only when someone ran the suite was passed one line at a time.
+AB="$TMP/adapter-budget"; HB="$TMP/home-budget"; mkdir -p "$HB"
+put "$AB/AGENTS.md" "$(printf '# budgeted adapter\n%.0s' 1 2 3 4 5)"     # a known size, measured below
+size=$(wc -c < "$AB/AGENTS.md" | tr -d ' ')
+put "$AB/AGENTS.budget" "$((size - 1))"
+rc="$(gov install --home "$HB" --repo "$C" --adapter "$AB" --harness claude --no-local)"
+check "an AGENTS.md one byte over its layer's budget REFUSES the install, and nothing is written" \
+  "[ '$rc' = '2' ] && grep -q 'over its budget of $((size - 1))' '$TMP/stderr' && [ -z \"\$(ls -A '$HB')\" ]"
+put "$AB/AGENTS.budget" "$size"
+rc="$(gov install --home "$HB" --repo "$C" --adapter "$AB" --harness claude --no-local)"
+check "…at exactly its budget, it installs" "[ '$rc' = '0' ]"
+put "$AB/AGENTS.budget" "about 25k"
+rc="$(gov check --home "$HB")"
+check "…a budget that is not a number is refused, never read as no budget" \
+  "[ '$rc' = '2' ] && grep -q 'must hold one byte count' '$TMP/stderr'"
+put "$AB/AGENTS.budget" "$size"; printf 'one more line\n' >> "$AB/AGENTS.md"
+rc="$(gov check --home "$HB")"
+check "…and growth past it after install makes check refuse to re-derive, loudly" \
+  "[ '$rc' = '2' ] && grep -q 'over its budget' '$TMP/stderr'"
 
 echo
 echo "  $pass passed, $fail failed"
