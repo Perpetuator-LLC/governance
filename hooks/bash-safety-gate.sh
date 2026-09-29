@@ -144,7 +144,62 @@ fi
 
 # Block secret extraction — secrets must never enter agent context.
 # Catches: cat/grep/rg/head/tail on .env files, keychain access, docker env dumps.
-SECRET_READ='cat\s+.*\.env|grep\s+.*\.env|rg\s+.*\.env|head\s+.*\.env|tail\s+.*\.env|less\s+.*\.env|more\s+.*\.env'
+# The name has a RIGHT BOUNDARY: `.env` followed by a non-letter, `rc`, or the end. That still matches
+# `.env`, `.env.local`, `.env_x`, `"$D/.env"` and `.envrc` (direnv files hold secrets too), and stops
+# matching a longer word that merely starts with the letters: `properties.environment`,
+# `sample.environment.ts`, `.envoy.yaml`. Without it, any reader verb near such a word was refused.
+SECRET_NAME='\.env([^A-Za-z]|rc|$)'
+SECRET_READ="cat\s+.*$SECRET_NAME|grep\s+.*$SECRET_NAME|rg\s+.*$SECRET_NAME|head\s+.*$SECRET_NAME|tail\s+.*$SECRET_NAME|less\s+.*$SECRET_NAME|more\s+.*$SECRET_NAME"
+
+# A heredoc BODY given to `cat` or `tee` is DATA: those two only copy their stdin, so prose in the body
+# that names the file reads nothing. Refusing it blocked a seat's hand-off append (`cat >> <file> <<EOF`
+# whose note said the file was absent), and the successor booted from a stale note. Such a body is
+# removed before matching, and ONLY such a body. Every doubt keeps it, so this can only turn a block
+# into an allow, never the reverse:
+#   - any other owner keeps its body: `bash <<'EOF'` / `python3 - <<'EOF'` EXECUTE it;
+#   - an UNQUOTED delimiter keeps a body holding `$(` or a backtick: those run while the body is built;
+#   - no terminator, several heredocs on one line, an unusual delimiter, or no python3: nothing removed.
+# The command line itself is never removed, so `cat .env - > out <<'EOF'` still reads, and is refused.
+strip_data_heredocs() {  # <cmd> -> <cmd> with data-only heredoc bodies removed; unchanged on any doubt
+  if ! command -v python3 >/dev/null 2>&1; then printf '%s' "$1"; return 0; fi
+  python3 - "$1" <<'PY' 2>/dev/null || printf '%s' "$1"
+import re, sys
+cmd = sys.argv[1]
+MARK = re.compile(r"<<(-?)[ \t]*(?:'([A-Za-z_]\w*)'|\"([A-Za-z_]\w*)\"|([A-Za-z_]\w*)(?![\w'\"-]))")
+def strip(cmd):
+    lines, out, i = cmd.split("\n"), [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        marks = [m for m in MARK.finditer(line)
+                 if not (m.start() > 0 and line[m.start() - 1] == "<") and not line.startswith("<", m.start() + 2)]
+        if len(marks) != 1:
+            i += 1
+            continue
+        m = marks[0]
+        dash, sq, dq, bare = m.groups()
+        tag, quoted = sq or dq or bare, bool(sq or dq)
+        words = re.split(r"&&|\|\||[;|&]", line[:m.start()])[-1].split()
+        owner = words[0] if words else ""
+        j = i + 1
+        while j < len(lines) and (lines[j].lstrip("\t") if dash else lines[j]) != tag:
+            j += 1
+        if j == len(lines):                                  # unterminated: keep everything
+            i += 1
+            continue
+        body = "\n".join(lines[i + 1:j])
+        if owner in ("cat", "tee") and (quoted or ("$(" not in body and "`" not in body)):
+            out.append(lines[j])                             # keep the terminator, drop the body
+            i = j + 1
+        else:
+            i += 1
+    return "\n".join(out)
+try:
+    sys.stdout.write(strip(cmd))
+except Exception:
+    sys.stdout.write(cmd)
+PY
+}
 
 # The pattern runs over the WHOLE string, so `.*` spans `&&`, `;` and `|`: a reader verb in one command
 # and a name merely containing ".env" in another (`grep -q x a.json && cp sample.environment.ts b`) was
@@ -198,7 +253,8 @@ PY
 # name — even one inside quotes, `cat "<newline>" .env`, which reads the file — hid the read from every
 # line and the gate ALLOWED it. Joining the lines closes that; the per-sub-command check above then
 # splits on UNQUOTED newlines, so an ordinary multi-line command keeps today's line-wise behaviour.
-if printf '%s' "$cmd" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$cmd" "$SECRET_READ"; then
+scan=$(strip_data_heredocs "$cmd")
+if printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$scan" "$SECRET_READ"; then
   echo "BLOCKED: Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run." >&2
   exit 2
 fi
