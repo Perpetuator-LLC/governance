@@ -73,6 +73,28 @@ if [[ -z "$cmd" ]]; then
   exit 0
 fi
 
+# Block MINTING A CREDENTIAL anywhere but the agent's own sandboxed shell.
+# A terminal-panel tool types into the HUMAN'S interactive shell: it has a TTY and no agent ancestor, so
+# a login script's own "refuse an agent" guard cannot see it, the credential lands in a session the human
+# never chose to authenticate, and whatever the command prints can be read back by the agent. A layer
+# that routes such a tool to this gate gets this check without the core naming the tool: it applies to
+# every tool routed here EXCEPT `Bash`.
+#   - Not `Bash`: no TTY, so an interactive login prompts nobody, and a login fed from a store on stdin
+#     (`--password-stdin`) is a legitimate blind pipeline.
+#   - Grok's `run_terminal_command` gets it: Grok has no separate terminal-panel tool, and a TUI session
+#     runs its shell where the human sits. That also refuses a stdin-fed login typed directly on Grok;
+#     put it in a committed script, whose contents this gate does not see.
+# The class is "mint or print a credential"; the list is its public members, and a new CLI is added by
+# name. An organisation's own login wrappers belong in its adapter, as its own gate on the same tools,
+# because a wrapper's name is private and it hides the CLI it calls. Over-match is deliberate: `echo "bao login"` is refused too, which costs the human one keystroke,
+# where a miss costs a credential.
+CRED_MINT='(^|[^A-Za-z0-9_-])((bao|vault)([[:space:]]+-[^[:space:]]+)*[[:space:]]+(login|token[[:space:]]+(create|lookup)|print[[:space:]]+token)|gh[[:space:]]+auth[[:space:]]+(login|refresh|token)|(docker|podman)[[:space:]]+login|aws[[:space:]]+(sso[[:space:]]+login|sts[[:space:]]+(get-session-token|assume-role))|gcloud[[:space:]]+auth[[:space:]]+(login|print-access-token|application-default[[:space:]]+(login|print-access-token))|az[[:space:]]+login|op[[:space:]]+signin|npm[[:space:]]+(login|adduser)|kubectl[[:space:]]+create[[:space:]]+token)([^A-Za-z0-9_-]|$)'
+if [[ "$(tool_field "$input" .tool_name .toolName)" != "Bash" ]] \
+   && printf '%s' "$cmd" | tr '\n\r' '  ' | grep -qE "$CRED_MINT"; then
+  echo "BLOCKED: this runs a credential login or token command outside your own sandboxed shell, where it would create or print a credential in a session the human did not choose to open. Ask the human to run it themselves." >&2
+  exit 2
+fi
+
 # Block destructive filesystem operations
 if echo "$cmd" | grep -qE '^\s*rm\s+-rf\s+(/|~|\$HOME|\.\.)'; then
   echo "BLOCKED: Destructive rm -rf targeting root, home, or parent directory. Requires manual execution." >&2

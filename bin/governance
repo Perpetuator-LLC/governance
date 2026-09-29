@@ -41,8 +41,11 @@ INSTALL builds a harness home from CORE (--repo, default this repository) and ea
 --harness codex renders <home>/.codex/AGENTS.md; --harness grok renders
 <home>/.grok/rules/00-governance.md, assembles <home>/.grok/skills/ like the claude skills, and renders
 <home>/.grok/hooks/governance-floor.json: the PreToolUse gates of the merged settings, matchers mapped to
-Grok's tool names, commands pointing at the hook scripts themselves. An unmappable matcher, or a command
-naming a hook no layer provides, is refused: a floor gate is never dropped silently.
+Grok's tool names, commands pointing at the hook scripts themselves. A layer that wires a matcher the core
+does not know (a tool its own installation provides) declares its Grok names in
+<layer>/harness/grok/tools.json, {"<matcher>": ["<grok tool>", ...]}; it may add a name, never change one.
+An unmappable matcher, or a command naming a hook no layer provides, is refused: a floor gate is never
+dropped silently.
 The harness list is declarative: a re-install without a harness removes that harness's outputs.
 
 UNDO FIRST. Before anything is touched, the prior state of every path the install will change — missing,
@@ -312,22 +315,55 @@ def dump_json(data):
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
-def grok_floor(settings, hooks):
+def grok_tool_names(plan, layers):
+    """GROK_TOOLS, extended by each layer's harness/grok/tools.json for the matchers that layer wires.
+
+    A layer can gate a tool its own installation provides (a host app's terminal panel, say). The core
+    cannot name that tool, because the name is the installation's, yet an unmapped matcher refuses the
+    whole Grok render. So the layer that wires the matcher declares its Grok names. It may ADD a name and
+    never change one, because re-mapping a core matcher would move a floor gate off the tool it guards."""
+    names = dict(GROK_TOOLS)
+    for name, parts_root, _ in layers:
+        p = os.path.join(parts_root, "harness", "grok", "tools.json")
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except ValueError as e:
+            raise Refusal(f"{name} grok tool names are not valid JSON: {p}: {e}")
+        if not isinstance(data, dict) or not all(
+                isinstance(k, str) and k and isinstance(v, list) and v and all(isinstance(x, str) and x for x in v)
+                for k, v in data.items()):
+            raise Refusal(f"{name} grok tool names must map a matcher to a non-empty list of Grok tool names: {p}")
+        plan.sources.setdefault(p, file_sha(p))
+        for k, v in data.items():
+            if k in names and tuple(v) != tuple(names[k]):
+                raise Refusal(f"{name} re-maps `{k}` for grok to {v}, which is already mapped to {list(names[k])}; "
+                              f"a layer adds Grok tool names, never changes one")
+            names[k] = tuple(v)
+    return names
+
+
+def grok_floor(settings, hooks, tools=GROK_TOOLS):
     """The merged settings' PreToolUse gates, wired for Grok, or None when there are none.
 
     Only PreToolUse: that is the floor. The other events carry Claude-specific behaviour (a SessionStart
     hook that writes .claude/ files) that has never been run on Grok. Each command names the hook
-    script by its source path, because ~/.claude/hooks exists only when claude is installed too."""
-    groups = []
+    script by its source path, because ~/.claude/hooks exists only when claude is installed too.
+    Two Claude tools can map to one Grok tool (the shell, and a terminal panel Grok does not have), so a
+    command already wired on the same Grok matcher is not wired again: it would run twice per call."""
+    groups, wired = [], set()
     for g in (settings.get("hooks") or {}).get("PreToolUse") or []:
         names = []
         for m in (g.get("matcher") or "").split("|"):
             if not m:
                 continue
-            if m not in GROK_TOOLS:
+            if m not in tools:
                 raise Refusal(f"PreToolUse matcher `{m}` has no known Grok tool name, so its gate cannot be wired "
-                              f"for grok; add the name to GROK_TOOLS from a captured payload, never a guess")
-            names += [n for n in GROK_TOOLS[m] if n not in names]
+                              f"for grok; declare it in the wiring layer's harness/grok/tools.json (or the "
+                              f"core's GROK_TOOLS), from a captured payload, never a guess")
+            names += [n for n in tools[m] if n not in names]
         handlers = []
         for h in g.get("hooks") or []:
             cmd = h.get("command", "")
@@ -338,8 +374,12 @@ def grok_floor(settings, hooks):
             cmd = CLAUDE_HOOK_REF.sub(lambda mo: shlex.quote(hooks[mo.group(1)]), cmd)
             if "~/.claude" in cmd:
                 raise Refusal(f"PreToolUse command `{cmd}` reaches into ~/.claude, which grok does not own")
+            if ("|".join(names), cmd) in wired:
+                continue
+            wired.add(("|".join(names), cmd))
             handlers.append(dict(h, command=cmd))
-        groups.append({"matcher": "|".join(names), "hooks": handlers})
+        if handlers:
+            groups.append({"matcher": "|".join(names), "hooks": handlers})
     return {"hooks": {"PreToolUse": groups}} if groups else None
 
 
@@ -418,7 +458,7 @@ def build_plan(repo, adapters, local, harnesses):
                 plan.dir(".grok/agents")
                 for entry, src in sorted(grok_agents.items()):
                     plan.link(f".grok/agents/{entry}", src)
-            floor = grok_floor(settings, links["hooks"])
+            floor = grok_floor(settings, links["hooks"], grok_tool_names(plan, layers))
             if floor:
                 plan.dir(".grok/hooks")
                 plan.file(GROK_FLOOR, dump_json(floor))

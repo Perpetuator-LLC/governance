@@ -293,6 +293,46 @@ check "grok: a PreToolUse matcher with no known Grok tool name is REFUSED, never
   "[ '$rc' = '2' ] && grep -q 'no known Grok tool name' '$TMP/stderr' && [ -z \"\$(ls -A '$HU')\" ]"
 rc="$(gov install --home "$HU" --repo "$C" --adapter "$A3" --harness claude)"
 check "…the same adapter installs for claude, where the matcher is native (control)" "[ '$rc' = '0' ]"
+
+# A layer gating a tool its OWN installation provides declares that tool's Grok names, because the core
+# cannot name it. It may add a name and never change one; a re-mapped core matcher would move a gate.
+A5="$TMP/adapter-panel"
+put "$A5/AGENTS.md" "# adapter five"
+put "$A5/hooks/panel-only.sh" 'exit 0'
+put "$A5/settings/claude.json" '{"hooks": {"PreToolUse": [{"matcher": "PanelTool", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/gate.sh"}, {"type": "command", "command": "bash ~/.claude/hooks/panel-only.sh"}]}]}}'
+put "$A5/harness/grok/tools.json" '{"PanelTool": ["run_terminal_command"]}'
+HP="$TMP/home-panel"; mkdir -p "$HP"
+rc="$(gov install --home "$HP" --repo "$C" --adapter "$A5" --harness grok)"
+panel_floor_ok() {
+  python3 - "$HP/.grok/hooks/governance-floor.json" "$C" "$A5" <<'PY2'
+import json, sys
+f, core, a5 = sys.argv[1:]
+pairs = [(g["matcher"], h["command"]) for g in json.load(open(f))["hooks"]["PreToolUse"] for h in g["hooks"]]
+want = [("run_terminal_command", f"bash {core}/hooks/gate.sh"), ("run_terminal_command", f"bash {a5}/hooks/panel-only.sh")]
+assert sorted(pairs) == sorted(want), pairs          # the shared gate once, not twice
+assert "PanelTool" not in open(f).read()
+PY2
+}
+check "grok: a layer's harness/grok/tools.json maps its own matcher; the shared gate is wired ONCE, the layer's own gate too" \
+  "[ '$rc' = '0' ] && panel_floor_ok"
+rc="$(gov check --home "$HP")"
+check "…check is in sync" "[ '$rc' = '0' ]"
+put "$A5/harness/grok/tools.json" '{"PanelTool": ["run_terminal_command"], "OtherTool": ["run_terminal_command"]}'
+rc="$(gov check --home "$HP")"
+check "…a tools.json edit that changes no rendered gate stays in sync (check compares outputs)" "[ '$rc' = '0' ]"
+put "$A5/harness/grok/tools.json" '{"PanelTool": ["run_terminal_command", "write"]}'
+rc="$(gov check --home "$HP")"
+check "…one that moves a gate is LAYERS CHANGED on the Grok floor" "[ '$rc' = '1' ] && grep -q 'LAYERS CHANGED.*governance-floor.json' '$TMP/stdout'"
+A6="$TMP/adapter-remap"
+put "$A6/AGENTS.md" "# adapter six"
+put "$A6/harness/grok/tools.json" '{"Bash": ["something_else"]}'
+HR6="$TMP/home-remap"; mkdir -p "$HR6"
+rc="$(gov install --home "$HR6" --repo "$C" --adapter "$A6" --harness grok)"
+check "grok: a layer RE-MAPPING a core matcher is refused, and nothing is written" \
+  "[ '$rc' = '2' ] && grep -q 'never changes one' '$TMP/stderr' && [ -z \"\$(ls -A '$HR6')\" ]"
+put "$A6/harness/grok/tools.json" '{"PanelTool": "run_terminal_command"}'
+rc="$(gov install --home "$HR6" --repo "$C" --adapter "$A6" --harness grok)"
+check "grok: a tools.json value that is not a list is refused" "[ '$rc' = '2' ] && grep -q 'non-empty list' '$TMP/stderr'"
 A4="$TMP/adapter-missing-hook"
 put "$A4/AGENTS.md" "# adapter four"
 put "$A4/settings/claude.json" '{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/nowhere.sh"}]}]}}'
