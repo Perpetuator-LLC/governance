@@ -164,6 +164,44 @@ Two tests, applied to every line in the human's section before sending:
 Sending the citation form is not concision. It moves the synthesis the rule exists to do back onto
 the human, and it looks compliant while doing it.
 
+## An ask parked on a human names its GATE and what the answer CAUSES
+
+**An ask an agent parks on a human through an asynchronous queue** — a ticket label, a dashboard row,
+an inbox — **opens with three lines:**
+
+```
+<Human>: <what you need, in one plain sentence>
+Why you: <the gate that makes this theirs>
+After you answer: <what the answer causes, who acts next, and whether you still have to run anything>
+```
+
+- **`Why you` names a gate, or there is no ask.** A gate is a credential only that human holds, a
+  physical presence check (a hardware key, a biometric), a go-ahead for something hard to undo
+  (production, a merge, a delete), money, a legal act, or a direction call that belongs to the owner.
+  If none applies, the agent decides, acts and reports.
+- **`After you answer` separates a DECISION from a TASK.** For a decision, the answer is the trigger:
+  the agent acts on it. For a task, the answer runs nothing, and the human still performs a step. Say
+  which one it is, because the human cannot tell from the question.
+- **A choice with one sane option is a STEP, not a decision.** If the other option only breaks
+  something, hand over the command instead. A decision table is for choices where either answer is
+  acceptable.
+
+**Scope.** This binds asks the agent *initiates and parks*, which the human reads later and out of
+context. It does not bind a live exchange where the human asked the question: the gate and the
+consequence are already on screen, and three extra lines are noise. It depends on one property: the
+answer is recorded and handed back to an agent, with no one watching, which is why what happens next
+must be written down. Where the human answers and then acts in the same place, `After you answer`
+collapses to one line and stays useful.
+
+**The mirror, which `Why you` also guards:** the rule says when to ask, and the opposite failure is an
+agent that stops asking and acts on something gated. An ask with no gate is dropped; a gated act is
+still asked.
+
+**Measured:** a parked ask offered two options, one of which would have repeated a known outage. The
+human picked the safe one, and the answer ran nothing: the step needed the human's own server password,
+and the ticket went back to an agent that could not run it. The human then asked exactly the questions
+the three lines answer: *what happens with my decision, and why was I needed?*
+
 ## Git refs in human-facing text
 
 - ⚠️ **The test is ACTIONABILITY, not FORMAT: not "is this ref a link?" but "can the reader reach
