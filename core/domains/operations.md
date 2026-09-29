@@ -151,7 +151,7 @@ is the agent's index of two documents, compressed to one line by a message-lengt
 human reads it as *"what needs to be done"* and asks *"what do you want ME to do?"*, which is the
 entire cost of the rule paid again.
 
-Two tests, applied to every line in the human's section before sending:
+Four tests, applied to every line in the human's section **in the first message**, not on request:
 
 1. **Does the line contain a VERB with an OBJECT the human can act on now** — a command in a
    fence, a menu path, a field and a value? A citation (a comment id, a step number, a document
@@ -159,7 +159,18 @@ Two tests, applied to every line in the human's section before sending:
 2. **If the line names a value the human must supply** — a key, an id, a secret — **does it say
    WHERE that value comes from** (which dashboard, which page), and **which of them are actually
    still missing**? A store the agent can read for key NAMES (never values) is read first; the
-   human fills only what that read reported missing, never a list the agent assumed.
+   human fills only what that read reported missing, never a list the agent assumed. This covers
+   **every prompt the script will raise**, not only the values typed into the block. A prompt that
+   asks for a credential which does not exist yet names where to create it and with which
+   permissions. Measured: a script prompted for an admin token (hidden input) while the hand-off
+   never said which token, where it is minted, or with what scope.
+3. **A credential created only for this run is removed by the same hand-off.** Its last step
+   revokes it: where, and how. The mirror: a credential meant to persist, such as a service token
+   stored for later use, gets no revoke step. It gets a recorded expiry instead.
+4. **Is every command where the reader's surface copies it in one action?** In chat that is a
+   bare, top-level code block. Never put it inside a quotation, which renders without a copy control
+   and drags its markers into a selection. On a surface that gives a copy control to only one block
+   per heading marker, each step gets its own marker.
 
 Sending the citation form is not concision. It moves the synthesis the rule exists to do back onto
 the human, and it looks compliant while doing it.
