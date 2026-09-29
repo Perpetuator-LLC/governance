@@ -1740,6 +1740,30 @@ script with a shebang, which starts a fresh interpreter without the wrappers), a
 condition TRUE on a known positive before arming it.** The positive control is what separates
 "nothing happened" from "the check cannot see it happen".
 
+### A config the tool PARSES is not a config it RUNS
+
+**Between "the file is correct" and "the code executes" there can be an ACTIVATION gate, and a
+file-shaped check cannot see it.** Trust prompts, enable flags, signature or hash checks, approval
+lists: a tool reads the config, validates it, and still runs none of it until something outside the
+file says yes. A checker that verifies the config and its scripts then reports the install healthy
+while nothing it installed is running.
+
+**Measured:** a coding-agent harness loaded its hook config and printed a warning while clamping one
+entry's timeout, which proves it parsed the file. A real shell call then fired no hook at all: a
+logging hook wired to every tool call wrote nothing. The harness gates hooks behind a per-config trust
+hash that only its interactive UI grants, and none had ever been granted. Rendering the eleven missing
+gate scripts the checker was flagging would have produced a complete-looking floor that executed
+exactly as much as the empty one.
+
+**So name the tool's gate between rendered and running, and assert THAT:** find where the activation
+decision is stored, read it in the check, and report an unactivated config as its own state, never as
+in sync. **Calibrate the check on one activated config first:** a detector for an absence it has never
+seen present cannot be shown to match anything.
+
+**Scope: the mirror is a tool with no activation layer.** Where a config is documented as always
+trusted, rendered *is* running, and demanding an activation record would block a correct install
+forever. Find the gate; never assume one exists.
+
 ## An edit addressed by REGION is a claim about every line in that region
 
 **"Delete lines N to M" asserts that all of them are dead.** Addressing a change by position rather
