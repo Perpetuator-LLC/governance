@@ -164,6 +164,61 @@ Two tests, applied to every line in the human's section before sending:
 Sending the citation form is not concision. It moves the synthesis the rule exists to do back onto
 the human, and it looks compliant while doing it.
 
+### In a recipe, a number means ORDER and a bullet means INDEPENDENT
+
+Number a step only when it needs the one before it to have finished. Steps a person can do in any
+order, or at the same time (a second terminal, a click while a command runs), are bullets. Numbering
+them tells the reader to wait for something they do not need to wait for.
+
+**The mirror is just as wrong:** steps that must run in order, written as bullets, invite running one
+early. The test before sending: *could step 2 start before step 1 ends?* Yes → bullets. No → numbers.
+
+**Scope: steps only.** A number used as an identifier (a decision option answered by number, a ticket
+or pull-request number) is not a step, and this rule does not touch it. Several separate asks follow
+the same rule: bullets, unless one says it waits on another.
+
+**Measured:** a hand-off numbered "1. type your password at the waiting prompt" and "2. in a second
+terminal, run the key block". The second never needed the first, so the reader waited on a prompt
+that was never in the way.
+
+## An ask parked on a human names its GATE and what the answer CAUSES
+
+**An ask an agent parks on a human through an asynchronous queue** — a ticket label, a dashboard row,
+an inbox — **opens with three lines:**
+
+```
+<Human>: <what you need, in one plain sentence>
+Why you: <the gate that makes this theirs>
+After you answer: <what the answer causes, who acts next, and whether you still have to run anything>
+```
+
+- **`Why you` names a gate, or there is no ask.** A gate is a credential only that human holds, a
+  physical presence check (a hardware key, a biometric), a go-ahead for something hard to undo
+  (production, a merge, a delete), money, a legal act, or a direction call that belongs to the owner.
+  If none applies, the agent decides, acts and reports.
+- **`After you answer` separates a DECISION from a TASK.** For a decision, the answer is the trigger:
+  the agent acts on it. For a task, the answer runs nothing, and the human still performs a step. Say
+  which one it is, because the human cannot tell from the question.
+- **A choice with one sane option is a STEP, not a decision.** If the other option only breaks
+  something, hand over the command instead. A decision table is for choices where either answer is
+  acceptable.
+
+**Scope.** This binds asks the agent *initiates and parks*, which the human reads later and out of
+context. It does not bind a live exchange where the human asked the question: the gate and the
+consequence are already on screen, and three extra lines are noise. It depends on one property: the
+answer is recorded and handed back to an agent, with no one watching, which is why what happens next
+must be written down. Where the human answers and then acts in the same place, `After you answer`
+collapses to one line and stays useful.
+
+**The mirror, which `Why you` also guards:** the rule says when to ask, and the opposite failure is an
+agent that stops asking and acts on something gated. An ask with no gate is dropped; a gated act is
+still asked.
+
+**Measured:** a parked ask offered two options, one of which would have repeated a known outage. The
+human picked the safe one, and the answer ran nothing: the step needed the human's own server password,
+and the ticket went back to an agent that could not run it. The human then asked exactly the questions
+the three lines answer: *what happens with my decision, and why was I needed?*
+
 ## Git refs in human-facing text
 
 - ⚠️ **The test is ACTIONABILITY, not FORMAT: not "is this ref a link?" but "can the reader reach
@@ -367,6 +422,53 @@ authors, one only by luck.
 - **Where a working precedent exists in the repository, open it.** A precedent is a control; your own
   draft is not.
 
+## Reproduce a bug before fixing it, on the current code, and record it on the ticket
+
+**A bug ticket describes the code as it was when it was filed.** Where several lanes land changes in
+parallel, a reported defect is often already gone, removed as a side effect of another fix. A fix
+written against the report then fixes nothing, or solves a solved problem a second time in a shape
+that conflicts with the first.
+
+**Before writing a fix, reproduce the report on the current default branch** (or on the deployed
+build it was reported against) **and record on the ticket:** the steps or command, observed versus
+expected, and the commit it ran against.
+- **It reproduces** → that reproduction becomes the fix's first failing test.
+- **It does not reproduce** → find the change that removed it (search the history between the ticket's
+  commit and now), and close the ticket citing that change.
+- **It does not reproduce, and no removing change can be found** → do not close it as fixed. Record
+  what was tried, under which conditions, and hand it back to the reporter as *not reproduced*. A
+  failure you can no longer see, and cannot explain, is not a fix.
+
+**Scope: bug tickets**, meaning a claim that existing behaviour is wrong. Feature work and docs have
+nothing to reproduce. **Two mirrors:**
+- **An intermittent failure is not gone after one clean run.** Match the report's conditions and
+  frequency before calling it absent (`technical.md` → *A single red is a HYPOTHESIS, not a baseline*).
+- **The reproduction must not cause the harm.** A bug seen only on production data, or a security
+  flaw, is reproduced against a copy or a local instance, never by exercising it on the live system.
+
+**Observed:** the human reported, several times, a seat starting work on a bug that another change had
+already fixed.
+
+## Declare a cross-repository dependency as a LABEL the sequencer reads, not as prose
+
+When work in one repository cannot land before work in another, record it where a scheduler looks: a
+label, not a sentence in a comment. An orchestrator sequences many lanes by filtering, and a dependency
+stated in a ticket's fifth comment is invisible to a filter. The same fact as a label is one query.
+Two meanings cover it (shown in scoped-label form):
+
+| label | means | set by | cleared |
+|---|---|---|---|
+| `Status/Blocked` on a ticket | work cannot start until the linked ticket lands | the lane that learns of the dependency, the moment it learns it, with the blocking ticket linked | as part of landing the blocker, or by a check that reads the link and sees it closed |
+| `Compat/Breaking` on a change | deploying this change alone breaks a partner; the named partner repository lands first (for example, a frontend that reads a field its backend does not serve yet) | the change's author, before review | never: it records a property of that change and gates the deploy order |
+
+**The mirror: a stale `Blocked` label is its own outage.** Set and never cleared, it parks a lane on
+work that is already free, and nothing about the label looks wrong. That is why the label must name its
+blocker, and why clearing it belongs to landing the blocker.
+
+**Scope:** dependencies between repositories or lanes. Inside one repository, branch order already
+sequences the work. It depends on something reading the labels to sequence; where nothing does, they are
+still the most compact statement of the dependency, but they gate nothing.
+
 ## Routines are infrastructure — they migrate, or they silently die
 
 **Every scheduled task and skill is migration payload, equal to threads and tickets.** A migration
@@ -566,6 +668,31 @@ Staleness — the artifact moved while the record stood still — is defeated by
 recent. A dropped precondition — the record was incomplete at birth — is defeated by the record
 being complete as far as it read. **A freshness check that asks only *"how old is this?"* passes
 this case every time.**
+
+### A drafted message is a record too: re-read the thread immediately before sending
+
+A draft covers its thread only up to the last message its author read, which is its watermark.
+Approval takes time, and the recipient keeps writing meanwhile. So an approved draft can be the most
+carefully checked message in the thread and still answer a conversation that has moved on.
+
+**Immediately before sending any message that was not composed in the same read** (a human-approved
+draft, a queued reply, a scheduled send), re-read the recipient's thread since the draft's watermark:
+- **nothing new** → send as drafted;
+- **new messages** → bring the draft to the current state *within the approved intent*. Anything the
+  rewrite adds beyond that intent — a new commitment, a new ask, a changed number — goes back to the
+  approver.
+
+**Scope: two mirrors the vivid case hides.**
+- **The message may no longer be needed.** The recipient may have answered or withdrawn their own
+  question. Check whether to send at all, not only whether the wording is current.
+- **An approved EXACT wording is not rewritten in place.** A notice, a quote, a contract term or
+  anything signed was approved as text, not as intent. New information becomes a follow-up, or goes
+  back to the approver; it is never a silent edit of the approved words.
+
+**Measured:** a reply was approved about an hour and a half after it was drafted. The re-read at send
+time found two new messages from the recipient: one reported that what the draft promised to do had
+already happened, and one added two new asks. One of the draft's four lines was stale, and both new
+asks would have gone unanswered.
 
 ## A retirement falsifies every CLAIM that names the thing, and none of the RECORDS
 
