@@ -230,6 +230,36 @@ human picked the safe one, and the answer ran nothing: the step needed the human
 and the ticket went back to an agent that could not run it. The human then asked exactly the questions
 the three lines answer: *what happens with my decision, and why was I needed?*
 
+## A lane that serves people runs AHEAD of them, not behind them
+
+**Scope:** any agent lane whose people (a team, or clients) need its approvals, reviews, answers,
+access or next task in order to make progress. The rule is about their waiting, not the agent's own
+idleness.
+
+**After every intake of new messages, and before reporting, ask for each person:**
+1. **Are they waiting on us?**
+2. **Are they out of work, or about to be?**
+3. **What will they need next, and have we TESTED that it exists?** That covers access that works,
+   code that is merged, and a command that runs. Believing it exists does not count.
+4. **Will what we told them work against the live system?**
+
+Act on every yes in the same pass. Where a decision is someone else's to make, hand it to them as a
+one-word answer with a recommendation.
+
+**Limits: the neighbouring cases where "proactive" goes wrong.**
+- **Enable; do not do their deliverable.** Running ahead means their next step is ready. It does not
+  mean you take the step for them.
+- **A check-in carries something concrete, never an empty ping.** Send it on the channel, and at the
+  cadence, the person chose. Where they set neither, send nothing that has no content.
+- **Clients get results, not promises.**
+- **Test with your own access or a read-only probe, never with the person's credential.** Signing in
+  as someone to check their access is impersonation, not a test.
+- **A principal's decisions stay the principal's.**
+
+**The miss loop.** Anyone who waited more than one cycle, or a client who had to chase first, is a
+**miss**. Log it, and send it to whoever owns the lane's routines. A miss that recurs is a defect in
+the routine. The fix is a change to the routine, not more effort in the next pass.
+
 ## Git refs in human-facing text
 
 - ⚠️ **The test is ACTIONABILITY, not FORMAT: not "is this ref a link?" but "can the reader reach

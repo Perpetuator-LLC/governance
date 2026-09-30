@@ -252,6 +252,19 @@ never argv. A ceremony that PRINTS a secret is worse than one that asks for it.
   you could not read, and you cannot read any of them — so a clobber is undetectable by the writer.
 - **Authenticated probes emit a status code and nothing else:** `-s -o /dev/null -w '%{http_code}'`.
   A response body is where the credential comes back.
+- **"Can reader X get secret S?" is never proved with S.** A probe that reads a live secret from the
+  exposed side (a CI job that echoes it, a script that fetches it) IS the exfiltration it was
+  checking for, and the log outlives the test. Establish reachability in any of three safe ways:
+  - **From configuration:** which store holds S (by name, never value) and that store's
+    availability rule for X. This is a CLAIM about the system; the next two are OBSERVATIONS of it.
+    Where configuration may have drifted from what runs, an observation wins.
+  - **From a natural presence instance:** a fail-closed guard on S (`: "${S:?unset}"`) that passed in
+    X's context proves S reached X.
+  - **From a canary:** plant a powerless dummy in the same store and prove X reads *that*. **Scope:**
+    the canary stands in for S only when it shares S's store and scope. A same-named secret in
+    a different store proves nothing about S.
+  **The mirror case:** a guard that *failed* proves only that S was missing in that one run, not
+  that X can never get it. Another trigger or another store may still deliver it.
 - **A formatter's or differ's DIFF output is a READ of every file it touches, ignored files
   included.** Run on a directory, a formatter walks the filesystem, not the git index, so a local
   secrets file beside the code (an ignored variables file, an env file) is formatted too, and every
