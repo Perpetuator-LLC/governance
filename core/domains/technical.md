@@ -210,6 +210,41 @@ forever.**
 expensive one is discovering the gap at release time, when the tool cannot be added without growing a
 release-gating PR — which is precisely when it was discovered.
 
+### Every shell session is a tool request
+
+The rule above catches the gap when the work is *planned*. Most shell use is not planned: an operator
+or an agent opens a session because it is the fastest way to read one value or do one thing. That is
+legitimate. Shell access is the floor that still works when every higher surface is down, and
+banning it only moves the work somewhere less visible. **So shell access stays allowed, and each use
+is treated as a measurement of a missing tool.**
+
+**The practice.** Whenever anyone runs a command on a host over a remote shell, or asks a human to:
+
+1. **Name the action, not the command**: *"read the container runtime's version on host X"*, not the
+   pipeline that happened to do it.
+2. **Name the surface that would have done it without a shell**, smallest first:
+   - **publish the fact through a read path that already exists**: a metric, an inventory endpoint,
+     a status page. This is often the whole fix, and it grants nothing new;
+   - **a typed, allowlisted tool** for the action, under the same permission model and audit trail as
+     every other tool, and read-only if the session was a read;
+   - **a committed, reviewed command** if the action must stay on the host, reachable through the
+     remote path rather than a login.
+3. **File it** where the work is tracked, deduplicated by action. **Build it now when the session was
+   a hand-off**: a human ran it because an agent could not, which costs a round trip on every future
+   use. Otherwise build it on the second occurrence.
+
+**Scope, stated so it is not over-read:**
+- **The replacement is never a general remote shell.** A tool that runs arbitrary commands is a shell
+  with a weaker audit trail and a larger blast radius, reachable by anything that can call tools,
+  including a prompt-injected agent. Replace the *action*, at its narrowest.
+- **Some actions stay behind a login on purpose**: break-glass recovery when the tool plane itself is
+  down, and capabilities whose misuse is unbounded, such as network control or irreversible
+  destruction. For those the record says *kept on the shell deliberately, and why*. That is the
+  finding, not a missing tool. A tool that depends on the system it exists to repair is not a
+  replacement for the shell that repairs it.
+- **A read is both the easy case and the common one.** Most sessions are reads, and a metric or an
+  inventory field retires them without granting anything.
+
 ## Tofu/Terraform state is remote-or-nothing
 
 **Never run a first `tofu apply` against a local state file in an ephemeral checkout.** Agent
