@@ -993,6 +993,22 @@ the absence of an objection.
   it, so verify once on your forge), **else push** an empty commit. Claim that run. Better still,
   let the gating jobs run on drafts, so the hold and the evidence stop competing.
 
+## A green run proves only the steps that EXECUTED in it
+
+**A run's verdict covers the steps that actually ran on this build, and two ordinary mechanisms make
+that smaller than the job's roster.**
+
+- **A job that stops at its first failing step proves nothing about the steps after it.** When
+  independent checks (audit, lint, scan) share one job, a red run reports one defect and hides the
+  rest, which are found a cycle later. Give independent checks their own jobs, or let each continue and
+  gate on the total at the end. **Scope:** independent checks only. A genuinely sequential pipeline
+  (build, then test, then publish) should stop at the first failure; forcing it on tests an artifact
+  that was never built.
+- **A cached step can report a pass without the test running.** Behind a build or result cache, a hit
+  returns in a second or two and the wrapper still says *passed*. Accept a pass only when **this
+  build's own** test summary, with its counts, is in the log. **Scope:** steps whose output is a
+  verdict. Caching a step whose output is a file is the cache doing its job.
+
 ## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
 
 **`git diff main..branch` shows what REPLACING main with the branch would do. A merge does not do
@@ -1262,6 +1278,19 @@ the effects behind one switch, and assert in a test that a dry run leaves every 
 - **Scope:** writers with at-most-once semantics per period or per key (digests, invoices,
   notifications, scheduled reports). An idempotent writer that may safely repeat needs neither half.
 
+## An assertion states which question it asks
+
+- **A count is not a presence check.** `count == 1` fails a correct input in which the term
+  legitimately appears twice; if the question is *"is it here at all"*, assert `>= 1`. When the
+  question genuinely is uniqueness (one entry point, one owner, one mount of a sensitive socket),
+  `== 1` is the right and stronger assertion, and relaxing it hides a duplicate. Decide which question
+  you are asking, then say it in the assertion's message.
+- **Assert on prose only after flattening its whitespace.** A phrase wraps differently the next time
+  the document is edited or rendered, so a check against the raw text passes or fails on line breaks,
+  not meaning. **Scope:** where the layout is not the contract. When it is (a fixed-width report, a
+  line-oriented file, a template whose diff matters), flattening destroys what you meant to pin:
+  assert on the structure explicitly instead.
+
 ## A test double must FAIL the way the real collaborator fails
 
 **A double that RETURNS an error where production RAISES one — or returns a shape production never
@@ -1465,6 +1494,23 @@ store, the ref from the forge — and assert against *that*. Both rules reduce t
 that confirms must be **independent of the thing that acted**, or it is a rehearsal of your own
 intent. Same family as a health field authored by the subject it reports on, and as a test double
 that never reaches the real path (above).
+
+## A mapping across a boundary is added in BOTH directions, or the reverse is ruled out in writing
+
+**When you teach a resolver that names in namespace A live in namespace B, add the mirror mapping in
+the same change, or write down why a reference cannot run the other way.** A one-way mapping does not
+half-work: references in the mapped direction resolve, and references in the other direction are
+reported as broken, every run, because nothing distinguishes *"this reference is wrong"* from *"this
+direction was never mapped"*. A suppression list makes it permanent: written from that state, it
+records correct references as known-bad, and the check goes quiet about them for good. Measured: a
+nightly path check reported seven correct cross-root references as dead every night for a month;
+adding the reverse alias resolved all seven with no regression.
+
+**Scope:** link checkers, import and path resolvers, redirect tables, identifier maps, above all when
+they have a baseline or ignore list. **Where it is wrong:** a deliberately one-way boundary, where the
+reverse reference is itself the defect (a public layer that must never cite a private one; a lower
+layer that must not name a higher one). There the mirror would suppress a true finding. Write the
+one-way rule down instead, so the next reader does not "complete" the mapping.
 
 ## The SEAM is the subject's duty; pinning is only the test's
 
@@ -2319,6 +2365,14 @@ drift to a tool that only compares the items still declared. **So a reconcile as
 MEMBERSHIP of its declared set** (against the reviewed source, or a recorded count), not only the
 differences within it.
 
+- **The provider's side of the same blind spot: an empty collection is not "no settings".** Some
+  infrastructure providers return per-item state only for the keys your configuration declares, so an
+  empty map can mean *"you declared none"*, not *"there are none"*. Anything granted outside the
+  declared keys is then invisible, and drift detection reports clean on a widened grant. Declare every
+  key the subject is meant to hold; removing the block widens the blind spot rather than narrowing the
+  config. **Where it is wrong:** a provider that enumerates live state independently of your
+  configuration. There an empty result is evidence of absence. Check which kind yours is before
+  reading its silence.
 - **Detect, then restore.** Silently restoring from the source repairs the file and destroys the
   evidence that something keeps rewriting it. Report the loss with what dropped, then restore.
 - **The detector must survive the file's type changing.** A check written as *"compare the file with
@@ -2354,6 +2408,26 @@ that will be reverted without telling anyone.
 The same shape covers any rendered configuration — templated config, generated container manifests,
 rendered dotfiles. **An artifact that has a generator has exactly one durable edit point, and it is
 not the artifact.**
+
+## A config file read only from the tool's input root goes inert when the input widens
+
+**Nothing errors and nothing warns: the file stays in the tree looking authoritative and has no
+effect.** Per-directory configuration that a tool resolves relative to its invocation root (an ignore
+file, tool settings, lint config) stops applying the day a change widens the tool's input to a parent
+directory. A change that widens a tool's input moves or deletes such files in the same change, and
+**deletes rather than leaves behind**: a dead config still in the tree will be read as live by the next
+person. **Where it is wrong:** config the tool finds by walking upward from each file keeps working
+when the root moves, and deleting it breaks the nested case. Establish which resolution the tool uses
+first; guessing fails silently one way and loudly the other.
+
+## A price or cost table in code goes stale silently, then reports confident wrong money
+
+**An estimate of money, quota or capacity embedded as constants needs a source of truth before it
+needs an implementation.** The numbers age with no error, and the output cannot be told apart from a
+measured figure. Omitting the estimate is better than shipping one that looks measured and is not.
+**Scope:** values that change outside the code (vendor prices, quotas, rates). A value fixed by a
+contract or a standard for the code's lifetime may be a constant, and it still carries the date and
+source it was taken from: an unmarked number in code is read as current.
 
 ## An env-var default is not a default when the LAUNCHER sets the variable
 
@@ -2392,6 +2466,15 @@ was refused and the intended one succeeded.
 environment is fully declared by the thing that starts it — a unit whose `Environment=` lines are the
 whole of it, a container with no inherited env — there is nothing unexpected to inherit, and the check
 reduces to reading that declaration.
+
+## A ratio alert against a trailing baseline goes quiet as the outage enters the baseline
+
+**An alert comparing *now* with a trailing mean gets quieter the longer the problem lasts**, because
+the bad days progressively become the baseline: the ratio improves while nothing does. Judge a stopped
+signal on its **absolute** value, and keep the ratio only for detecting the onset. **Where it is
+wrong:** a seasonal or traffic-driven series, where the absolute number means nothing and an absolute
+floor pages every quiet weekend. The deciding question is whether **zero is a legitimate value** for
+the series. If it is not, zero must trip an absolute rule.
 
 ## A test of an UNATTENDED job, run from an interactive session, borrows that session's credentials
 
@@ -2572,6 +2655,15 @@ about a class it only half covered.
 **Key the detector on the invariant — where the failure is actually signalled — not on what you
 happened to see downstream of it.** The test: *would this detector still fire if someone consumed
 the output differently?* If not, it is a detector for a usage, not for the fault.
+
+**A gate with two legs reads the same reference on both, or it reports the distance between two
+references instead of the subject.** When one leg asks *"is this safe to remove?"* against one
+revision and the other asks *"has this landed?"* against another, every refusal can blame work that
+in fact landed, because the local default was stale. Measured: every refusal in one batch was such a
+case. Fetch first, and print the pair you compared. **Where it is wrong:** the legs are deliberately
+different when one is a local invariant and the other a remote one (*"is my tree clean?"* and *"is
+it merged upstream?"* must not be collapsed). The rule is that the divergence is named and refreshed,
+not that the references are identical.
 
 **The tell that a tool has this bug is a guarantee written in the vocabulary of remoteness** —
 *"asserted against the remote default, not a local copy, which can be stale"* — sitting directly
