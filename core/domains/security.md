@@ -236,6 +236,16 @@ like the second buys nothing and spends trust.
 report that quotes them has moved the data again. A detector for misplacement ships with a
 false-positive fixture, since most of what it flags will be placement, not exposure.
 
+## Classify confidentiality by location or declared type, never by words in a title
+
+**A title states a document's subject; confidentiality is a property of its content.** A rule keyed on
+title words conflates *"this is a secret"* with *"this is about secrets"*, so the procedure for handling
+the sensitive thing is hidden along with it. It seals itself: the reader who most needs the hidden
+document, someone searching for the policy on that topic, gets an empty result and reads it as *"no
+such rule exists"*. Test: would a stranger looking for your policy on X find it? **Scope:** documents
+about sensitive topics (procedures, registers of which secrets exist, policies, post-mortems). Material
+that holds the values (a credential store, a key file) stays excluded, by location.
+
 ## The BLIND PIPELINE — and it binds the hand-off blocks you author
 
 ⚠️ **The remedy for any secret is a BLIND PIPELINE: store-to-store, the value never in context.**
@@ -342,6 +352,13 @@ every exposure becomes a severity debate and a backlog item.
   Measurement scopes the cleanup; it does not decide whether to rotate. This does not override
   *rotate nothing until "is this a credential?" has an answer* above: that question decides what is
   a credential, and this rule decides what happens once one may be exposed.
+
+**A deliberately disabled credential cannot authenticate to re-enable itself.** Re-enabling it needs an
+identity with write access to the credential system, which is exactly what parking it keeps away from
+the workload. So decide, when you park it, whether re-enabling is an operator step or a separate,
+more privileged identity, and write that in the runbook. Declare the disabled state in infrastructure
+code, so an apply cannot quietly re-enable it. **Where it is wrong:** a workload that legitimately holds
+credential-write access can toggle its own key; the park buys nothing there.
 
 ## What NEVER leaves the machine
 

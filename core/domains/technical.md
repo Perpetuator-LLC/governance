@@ -385,6 +385,15 @@ Rules:
 
 Copy the repo's existing end-to-end enum (there is usually one) rather than inventing a new pattern.
 
+### A list put into a one-value slot becomes ONE value, with no error
+
+**When a text template has a slot for one value and the value can be a list, the list is stringified
+into a single element, its items joined with commas.** A call meant to fetch several keys fetches one
+key that does not exist, and nothing errors. Encode the collection for the slot's type (a list as a
+list), and assert the element count at the boundary. **Where it is wrong:** a type-aware builder (a
+structured request object, a JSON tool's typed argument) already binds a list as a list, and adding
+encoding there double-encodes it.
+
 ### A FILTER argument is a boundary too, and the failure there is matching SEMANTICS
 
 The shape above is an argument that is *untyped*. A filter can be typed and still wrong: **a filter
@@ -443,6 +452,21 @@ as *"this was tried and failed"* and is treated as a closed question. Measured o
 across all history **no commit ever carried it uncommented** — it was never live, so there was no
 failure to learn from. Check the history before inheriting the conclusion.
 
+**A filter that is accepted and never applied returns everything, and looks filtered.** A wrapper
+that collects unknown arguments and drops them accepts any filter and returns the whole collection,
+which the caller reads as the filtered answer. Before trusting a filter argument, prove it
+discriminates: pass a value that must return zero, and require zero. (Comparing counts with and
+without it fails on data where the filter legitimately matches everything.)
+
+**The other direction: a pattern that decides what to HIDE fails silently.** An over-broad query hands
+back extra rows and the reader sees them; an over-broad exclusion removes rows, and what remains looks
+like a complete answer. Wherever a pattern suppresses (an index's exclusion list, a log redactor, a
+skip list, an alert inhibition): match on a word or token boundary, never a bare substring, above all
+for a short pattern; report a count of what was suppressed beside what was kept; and test it against
+something it must hide and something adjacent it must not. **Where it is wrong:** a deliberately
+broad, fail-closed suppressor (a secret scrubber on an outbound channel should over-redact rather than
+miss); the count is still required, because it shows the cost you accepted.
+
 ## An invariant with more than one SOURCE is answered by ONE choke-point function
 
 **Money (an allowance pool plus a paid balance), a quota, a permission: when an invariant can be
@@ -485,6 +509,16 @@ Two corollaries:
   the shared function is how a bypass becomes reachable from the request path.
 - **A field whose write path sanitises should be hard to write any other way.** If setting it
   directly is one line, someone will write that line.
+
+## A first run creates: a patch alone fails on a clean system
+
+**A store's *patch* (merge a field into an existing record) is not a create.** Against a path that does
+not exist yet it returns not-found. So a bootstrap written as *"patch the field in"* fails on a clean
+environment and succeeds forever after, and the only person who ever sees the failure is the first
+user of a new environment, the one least able to tell a bug from their own mistake. A first run uses
+the create verb, or creates then patches; say in the script which one it takes. **Where it is wrong:**
+when another system owns the record's creation, not-found is correctly fatal, and turning it into a
+create hides the missing dependency.
 
 ## A tool that BYPASSES the permission model is shaped by how cheaply it can be verified
 
@@ -597,6 +631,11 @@ to word the refusal more carefully.
 The rule generalises past CLIs: an API error, a validation message and a
 permission denial are all refusals, and each one is where a person decides
 whether to work with the system or around it.
+
+**A guard a person can hit ships with its way out in the same change.** The unblock command or
+procedure lands in the same pull request as the guard, is named in the refusal, and is exercised once
+in its tests. **Where it is wrong:** when the only way out is a human decision, the way out is the
+record that decision creates; name where it is written.
 
 ### A REDACTED step still owes its failure a reason
 
@@ -791,6 +830,10 @@ providers: none"* reads as *"nothing here to protect"*.
   total functional outage stay green.
 - **Monitoring must not share fate with what it watches**: in-app dead-men (celery/beat)
   are a layer; the authoritative probe is external (blackbox → Alertmanager).
+  The same holds for any **detector and the corrector it guards**: on one host, timer, agent or
+  credential, one fault disables both, and no alert fires because the alerting half is the one that
+  died. Separate them, or add an independent heartbeat that alerts when the detector goes quiet.
+  **Where it is wrong:** a corrector whose own failure already raises an alert in a separate system.
 - **Scripts re-exec'd by path need the git exec bit AND `exec bash "$path"`** — checkout
   restores committed modes; a 0644 script killed a prod deploy with "Permission denied".
 - **compose v1→v2 RENAMED the images it builds, so old rollback targets no longer resolve.** v1
@@ -897,6 +940,14 @@ ticket, not a step to perform: it can only exist on the new build, so it fails o
 that is exactly when it gets run. The deploy flow is documented as code so it is repeatable and never
 depends on one person's memory.
 
+**A pipeline triggered only by the default branch first runs on production.** No pre-merge run can
+execute it, so the merge is its first execution. Design for that: put every step that can fail before
+the first irreversible one, so a failure leaves the running system serving; keep the previous
+mechanism's files as the revert path; and say in the ready claim that CI could not run it. **Where it
+is wrong:** a pipeline that can be rehearsed (a second environment, a scratch target, a check mode)
+is rehearsed instead. Ordering is the mitigation for what genuinely cannot be, not a reason to skip a
+rehearsal.
+
 ## "Merged" is not "the reviewed code merged" — a verdict pins a HEAD, a click picks a MOMENT
 
 **A review verdict names a commit. A merge names an instant. Nothing in a forge binds the two.**
@@ -958,6 +1009,14 @@ state alongside passed and failed, and say which of the three you observed.
 dependency or vulnerability audit, a licence database — can pass and then fail on the same commit
 minutes apart, so a green observed earlier is not a current green. For those gates, the merge-ready
 claim names the run and its time, and is re-checked at merge.
+
+**A trigger that names only the default branch never runs on a pull request into an integration
+branch.** The pull request then shows no check at all, not a failing one, and a claim that "CI is
+green" is quoting a manually dispatched run, or nothing. Put the integration branch in the trigger;
+until then, a merge-ready claim names the event that produced its run, because a dispatched run tests
+what was dispatched, not necessarily the pull request's head. **Where it is wrong:** leaving the
+integration branch ungated to save runner time is a legitimate choice, and then the claim says the
+branch is ungated instead of citing a run.
 
 ## A hold on a pull request lives in the forge's own WIP / draft gate — never only in a comment
 
@@ -1535,6 +1594,31 @@ listing that resembles it, and remember that a write that returned success has n
 the system that consumes it. **Where it is wrong:** when the owning system is itself the suspect
 (down, or compromised), asking it is circular; corroborate from its consumers instead.
 
+### Five boundary cases of the same rule
+
+- **A gate that "the read succeeded" passes on an empty result.** Reading from an archived, empty or
+  wrong target often returns success with no rows, so a gate meant to prove *"we can see the data"*
+  requires a row it knows should be there. **Where it is wrong:** a pure credential check, where an
+  empty success is the right pass; call it an auth check, and never let it stand in for a delivery
+  check.
+- **Before reading a zero as clean, confirm the feature that produces it is switched on.** A disabled
+  feature (an issue tracker turned off, a scanner not enabled) reports zero in the same field as a
+  clean result. Show *disabled* as its own state. It earns its cost in sweeps across systems you do not
+  individually know.
+- **A read-back after a write to an eventually consistent service retries within a stated budget,**
+  and its failure message names the budget (*"after 30 s"*), so a slow write can be told from a failed
+  one. **Where it is wrong:** never retry a check for something that should already exist before the
+  operation; that turns a fast, correct failure into a slow one, and eventually a wrong pass.
+- **A detector reports three numbers: checked, findings, and unreadable.** An input it could not parse
+  is neither a finding nor a pass; the detector never reached it. Folding it into the findings
+  inflates a number people chase and hides that every check parsing the same way is blind there too.
+  **Where it is wrong:** a format validator, where unparseable input *is* the finding.
+- **A tool's own label on a value it converted is not evidence the conversion is right.** A time zone,
+  unit, currency or scale printed by the code that did the conversion comes from the same path, so it
+  cannot corroborate it. Check the value against a source that did not convert it; the tell is usually
+  one step of arithmetic against the input. **Where it is wrong:** a label echoed by an independent
+  source is evidence; and an unlabelled value is not safer, it only moves the assumption to the reader.
+
 ## A mapping across a boundary is added in BOTH directions, or the reverse is ruled out in writing
 
 **When you teach a resolver that names in namespace A live in namespace B, add the mirror mapping in
@@ -1704,6 +1788,19 @@ lives in the syntax, the fix is syntax: show the line.
 **And a probe that can fail by RACE needs a repeat-N self-test.** One green run is not evidence
 about a timing-dependent check — run it enough times to see the distribution, and make that repetition
 part of the test rather than something a person does once by hand.
+
+### A pipe on a command that can prompt hides the prompt, and the command proceeds with an empty answer
+
+**A command that can ask for input is never run through an output filter (`| tail`, `| head`,
+`| grep`) or with its output captured, unless it has been made unable to prompt.** The pipe buffers
+the prompt, so it is never shown, and the command does not wait or fail: it carries on with an empty
+answer. When the answer was a password, the action runs without the credential the operator believes
+they gave. The fix is not just removing the pipe: pass the flag that makes a missing input an error,
+or assert the input's source first, so the failure is a refusal. The same pipe hides the prompt from a
+person watching, so this is a property of the pipe, not of who is present. **Where it is wrong:** a
+command that cannot prompt, and feeding a secret *in* on standard input, which is the correct
+direction. Dropping the filter on a command with huge output floods the channel; make prompting
+impossible instead.
 
 ## A fixture that cannot EXPRESS the failure certifies it clean
 
@@ -2207,6 +2304,20 @@ it a check of the execution rule rather than a restatement of it.
   the window the code applies. It then goes red by itself, with no change in the repository, one
   window after it was written. The mirror case is safe: fixtures derived from the clock the code
   reads, at run time, never age.
+  **Then prove it in CI: run the suite a second time on a wall clock shifted years ahead.** A fixture
+  date pinned while some path still reads the real clock is then already in the past, so the test
+  fails the day it is written instead of the day its window expires. Pair it with a test that asserts
+  the shift reached application code: a shift that only moved the test's own clock proves nothing.
+  **Where it is wrong:** a test that calls a live service which validates timestamps (a signed request,
+  a token checked server-side) runs unshifted, or it fails for the service's reason, not the code's.
+- **Two series combined in a ratio must be on the same basis.** A ratio of an adjusted series to an
+  as-recorded one (a re-scaled price against a per-unit figure, a restated total against the original,
+  a converted currency against a nominal one) produces plausible numbers of the right size and sign for
+  every input, and never an error. Convert at the point of combination, route both through one helper,
+  and test with a scenario across the event that re-scales one of them, asserting the result is
+  continuous across it. **Where it is wrong:** one process that maintains both series on one basis
+  needs no check; and do not "fix" it by adjusting everything, because a consumer of the raw figure
+  then gets the same defect with the sign flipped.
 - **When the code under test IS the closed form** (a formula transcribed from a specification),
   computing the expected value "by a different route" degenerates into typing the same formula twice,
   and the test then checks only the transcription. There, take expected values from inputs whose
