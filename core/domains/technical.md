@@ -245,6 +245,21 @@ is treated as a measurement of a missing tool.**
 - **A read is both the easy case and the common one.** Most sessions are reads, and a metric or an
   inventory field retires them without granting anything.
 
+## A limit on something that grows by accretion is checked by the change that could breach it
+
+**A ceiling enforced only by a test someone runs by hand is not a ceiling.** Things that grow one
+reasonable addition at a time (a context budget, a file size, a dependency count) cross their limit
+with no single change to blame: every addition is defensible, nothing weighs the total, and the breach
+is found later by whoever happens to run the check. Measured: a resident instruction file stayed over
+its budget across several trims, each overage traceable to a separate reasonable addition by a
+different writer, and the recorded cause was that the size test ran only when someone ran the suite.
+
+- **Check at the moment of change:** at render, install or commit. Refuse an over-limit result unless
+  the same change also moves the ceiling, so every addition carries either its own trim or an explicit
+  ceiling decision.
+- **Scope:** limits with many independent writers. A limit with one writer, or one already checked by
+  a gate that runs on every change, needs nothing added.
+
 ## Tofu/Terraform state is remote-or-nothing
 
 **Never run a first `tofu apply` against a local state file in an ephemeral checkout.** Agent
@@ -714,6 +729,15 @@ shared store is a leak; a composition bug is a missing panel.
   relocates working resources to satisfy a convention trades real outages for
   tidiness. The convention is a direction to trend in, not a gate.
 
+**A lookup must key on the segment too.** Segmenting where things are *stored* does not help if the
+code that *finds* them keys on a name alone. Where one service serves several identity realms or
+tenants, a secret or credential lookup keyed on the username returns another tenant's secret the day
+a second realm mints the same name, and it returns it as a successful read. Key on (realm, subject),
+never on the name. The same defect at the authorisation layer: role names flattened across clients
+into one set, so a role that grants everything in one tenant's client grants it in all of them.
+**Scope:** shared services with more than one realm or tenant. A single-realm deployment is not
+exposed, which is exactly why the defect ships: it is correct until the second realm exists.
+
 The rule below is this one applied to a local disk, which has no namespaces of
 its own.
 
@@ -745,6 +769,14 @@ providers: none"* reads as *"nothing here to protect"*.
 - **A roster assembled from memory has the same defect one layer up.** Count members from the
   registry rather than recalling them; a hand list that drops one entry is indistinguishable from a
   complete one.
+- **Reconcile a registry against the systems it describes in BOTH directions, and report both.** On
+  the system but missing from the registry is the direction everyone checks. In the registry but
+  missing from, or dead on, the system is the one a hand sweep misses, because a person checks the
+  rows in front of them, and it is not a bookkeeping nit: it is coverage you believe you have.
+  Measured: a manual sweep of a credential registry found stale users, keys that should have been
+  switched off, and two backup uploaders that had never used their key. No detector found any of
+  them, because nothing compared the two sides. A registry that *is* the system of record has nothing
+  to reconcile against.
 - **Scope:** any decision that depends on *"is this production?"* or *"what systems exist?"*. The
   registry is only as good as the process that writes it, so provisioning writes the row before it
   creates the resource.
@@ -2382,6 +2414,15 @@ reproducible.
 - **Record the state the job will run under** next to the result: whether a socket, an agent or an
   unlocked store was present during the probe. A result without that line cannot be compared with the
   real run.
+- **The job's own preconditions must not need a person present.** A gate built on a credential that
+  requires presence (a hardware key that needs a touch, a key agent that must be unlocked, an
+  interactive login) passes whenever someone is nearby and fails when nobody is. So it passes every
+  test anyone runs and fails only the runs nobody watches. The intermittency is what keeps it alive: a
+  permanently broken probe gets fixed, while this one is tested, works, and then stops the routine
+  overnight with an exit code of 0. Scope each precondition to the legs that need it, too: a routine
+  that delivers over one channel must not be gated on another it never uses. A routine *designed* to
+  need a person may require one; the defect is a gate that turns "nobody is here" into "the system is
+  down".
 - **Scope:** any credential or session cache that survives between an interactive login and a later
   call. The mechanism names differ by tool; the question does not: *what did this call authenticate
   with, and will the unattended run have it?*

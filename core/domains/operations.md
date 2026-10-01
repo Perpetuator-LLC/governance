@@ -101,6 +101,12 @@ value the label was computed from. If they differ, the report can route a live f
   copied the mislabel in as a finding; only re-deriving the values from the source exposed it.
 - **Binds the report's AUTHOR.** The careful reader is the one who got captured, so "read reports
   carefully" does not help. Make the classification and the action share an input.
+- **An actionable count excludes what a standing decision already settled.** A count meant to drive
+  action (*liftable*, *outstanding*, *untriaged*) that includes items someone deliberately decided to
+  keep never reaches zero, stops meaning "act now", and gets skimmed. Count decided items in their own
+  bucket, store each decision as data the report reads (naming its ticket), and flag a decision whose
+  subject has disappeared. Measured: once one deliberate pin moved into such a file, a nightly
+  report's actionable count went to 0, and a non-zero meant something again.
 - **Scope:** reports whose rows carry an action. A pure inventory that asks nothing of its reader has
   no action for a label to disagree with.
 - **Sibling:** an instrument that inspects nothing must not read green. There the population is empty;
@@ -136,6 +142,17 @@ its **public** half and stop — never regenerate. Auth preflight **inside** the
 store session → log in if missing) so a 403 is not a second human-invented ceremony. Simulate the
 sequence before hand-over: a first command that 403s because login wasn't a preflight was never
 simulated.
+
+**A credential the script holds is checked at the moment of USE, not only at its head.** Renewing a
+perishable credential (a short-lived token, a login, a lease) at the head of the chain is necessary,
+and not sufficient when the script then waits for a person: a run that sits at a prompt longer than
+the credential lives reaches its next step with an expired token. Measured: a run held a token for
+about 20 hours at a prompt, against an 18-hour lifetime, and the secret fetch after the prompt was
+refused; that step's output was suppressed, so the refusal showed no error. Re-validate after every
+wait, immediately before the call that needs it, and stop with the reason when it fails. Re-validate
+the **same** identity: a script that quietly re-authenticates as whoever is available has swapped
+principals. **Scope:** scripts that hold a time-limited credential across a human wait. A run that
+finishes well inside the lifetime needs only the head check.
 
 Mechanics: the script lives in the owning repo (committed BEFORE the human runs it); writes a
 machine-readable progress artifact from the first seconds (a silent multi-minute script is a
@@ -394,6 +411,15 @@ old labels, and every "list the queue and work it" reader followed the labels.
 - **Execute in the same act as recording:** move the labels, edit the field, update the row. Then
   verify by re-running the **consumer's own query** after the writes, not by re-reading your comment.
 - **The comment is the rationale, never the mechanism.**
+- **A title is prose.** A priority or status written into a title is invisible to every label-keyed
+  query, so it has not been set. When a title and a label both carry one and disagree, nothing
+  reconciles them. Exactly one field is authoritative; remove the other mentions rather than keeping
+  them in sync. Measured: an epic titled as top priority sat for ten days with an empty label set,
+  invisible to the intake query built to find it. Where a tracker has no label vocabulary at all, the
+  title is the only channel, and then the query must parse it.
+- **The consumer's half: derive state from the field, never from matching prose.** A dashboard that
+  judged a pull request merge-ready by finding a word in a comment missed the one whose comment used
+  other words. Read the state the API holds (the run's jobs, the label) instead.
 - **Where two registries share a word with different vocabularies, name the enum at the schema.** A
   value that is meaningful in prose but absent from the enum consumers string-match is a silent miss:
   a status written in one registry's vocabulary into another registry's field makes the row invisible
@@ -509,6 +535,24 @@ blocker, and why clearing it belongs to landing the blocker.
 **Scope:** dependencies between repositories or lanes. Inside one repository, branch order already
 sequences the work. It depends on something reading the labels to sequence; where nothing does, they are
 still the most compact statement of the dependency, but they gate nothing.
+
+## A search that returns ZERO before you create is evidence about the QUERY
+
+**Before concluding "nothing exists yet, so I'll file one", corroborate a zero from a keyword search.**
+A tokenised index misses on singular and plural, hyphenation, compounding and words the author never
+used, and it misses silently: a zero from a near-miss query looks exactly like a zero from an empty
+repository. Measured twice in one week: one search returned 0 because the matching ticket's title used
+the plural; another returned 0 for a ticket filed a minute earlier whose title did not contain the word.
+
+- **Corroborate on a different surface, not the same index twice.** A second query through the same
+  tokeniser is the first check run again. Use a form that differs in the way the index could have
+  failed, or leave the index: list the newest items unfiltered and read them. For a topic someone may
+  have just split out, the newest list is the check and the keyword search only a supplement.
+- **Prove the search is healthy in the same pass:** an absurd token returns 0, and a known term returns
+  its known matches. Without that, a zero can also mean the filter was ignored.
+- **Scope:** keyword or full-text search used as the precondition for *creating* something
+  (route-before-create, dedupe by goal). A lookup by a durable identifier (an id, a commit hash, a
+  ticket number) is exempt: there, a zero does mean absent.
 
 ## Routines are infrastructure — they migrate, or they silently die
 
