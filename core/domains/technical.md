@@ -993,6 +993,15 @@ the absence of an objection.
   it, so verify once on your forge), **else push** an empty commit. Claim that run. Better still,
   let the gating jobs run on drafts, so the hold and the evidence stop competing.
 
+## Never write a closing keyword next to an issue reference, even to deny it
+
+**A forge's keyword scanner cannot read negation.** *"Does not close #N"* reads as protection to a
+person and as a close instruction to the scanner, which then closes the ticket when the pull request
+merges, with no comment. When a change carries only part of a ticket, write *"part of #N"* or *"#N
+stays open"*, and never put a closing keyword (close, fix, resolve, in any form) next to a reference in
+a title, body, comment or commit message. **Where it is wrong:** a pull request that really completes
+the ticket should use the keyword; that is what it is for.
+
 ## A green run proves only the steps that EXECUTED in it
 
 **A run's verdict covers the steps that actually ran on this build, and two ordinary mechanisms make
@@ -1160,6 +1169,18 @@ from an abandoned one — only its owner can. Protect other seats' refs explicit
   *landed as an equivalent patch*, and cherry's silence alone is no verdict. Calibrated on a
   fixture: a commit merged into X gives empty cherry output and ancestry true; the control, not
   merged, gives `+`.
+
+## Before removing a worktree, check what is still running from it
+
+**A merged branch and a clean `git status` say nothing about what was started from the directory.**
+Before removing a worktree, look for containers whose working directory or bind mounts are under the
+path, and for processes whose current directory is there, and stop those first. A gitignored file is
+not disposable because git does not track it: it is often the most sensitive and least recoverable
+thing in the directory (generated credentials, local state), and every check that reads `git status`
+is blind to it. Measured: a worktree removed as "released" left a running container stack whose
+credentials had lived in an ignored file there. The stack's own stop command no longer worked, and its
+data volume was orphaned with a password that matched nothing on disk. **The mirror:** a job scheduled
+to start there later passes a live-process check, so look at the schedulers too.
 
 ## Agent attribution lives in the BODY — the author field is one shared identity
 
@@ -1379,6 +1400,14 @@ Two shapes produce flakes that read as real failures (or real passes). Audit a s
 the failing output, not only the exit code, so a recurrence names its own cause. **Do not chase an
 unreproduced flake speculatively:** record it with its output and move on until it recurs.
 
+**A claim of failure is measured like a claim of success, and a claim against your own change gets
+more scrutiny, not less.** Before reporting that something is broken, compare the newest failure with
+the fix and with one full probe cycle: a backlog of old failures is history, not the current state.
+Measure the damage per affected party rather than assuming the worst for all of them, and on a
+surface several writers share, rule out another writer before blaming your own change. **Where it is
+wrong:** a suspected security exposure is contained first and measured after; and on a surface with
+one writer, looking for another wastes the time.
+
 ## REACHABILITY IS A LADDER — each rung proves only its own layer
 
 **ICMP proves the kernel answers. It proves nothing about any service.** In a forge outage a host
@@ -1494,6 +1523,17 @@ store, the ref from the forge — and assert against *that*. Both rules reduce t
 that confirms must be **independent of the thing that acted**, or it is a rehearsal of your own
 intent. Same family as a health field authored by the subject it reports on, and as a test double
 that never reaches the real path (above).
+
+**A probe has three outcomes, not two: *found*, *not found*, and *could not tell*.** The third never
+folds into either of the others. Re-prove the control whenever the probe is edited or the mode it runs
+in changes, because a control that passed before the edit says nothing about the code after it. A
+stored status field is an observation with a timestamp, not a live fact: read it as *"true as of"*.
+
+**Corroboration reads different attributes, or it is the same probe run twice.** Two checks that read
+the same fields through different tools are one check. Ask the system that owns the mapping, not a
+listing that resembles it, and remember that a write that returned success has not thereby reached
+the system that consumes it. **Where it is wrong:** when the owning system is itself the suspect
+(down, or compromised), asking it is circular; corroborate from its consumers instead.
 
 ## A mapping across a boundary is added in BOTH directions, or the reverse is ruled out in writing
 
@@ -1988,6 +2028,14 @@ not there.
 **The one-minute test for any self-updating tool:** what does its self-check compare, and could the
 two sides ever be the same file?
 
+### Committed is not running
+
+**A change that adds an observer (a monitor, an alert, a scheduled check) delivers it running, or ships
+an alarm on its absence.** Merged code is not a watching process. A hold or an all-clear tied to a
+change lifts per environment, and only once that environment serves the change: *merged* and
+*deployed to staging* say nothing about production. **Where it is wrong:** an observer shipped
+disarmed on purpose, with its arming condition written beside it, is a plan, not a defect.
+
 ## Cite a STABLE identifier — a branch tip is not one
 
 **A pointer to a moving reference is stale the moment the thing it points at improves.** A branch tip
@@ -2070,6 +2118,12 @@ value — changes hash with no human involved, and a byte comparison then report
 never happened. Measured: differing hash, identical size, parsed content deep-equal. **A drift check
 that cries wolf on an application's own writes trains its reader to discount it**, which costs more
 than the drift it was meant to catch.
+
+**The same holds when nothing renders.** Live configuration served by symlink from a working tree
+(executables, hooks, scheduled-task bodies) makes every `checkout` in that tree a deploy. Pin the
+served copy to the default branch, or make a switch loud (a log of who switched, and when), and have a
+scheduled reader take its body from the remote default rather than from the tree. **Where it is
+wrong:** a deploy-only clone that nobody works in is better pinned than watched.
 
 ## An expected value copied from the OUTPUT pins the defect
 
@@ -2509,6 +2563,17 @@ reproducible.
 - **Scope:** any credential or session cache that survives between an interactive login and a later
   call. The mechanism names differ by tool; the question does not: *what did this call authenticate
   with, and will the unattended run have it?*
+
+## A page is not a count
+
+**A query that returns exactly its requested limit has not measured anything.** Raise the limit until
+the result is strictly smaller than it, or call a counting endpoint, and state the total in the
+finding: never let the visible page become the denominator. Measured: a backlog believed to hold about
+sixty items held over two hundred, because a sweep read one page of a hundred and every later plan
+inherited its number. It confirms itself, because a page looks like a complete list. **The mirror:** a
+server that caps the page size below your limit returns *fewer than requested* and is still truncated,
+so trust a total the server reports, not the shortfall. A listing in its default sort order can also
+miss items from a time window; sort or filter by the window you mean.
 
 ## A long browser harvest checkpoints to the PAGE, because the session is the fragile part
 

@@ -53,6 +53,9 @@ rule travels upstream.** The exhibit stays in the adapter, which may link to COR
 back. A rule that reads as a platitude once its exhibit is removed was an anecdote, and it stays in the
 adapter.
 
+**A rule that assumes a template or setup script ships it**, generalised on import: every path, host
+and name it carried becomes a parameter, and what cannot be parameterised stays in the adapter.
+
 `bin/redaction-check` runs on every change. It matches identifier *shapes*, never literal names — a
 checker that contained the private names it hunts for would itself be the disclosure. Literal names
 live in a private list you pass in, and without that list the check reports the name leg as **not

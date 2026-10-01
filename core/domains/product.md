@@ -22,3 +22,12 @@ Responsibility · Evidence**. Architecture (*when/where*) → Planning (*what/wh
   1:1 to the SMART goal (*how to verify*). Pair an implementation meeting with a balance meeting.
 - **Requirements are the source of truth for scope** and live in the initiative repo, versioned
   alongside what they define (`core/AGENTS.md` → *Artifact placement*).
+
+## Sequencing: order by dependency, then by leverage
+
+**Order work by hard dependency first, then by which work makes the rest cheaper, then everything
+else.** An initiative that lowers the cost of every other one is a multiplier: work scheduled before it
+pays full price. It loses every urgency contest, so by default it is scheduled late and taxes everything
+that runs ahead of it. A hard external deadline is the routine exception. **Where it is wrong:** when
+the lever's payoff is uncertain or slow to build, putting deadline work behind it costs more than it
+saves.

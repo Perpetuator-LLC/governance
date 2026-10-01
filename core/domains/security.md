@@ -232,6 +232,10 @@ and clearly labelled as awaiting a severity call.
 ticket numbers are placement problems. Keys, tokens and passwords are incidents. Treating the first
 like the second buys nothing and spends trust.
 
+**A report of misplaced data describes its class and its location, and never quotes the values:** a
+report that quotes them has moved the data again. A detector for misplacement ships with a
+false-positive fixture, since most of what it flags will be placement, not exposure.
+
 ## The BLIND PIPELINE — and it binds the hand-off blocks you author
 
 ⚠️ **The remedy for any secret is a BLIND PIPELINE: store-to-store, the value never in context.**
@@ -439,6 +443,25 @@ row are indistinguishable until the moment you need to revoke something.
 **Corollary for provisioning:** the identity is cheapest to capture at **grant** time,
 when someone is actively logging the person in — not at revoke time, when they may be
 unreachable and the account may already be the only record of its own existence.
+
+## An agent acting for a person is a third kind of identity
+
+**Credential posture usually knows two classes: service accounts (one per consumer, least privilege)
+and human accounts. A process acting on a person's behalf is a third: a delegate.**
+
+- **One delegate per person who runs agents, never shared.** Its grants are a subset of that person's
+  by construction, with a drift check that asserts the subset still holds. Its work is attributed to
+  the person as author and to the delegate as the actor.
+- **No standing authority of its own.** Each downstream credential is minted for the person it serves
+  and bound to one audience, never passed through. No credential means fail closed. A request from
+  another principal runs with that requester's authority, or not at all.
+- **The finest grain the platform enforces.** If a leaked delegate credential would expose more than
+  the work the delegate does, split it. A gate on cost or irreversibility is a role no delegate holds.
+- **Why:** without this class, the path of least resistance is one shared agent account with wide
+  write access: a confused deputy, where anyone who can prompt the agent can make it read what they
+  cannot.
+- **Where it is wrong:** if the platform cannot express a subset grant, record the gap; never fall back
+  to a shared account.
 
 ## Security review: identify → ticket → hand off
 
