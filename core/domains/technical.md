@@ -385,6 +385,15 @@ Rules:
 
 Copy the repo's existing end-to-end enum (there is usually one) rather than inventing a new pattern.
 
+### A list put into a one-value slot becomes ONE value, with no error
+
+**When a text template has a slot for one value and the value can be a list, the list is stringified
+into a single element, its items joined with commas.** A call meant to fetch several keys fetches one
+key that does not exist, and nothing errors. Encode the collection for the slot's type (a list as a
+list), and assert the element count at the boundary. **Where it is wrong:** a type-aware builder (a
+structured request object, a JSON tool's typed argument) already binds a list as a list, and adding
+encoding there double-encodes it.
+
 ### A FILTER argument is a boundary too, and the failure there is matching SEMANTICS
 
 The shape above is an argument that is *untyped*. A filter can be typed and still wrong: **a filter
@@ -443,6 +452,21 @@ as *"this was tried and failed"* and is treated as a closed question. Measured o
 across all history **no commit ever carried it uncommented** — it was never live, so there was no
 failure to learn from. Check the history before inheriting the conclusion.
 
+**A filter that is accepted and never applied returns everything, and looks filtered.** A wrapper
+that collects unknown arguments and drops them accepts any filter and returns the whole collection,
+which the caller reads as the filtered answer. Before trusting a filter argument, prove it
+discriminates: pass a value that must return zero, and require zero. (Comparing counts with and
+without it fails on data where the filter legitimately matches everything.)
+
+**The other direction: a pattern that decides what to HIDE fails silently.** An over-broad query hands
+back extra rows and the reader sees them; an over-broad exclusion removes rows, and what remains looks
+like a complete answer. Wherever a pattern suppresses (an index's exclusion list, a log redactor, a
+skip list, an alert inhibition): match on a word or token boundary, never a bare substring, above all
+for a short pattern; report a count of what was suppressed beside what was kept; and test it against
+something it must hide and something adjacent it must not. **Where it is wrong:** a deliberately
+broad, fail-closed suppressor (a secret scrubber on an outbound channel should over-redact rather than
+miss); the count is still required, because it shows the cost you accepted.
+
 ## An invariant with more than one SOURCE is answered by ONE choke-point function
 
 **Money (an allowance pool plus a paid balance), a quota, a permission: when an invariant can be
@@ -485,6 +509,16 @@ Two corollaries:
   the shared function is how a bypass becomes reachable from the request path.
 - **A field whose write path sanitises should be hard to write any other way.** If setting it
   directly is one line, someone will write that line.
+
+## A first run creates: a patch alone fails on a clean system
+
+**A store's *patch* (merge a field into an existing record) is not a create.** Against a path that does
+not exist yet it returns not-found. So a bootstrap written as *"patch the field in"* fails on a clean
+environment and succeeds forever after, and the only person who ever sees the failure is the first
+user of a new environment, the one least able to tell a bug from their own mistake. A first run uses
+the create verb, or creates then patches; say in the script which one it takes. **Where it is wrong:**
+when another system owns the record's creation, not-found is correctly fatal, and turning it into a
+create hides the missing dependency.
 
 ## A tool that BYPASSES the permission model is shaped by how cheaply it can be verified
 
@@ -597,6 +631,11 @@ to word the refusal more carefully.
 The rule generalises past CLIs: an API error, a validation message and a
 permission denial are all refusals, and each one is where a person decides
 whether to work with the system or around it.
+
+**A guard a person can hit ships with its way out in the same change.** The unblock command or
+procedure lands in the same pull request as the guard, is named in the refusal, and is exercised once
+in its tests. **Where it is wrong:** when the only way out is a human decision, the way out is the
+record that decision creates; name where it is written.
 
 ### A REDACTED step still owes its failure a reason
 
@@ -791,6 +830,10 @@ providers: none"* reads as *"nothing here to protect"*.
   total functional outage stay green.
 - **Monitoring must not share fate with what it watches**: in-app dead-men (celery/beat)
   are a layer; the authoritative probe is external (blackbox → Alertmanager).
+  The same holds for any **detector and the corrector it guards**: on one host, timer, agent or
+  credential, one fault disables both, and no alert fires because the alerting half is the one that
+  died. Separate them, or add an independent heartbeat that alerts when the detector goes quiet.
+  **Where it is wrong:** a corrector whose own failure already raises an alert in a separate system.
 - **Scripts re-exec'd by path need the git exec bit AND `exec bash "$path"`** — checkout
   restores committed modes; a 0644 script killed a prod deploy with "Permission denied".
 - **compose v1→v2 RENAMED the images it builds, so old rollback targets no longer resolve.** v1
@@ -897,6 +940,14 @@ ticket, not a step to perform: it can only exist on the new build, so it fails o
 that is exactly when it gets run. The deploy flow is documented as code so it is repeatable and never
 depends on one person's memory.
 
+**A pipeline triggered only by the default branch first runs on production.** No pre-merge run can
+execute it, so the merge is its first execution. Design for that: put every step that can fail before
+the first irreversible one, so a failure leaves the running system serving; keep the previous
+mechanism's files as the revert path; and say in the ready claim that CI could not run it. **Where it
+is wrong:** a pipeline that can be rehearsed (a second environment, a scratch target, a check mode)
+is rehearsed instead. Ordering is the mitigation for what genuinely cannot be, not a reason to skip a
+rehearsal.
+
 ## "Merged" is not "the reviewed code merged" — a verdict pins a HEAD, a click picks a MOMENT
 
 **A review verdict names a commit. A merge names an instant. Nothing in a forge binds the two.**
@@ -959,6 +1010,14 @@ dependency or vulnerability audit, a licence database — can pass and then fail
 minutes apart, so a green observed earlier is not a current green. For those gates, the merge-ready
 claim names the run and its time, and is re-checked at merge.
 
+**A trigger that names only the default branch never runs on a pull request into an integration
+branch.** The pull request then shows no check at all, not a failing one, and a claim that "CI is
+green" is quoting a manually dispatched run, or nothing. Put the integration branch in the trigger;
+until then, a merge-ready claim names the event that produced its run, because a dispatched run tests
+what was dispatched, not necessarily the pull request's head. **Where it is wrong:** leaving the
+integration branch ungated to save runner time is a legitimate choice, and then the claim says the
+branch is ungated instead of citing a run.
+
 ## A hold on a pull request lives in the forge's own WIP / draft gate — never only in a comment
 
 **A reviewer sees the title, not the thread.** A lock, a hold comment and a "please don't merge yet"
@@ -992,6 +1051,31 @@ the absence of an objection.
   to `reopened` (no commit needed; on GitHub-Actions-compatible runners an omitted `types` includes
   it, so verify once on your forge), **else push** an empty commit. Claim that run. Better still,
   let the gating jobs run on drafts, so the hold and the evidence stop competing.
+
+## Never write a closing keyword next to an issue reference, even to deny it
+
+**A forge's keyword scanner cannot read negation.** *"Does not close #N"* reads as protection to a
+person and as a close instruction to the scanner, which then closes the ticket when the pull request
+merges, with no comment. When a change carries only part of a ticket, write *"part of #N"* or *"#N
+stays open"*, and never put a closing keyword (close, fix, resolve, in any form) next to a reference in
+a title, body, comment or commit message. **Where it is wrong:** a pull request that really completes
+the ticket should use the keyword; that is what it is for.
+
+## A green run proves only the steps that EXECUTED in it
+
+**A run's verdict covers the steps that actually ran on this build, and two ordinary mechanisms make
+that smaller than the job's roster.**
+
+- **A job that stops at its first failing step proves nothing about the steps after it.** When
+  independent checks (audit, lint, scan) share one job, a red run reports one defect and hides the
+  rest, which are found a cycle later. Give independent checks their own jobs, or let each continue and
+  gate on the total at the end. **Scope:** independent checks only. A genuinely sequential pipeline
+  (build, then test, then publish) should stop at the first failure; forcing it on tests an artifact
+  that was never built.
+- **A cached step can report a pass without the test running.** Behind a build or result cache, a hit
+  returns in a second or two and the wrapper still says *passed*. Accept a pass only when **this
+  build's own** test summary, with its counts, is in the log. **Scope:** steps whose output is a
+  verdict. Caching a step whose output is a file is the cache doing its job.
 
 ## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
 
@@ -1145,6 +1229,18 @@ from an abandoned one — only its owner can. Protect other seats' refs explicit
   fixture: a commit merged into X gives empty cherry output and ancestry true; the control, not
   merged, gives `+`.
 
+## Before removing a worktree, check what is still running from it
+
+**A merged branch and a clean `git status` say nothing about what was started from the directory.**
+Before removing a worktree, look for containers whose working directory or bind mounts are under the
+path, and for processes whose current directory is there, and stop those first. A gitignored file is
+not disposable because git does not track it: it is often the most sensitive and least recoverable
+thing in the directory (generated credentials, local state), and every check that reads `git status`
+is blind to it. Measured: a worktree removed as "released" left a running container stack whose
+credentials had lived in an ignored file there. The stack's own stop command no longer worked, and its
+data volume was orphaned with a password that matched nothing on disk. **The mirror:** a job scheduled
+to start there later passes a live-process check, so look at the schedulers too.
+
 ## Agent attribution lives in the BODY — the author field is one shared identity
 
 **Write side.** Every agent-authored commit, PR body, review and forge comment carries its own
@@ -1262,6 +1358,19 @@ the effects behind one switch, and assert in a test that a dry run leaves every 
 - **Scope:** writers with at-most-once semantics per period or per key (digests, invoices,
   notifications, scheduled reports). An idempotent writer that may safely repeat needs neither half.
 
+## An assertion states which question it asks
+
+- **A count is not a presence check.** `count == 1` fails a correct input in which the term
+  legitimately appears twice; if the question is *"is it here at all"*, assert `>= 1`. When the
+  question genuinely is uniqueness (one entry point, one owner, one mount of a sensitive socket),
+  `== 1` is the right and stronger assertion, and relaxing it hides a duplicate. Decide which question
+  you are asking, then say it in the assertion's message.
+- **Assert on prose only after flattening its whitespace.** A phrase wraps differently the next time
+  the document is edited or rendered, so a check against the raw text passes or fails on line breaks,
+  not meaning. **Scope:** where the layout is not the contract. When it is (a fixed-width report, a
+  line-oriented file, a template whose diff matters), flattening destroys what you meant to pin:
+  assert on the structure explicitly instead.
+
 ## A test double must FAIL the way the real collaborator fails
 
 **A double that RETURNS an error where production RAISES one — or returns a shape production never
@@ -1349,6 +1458,14 @@ Two shapes produce flakes that read as real failures (or real passes). Audit a s
 **Reproduce under the condition that caused it** (loop the suite under deliberate load), and capture
 the failing output, not only the exit code, so a recurrence names its own cause. **Do not chase an
 unreproduced flake speculatively:** record it with its output and move on until it recurs.
+
+**A claim of failure is measured like a claim of success, and a claim against your own change gets
+more scrutiny, not less.** Before reporting that something is broken, compare the newest failure with
+the fix and with one full probe cycle: a backlog of old failures is history, not the current state.
+Measure the damage per affected party rather than assuming the worst for all of them, and on a
+surface several writers share, rule out another writer before blaming your own change. **Where it is
+wrong:** a suspected security exposure is contained first and measured after; and on a surface with
+one writer, looking for another wastes the time.
 
 ## REACHABILITY IS A LADDER — each rung proves only its own layer
 
@@ -1465,6 +1582,59 @@ store, the ref from the forge — and assert against *that*. Both rules reduce t
 that confirms must be **independent of the thing that acted**, or it is a rehearsal of your own
 intent. Same family as a health field authored by the subject it reports on, and as a test double
 that never reaches the real path (above).
+
+**A probe has three outcomes, not two: *found*, *not found*, and *could not tell*.** The third never
+folds into either of the others. Re-prove the control whenever the probe is edited or the mode it runs
+in changes, because a control that passed before the edit says nothing about the code after it. A
+stored status field is an observation with a timestamp, not a live fact: read it as *"true as of"*.
+
+**Corroboration reads different attributes, or it is the same probe run twice.** Two checks that read
+the same fields through different tools are one check. Ask the system that owns the mapping, not a
+listing that resembles it, and remember that a write that returned success has not thereby reached
+the system that consumes it. **Where it is wrong:** when the owning system is itself the suspect
+(down, or compromised), asking it is circular; corroborate from its consumers instead.
+
+### Five boundary cases of the same rule
+
+- **A gate that "the read succeeded" passes on an empty result.** Reading from an archived, empty or
+  wrong target often returns success with no rows, so a gate meant to prove *"we can see the data"*
+  requires a row it knows should be there. **Where it is wrong:** a pure credential check, where an
+  empty success is the right pass; call it an auth check, and never let it stand in for a delivery
+  check.
+- **Before reading a zero as clean, confirm the feature that produces it is switched on.** A disabled
+  feature (an issue tracker turned off, a scanner not enabled) reports zero in the same field as a
+  clean result. Show *disabled* as its own state. It earns its cost in sweeps across systems you do not
+  individually know.
+- **A read-back after a write to an eventually consistent service retries within a stated budget,**
+  and its failure message names the budget (*"after 30 s"*), so a slow write can be told from a failed
+  one. **Where it is wrong:** never retry a check for something that should already exist before the
+  operation; that turns a fast, correct failure into a slow one, and eventually a wrong pass.
+- **A detector reports three numbers: checked, findings, and unreadable.** An input it could not parse
+  is neither a finding nor a pass; the detector never reached it. Folding it into the findings
+  inflates a number people chase and hides that every check parsing the same way is blind there too.
+  **Where it is wrong:** a format validator, where unparseable input *is* the finding.
+- **A tool's own label on a value it converted is not evidence the conversion is right.** A time zone,
+  unit, currency or scale printed by the code that did the conversion comes from the same path, so it
+  cannot corroborate it. Check the value against a source that did not convert it; the tell is usually
+  one step of arithmetic against the input. **Where it is wrong:** a label echoed by an independent
+  source is evidence; and an unlabelled value is not safer, it only moves the assumption to the reader.
+
+## A mapping across a boundary is added in BOTH directions, or the reverse is ruled out in writing
+
+**When you teach a resolver that names in namespace A live in namespace B, add the mirror mapping in
+the same change, or write down why a reference cannot run the other way.** A one-way mapping does not
+half-work: references in the mapped direction resolve, and references in the other direction are
+reported as broken, every run, because nothing distinguishes *"this reference is wrong"* from *"this
+direction was never mapped"*. A suppression list makes it permanent: written from that state, it
+records correct references as known-bad, and the check goes quiet about them for good. Measured: a
+nightly path check reported seven correct cross-root references as dead every night for a month;
+adding the reverse alias resolved all seven with no regression.
+
+**Scope:** link checkers, import and path resolvers, redirect tables, identifier maps, above all when
+they have a baseline or ignore list. **Where it is wrong:** a deliberately one-way boundary, where the
+reverse reference is itself the defect (a public layer that must never cite a private one; a lower
+layer that must not name a higher one). There the mirror would suppress a true finding. Write the
+one-way rule down instead, so the next reader does not "complete" the mapping.
 
 ## The SEAM is the subject's duty; pinning is only the test's
 
@@ -1618,6 +1788,19 @@ lives in the syntax, the fix is syntax: show the line.
 **And a probe that can fail by RACE needs a repeat-N self-test.** One green run is not evidence
 about a timing-dependent check — run it enough times to see the distribution, and make that repetition
 part of the test rather than something a person does once by hand.
+
+### A pipe on a command that can prompt hides the prompt, and the command proceeds with an empty answer
+
+**A command that can ask for input is never run through an output filter (`| tail`, `| head`,
+`| grep`) or with its output captured, unless it has been made unable to prompt.** The pipe buffers
+the prompt, so it is never shown, and the command does not wait or fail: it carries on with an empty
+answer. When the answer was a password, the action runs without the credential the operator believes
+they gave. The fix is not just removing the pipe: pass the flag that makes a missing input an error,
+or assert the input's source first, so the failure is a refusal. The same pipe hides the prompt from a
+person watching, so this is a property of the pipe, not of who is present. **Where it is wrong:** a
+command that cannot prompt, and feeding a secret *in* on standard input, which is the correct
+direction. Dropping the filter on a command with huge output floods the channel; make prompting
+impossible instead.
 
 ## A fixture that cannot EXPRESS the failure certifies it clean
 
@@ -1942,6 +2125,14 @@ not there.
 **The one-minute test for any self-updating tool:** what does its self-check compare, and could the
 two sides ever be the same file?
 
+### Committed is not running
+
+**A change that adds an observer (a monitor, an alert, a scheduled check) delivers it running, or ships
+an alarm on its absence.** Merged code is not a watching process. A hold or an all-clear tied to a
+change lifts per environment, and only once that environment serves the change: *merged* and
+*deployed to staging* say nothing about production. **Where it is wrong:** an observer shipped
+disarmed on purpose, with its arming condition written beside it, is a plan, not a defect.
+
 ## Cite a STABLE identifier — a branch tip is not one
 
 **A pointer to a moving reference is stale the moment the thing it points at improves.** A branch tip
@@ -2025,6 +2216,12 @@ never happened. Measured: differing hash, identical size, parsed content deep-eq
 that cries wolf on an application's own writes trains its reader to discount it**, which costs more
 than the drift it was meant to catch.
 
+**The same holds when nothing renders.** Live configuration served by symlink from a working tree
+(executables, hooks, scheduled-task bodies) makes every `checkout` in that tree a deploy. Pin the
+served copy to the default branch, or make a switch loud (a log of who switched, and when), and have a
+scheduled reader take its body from the remote default rather than from the tree. **Where it is
+wrong:** a deploy-only clone that nobody works in is better pinned than watched.
+
 ## An expected value copied from the OUTPUT pins the defect
 
 **A test whose expected value was taken from what the code currently produces is not a test — it is a
@@ -2100,7 +2297,27 @@ it a check of the execution rule rather than a restatement of it.
   and keep a change-detector that is labelled as one.
 - **The process assumes the code is deterministic and its inputs can be injected.** Where they cannot
   (a live service, the wall clock, randomness), inject a fake or a seed first. A scenario you cannot
-  construct is a finding about the missing seam, never a reason to skip the test.
+  construct is a finding about the missing seam, never a reason to skip the test. **Inject it on
+  EVERY path the test drives, not only the call it makes directly.** A test that hands a fixed
+  `now` to one call while a second path under test falls back to the real clock (a `now=None`
+  default, a cache that rebuilds) agrees with itself only until the fixture's timestamps age out of
+  the window the code applies. It then goes red by itself, with no change in the repository, one
+  window after it was written. The mirror case is safe: fixtures derived from the clock the code
+  reads, at run time, never age.
+  **Then prove it in CI: run the suite a second time on a wall clock shifted years ahead.** A fixture
+  date pinned while some path still reads the real clock is then already in the past, so the test
+  fails the day it is written instead of the day its window expires. Pair it with a test that asserts
+  the shift reached application code: a shift that only moved the test's own clock proves nothing.
+  **Where it is wrong:** a test that calls a live service which validates timestamps (a signed request,
+  a token checked server-side) runs unshifted, or it fails for the service's reason, not the code's.
+- **Two series combined in a ratio must be on the same basis.** A ratio of an adjusted series to an
+  as-recorded one (a re-scaled price against a per-unit figure, a restated total against the original,
+  a converted currency against a nominal one) produces plausible numbers of the right size and sign for
+  every input, and never an error. Convert at the point of combination, route both through one helper,
+  and test with a scenario across the event that re-scales one of them, asserting the result is
+  continuous across it. **Where it is wrong:** one process that maintains both series on one basis
+  needs no check; and do not "fix" it by adjusting everything, because a consumer of the raw figure
+  then gets the same defect with the sign flipped.
 - **When the code under test IS the closed form** (a formula transcribed from a specification),
   computing the expected value "by a different route" degenerates into typing the same formula twice,
   and the test then checks only the transcription. There, take expected values from inputs whose
@@ -2319,6 +2536,14 @@ drift to a tool that only compares the items still declared. **So a reconcile as
 MEMBERSHIP of its declared set** (against the reviewed source, or a recorded count), not only the
 differences within it.
 
+- **The provider's side of the same blind spot: an empty collection is not "no settings".** Some
+  infrastructure providers return per-item state only for the keys your configuration declares, so an
+  empty map can mean *"you declared none"*, not *"there are none"*. Anything granted outside the
+  declared keys is then invisible, and drift detection reports clean on a widened grant. Declare every
+  key the subject is meant to hold; removing the block widens the blind spot rather than narrowing the
+  config. **Where it is wrong:** a provider that enumerates live state independently of your
+  configuration. There an empty result is evidence of absence. Check which kind yours is before
+  reading its silence.
 - **Detect, then restore.** Silently restoring from the source repairs the file and destroys the
   evidence that something keeps rewriting it. Report the loss with what dropped, then restore.
 - **The detector must survive the file's type changing.** A check written as *"compare the file with
@@ -2354,6 +2579,26 @@ that will be reverted without telling anyone.
 The same shape covers any rendered configuration — templated config, generated container manifests,
 rendered dotfiles. **An artifact that has a generator has exactly one durable edit point, and it is
 not the artifact.**
+
+## A config file read only from the tool's input root goes inert when the input widens
+
+**Nothing errors and nothing warns: the file stays in the tree looking authoritative and has no
+effect.** Per-directory configuration that a tool resolves relative to its invocation root (an ignore
+file, tool settings, lint config) stops applying the day a change widens the tool's input to a parent
+directory. A change that widens a tool's input moves or deletes such files in the same change, and
+**deletes rather than leaves behind**: a dead config still in the tree will be read as live by the next
+person. **Where it is wrong:** config the tool finds by walking upward from each file keeps working
+when the root moves, and deleting it breaks the nested case. Establish which resolution the tool uses
+first; guessing fails silently one way and loudly the other.
+
+## A price or cost table in code goes stale silently, then reports confident wrong money
+
+**An estimate of money, quota or capacity embedded as constants needs a source of truth before it
+needs an implementation.** The numbers age with no error, and the output cannot be told apart from a
+measured figure. Omitting the estimate is better than shipping one that looks measured and is not.
+**Scope:** values that change outside the code (vendor prices, quotas, rates). A value fixed by a
+contract or a standard for the code's lifetime may be a constant, and it still carries the date and
+source it was taken from: an unmarked number in code is read as current.
 
 ## An env-var default is not a default when the LAUNCHER sets the variable
 
@@ -2393,6 +2638,15 @@ environment is fully declared by the thing that starts it — a unit whose `Envi
 whole of it, a container with no inherited env — there is nothing unexpected to inherit, and the check
 reduces to reading that declaration.
 
+## A ratio alert against a trailing baseline goes quiet as the outage enters the baseline
+
+**An alert comparing *now* with a trailing mean gets quieter the longer the problem lasts**, because
+the bad days progressively become the baseline: the ratio improves while nothing does. Judge a stopped
+signal on its **absolute** value, and keep the ratio only for detecting the onset. **Where it is
+wrong:** a seasonal or traffic-driven series, where the absolute number means nothing and an absolute
+floor pages every quiet weekend. The deciding question is whether **zero is a legitimate value** for
+the series. If it is not, zero must trip an absolute rule.
+
 ## A test of an UNATTENDED job, run from an interactive session, borrows that session's credentials
 
 **Reproducing a scheduled or unattended job by hand proves the job works only if the hand run has
@@ -2426,6 +2680,17 @@ reproducible.
 - **Scope:** any credential or session cache that survives between an interactive login and a later
   call. The mechanism names differ by tool; the question does not: *what did this call authenticate
   with, and will the unattended run have it?*
+
+## A page is not a count
+
+**A query that returns exactly its requested limit has not measured anything.** Raise the limit until
+the result is strictly smaller than it, or call a counting endpoint, and state the total in the
+finding: never let the visible page become the denominator. Measured: a backlog believed to hold about
+sixty items held over two hundred, because a sweep read one page of a hundred and every later plan
+inherited its number. It confirms itself, because a page looks like a complete list. **The mirror:** a
+server that caps the page size below your limit returns *fewer than requested* and is still truncated,
+so trust a total the server reports, not the shortfall. A listing in its default sort order can also
+miss items from a time window; sort or filter by the window you mean.
 
 ## A long browser harvest checkpoints to the PAGE, because the session is the fragile part
 
@@ -2572,6 +2837,15 @@ about a class it only half covered.
 **Key the detector on the invariant — where the failure is actually signalled — not on what you
 happened to see downstream of it.** The test: *would this detector still fire if someone consumed
 the output differently?* If not, it is a detector for a usage, not for the fault.
+
+**A gate with two legs reads the same reference on both, or it reports the distance between two
+references instead of the subject.** When one leg asks *"is this safe to remove?"* against one
+revision and the other asks *"has this landed?"* against another, every refusal can blame work that
+in fact landed, because the local default was stale. Measured: every refusal in one batch was such a
+case. Fetch first, and print the pair you compared. **Where it is wrong:** the legs are deliberately
+different when one is a local invariant and the other a remote one (*"is my tree clean?"* and *"is
+it merged upstream?"* must not be collapsed). The rule is that the divergence is named and refreshed,
+not that the references are identical.
 
 **The tell that a tool has this bug is a guarantee written in the vocabulary of remoteness** —
 *"asserted against the remote default, not a local copy, which can be stale"* — sitting directly

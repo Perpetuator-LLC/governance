@@ -192,6 +192,17 @@ Four tests, applied to every line in the human's section **in the first message*
 Sending the citation form is not concision. It moves the synthesis the rule exists to do back onto
 the human, and it looks compliant while doing it.
 
+**A precondition written in prose gates nothing.** A sentence above a command (*"only if the key
+exists"*) is read after the command has run. Chain the check into the command, `check && change`, so a
+failed check stops the change, and assert that the external resource exists, not only that a variable
+is set. Derive the list of prompts a block will raise from the command's own flags, never from a
+description of it. **When a hand-off broke a rule that already existed, the fix is a mechanical check
+that would have flagged that hand-off, not a rewording:** restating a rule nobody read lengthens the
+thing that went unread. A checker for hand-off text fails loudly on a block it cannot parse. **Where it
+is wrong:** a check that cannot be scripted becomes two sittings with its result reported between them;
+a read-only block needs no gate; and a rule that was read and misapplied because it is ambiguous is a
+wording defect, where rewording is the fix.
+
 ### In a recipe, a number means ORDER and a bullet means INDEPENDENT
 
 Number a step only when it needs the one before it to have finished. Steps a person can do in any
@@ -246,6 +257,14 @@ still asked.
 human picked the safe one, and the answer ran nothing: the step needed the human's own server password,
 and the ticket went back to an agent that could not run it. The human then asked exactly the questions
 the three lines answer: *what happens with my decision, and why was I needed?*
+
+**Run every precondition an agent can run before the ask is parked.** A hand-off that records the
+human's verb and drops the condition that gated it (*"file it upstream"*, without *"once you have
+checked whether a newer version fixes it"*) parks work an agent could have done. Name the precondition
+and its owner, and if an agent can run it, run it first. On a re-raise, read the source, not the
+record: a record that has been re-parked twice is evidence about the record. **Where it is wrong:**
+when the precondition is itself gated (a secret, production), the ask is ripe as it stands; name both
+gates.
 
 ## A lane that serves people runs AHEAD of them, not behind them
 
@@ -310,6 +329,14 @@ the routine. The fix is a change to the routine, not more effort in the next pas
   id-minting call with anything that cites its result;** send the citing message in the next step.
 - **A FILE link resolves only for a path UNDER the working directory, written relative.** Absolute
   paths outside it, `file://` URLs, and symlinks inside it all fail to open.
+- **A reference to another repository is fully qualified, everywhere, titles included.** A bare `#N`
+  resolves against the repository it is written in, so a cross-repository reference written bare
+  points at an unrelated item; a pull request's title becomes the merge commit's subject, which the
+  forge scans too. Write `owner/repo#N`, and make a link's visible text name the same repository as
+  its target. A reviewer treats a bare number that does not exist here, or does not match its wording,
+  as a defect, fixed by a retitle rather than a re-push. A rolling pull request's number maps to
+  different content over time, so a reference to one carries its subject line or a commit hash.
+  Same-repository references stay short.
 
 ## A dictated name is EVIDENCE, not IDENTIFICATION
 
@@ -425,6 +452,13 @@ old labels, and every "list the queue and work it" reader followed the labels.
   a status written in one registry's vocabulary into another registry's field makes the row invisible
   to every sweep that matches the correct values.
 
+- **A decision that names a cadence is recorded only when its routine exists.** *"Weekly"*, *"after
+  every import"* or *"each Monday"* is incomplete until the scheduled task, cron entry or hook that
+  fires it exists, or, where arming is gated, the ticket that arms it is opened in the same turn and
+  linked from the decision. Review rejects a cadence with no routine, as it rejects a decision with no
+  owner. A decision to **stop** a cadence removes the routine in the same turn. **Where it is wrong:** a
+  one-time decision, whose follow-through is a ticket, not a routine.
+
 ## Refuse to write a RATIONALE you have not measured, even when the CONCLUSION is right
 
 **An unmeasured rationale is a durable liability in a way an unmeasured conclusion is not — because
@@ -516,6 +550,14 @@ nothing to reproduce. **Two mirrors:**
 **Observed:** the human reported, several times, a seat starting work on a bug that another change had
 already fixed.
 
+**Re-measure a diagnosis through the code that will act on it.** A cause table built by re-parsing
+the data with a different tool can name a cause the acting code already neutralises (whitespace its
+matcher strips, say), and a fix for that cause changes nothing. Before building it, re-run the
+measurement through the acting code's own parsing and re-derive the causes from its output. **Where
+it is wrong:** a diagnosis that already came from the acting tool's report. This diagnoses *inputs*
+through the actor; confirming an *outcome* is the opposite, and needs a check independent of the
+actor (technical.md → *A checker that FIRES is not a checker that is RIGHT*).
+
 ## Declare a cross-repository dependency as a LABEL the sequencer reads, not as prose
 
 When work in one repository cannot land before work in another, record it where a scheduler looks: a
@@ -550,6 +592,11 @@ the plural; another returned 0 for a ticket filed a minute earlier whose title d
   have just split out, the newest list is the check and the keyword search only a supplement.
 - **Prove the search is healthy in the same pass:** an absurd token returns 0, and a known term returns
   its known matches. Without that, a zero can also mean the filter was ignored.
+- **A tracker's default listing hides closed items.** Surveying a project you do not control, set the
+  state filter explicitly and sweep issues and pull requests, closed included, before reading its
+  documents: the measured corpus (numbers, environments, reproductions) often lives only there, and
+  the docs are the curated subset. A closed item may be closed because it was wrong, so read its status
+  and provenance; the rule widens the candidates, it does not raise their weight.
 - **Scope:** keyword or full-text search used as the precondition for *creating* something
   (route-before-create, dedupe by goal). A lookup by a durable identifier (an id, a commit hash, a
   ticket number) is exempt: there, a zero does mean absent.
@@ -652,6 +699,12 @@ predecessor's activity after the record's newest stamp**, sorted by time.
   the record is all there is, and writing it last stops being a courtesy and becomes the only
   control.
 
+**Distil, do not dump.** The record a successor reads holds the reduced fact (what is true, what to
+do) with a one-way link to the raw source, never the raw source pasted in. The raw material is for
+finding things; the record is what gets acted on. Never edit the source to link back to the record.
+**Where it is wrong:** text the reader must act on word for word (an agreed term, a signed clause)
+belongs in the record verbatim, not behind a link.
+
 ## North Star — enduring goals that outlive a session
 
 A **North Star** is a human-set, agent-immutable enduring goal that orients work across sessions and
@@ -726,6 +779,19 @@ wrong path makes the move more expensive and the misplacement more authoritative
 spec was authored into the knowledge vault instead of the initiative repo, and its path was copied
 into an epic and two hand-off blocks before a human caught it.
 
+## An id used as a resolution key is validated like one
+
+**Once documents are cited by id rather than by path, the id must be unique, and it must be the kind
+of value a generator produces, not one a person might re-type differently.** A check beside the
+frontmatter lint asserts, per document: the frontmatter parses; the id is present; it parses as a
+generated id (a UUID, say) or matches a namespace the schema's owner has declared for readable ids; it
+is unique across the scanned roots; and it equals no other field in the same document. Run it on the
+working tree, not only on committed state. Measured: one store held eleven ids that looked like UUIDs
+and parsed as nothing, and one whose id was another record's identifier, so a lookup returned the
+wrong document. **Where it is wrong:** a store that cites by path needs none of this, and readable ids
+in a declared namespace are deliberate: a naive *"must be a UUID"* rule floods with false positives and
+gets switched off.
+
 ## A record's coverage ends at its LAST CITED EVENT, not at when it was WRITTEN
 
 **"The record is recent" is not evidence that it is current.** A hand-off, status or summary is
@@ -778,6 +844,12 @@ draft, a queued reply, a scheduled send), re-read the recipient's thread since t
 time found two new messages from the recipient: one reported that what the draft promised to do had
 already happened, and one added two new asks. One of the draft's four lines was stale, and both new
 asks would have gone unanswered.
+
+**A finding carries its as-of time and the inputs it compared** (the revision, the commit, the query),
+**and its consumer re-verifies it before relaying it**, saying which findings still hold and which
+were resolved since. A finding carried forward keeps its stamp or is dropped. **Where it is wrong:**
+*fine now* does not prove the detector was wrong then, and a finding of irreversible harm is relayed
+first and verified after.
 
 ## A retirement falsifies every CLAIM that names the thing, and none of the RECORDS
 
