@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""check-cadence — a document that names a cadence must name the routine that fires it.
+
+  check-cadence --vault-root D [--vault-root D2] [--baseline b.json] [--write-baseline] [--json out]
+
+A decision or a measure that says "weekly", "after every import" or "each Monday" is incomplete until
+the scheduled task, cron entry or hook that fires it exists: recorded and never armed, it looks
+exactly like compliance (core operations.md → "A decision is made only when it lands in the field its
+consumers read"). This is the check that makes that rule a gate, by frontmatter, for any document:
+
+  NO-ROUTINE      `cadence:` names a recurrence and `routine:` is absent or empty
+  ROUTINE-NAMES-NOTHING  `routine:` is path-shaped and resolves to no file
+
+A `routine:` that is not path-shaped (a task name, a ticket reference) is accepted as declared:
+whether that task is ARMED is a question for the scheduler's own manifest, which this tool does not
+read. A one-time value (`once`, `one-time`, `none`, `ad hoc`, `n/a`) is not a recurrence and needs no
+routine. A frontmatter that will not parse is counted as UNREADABLE, its own number, never folded
+into the findings and never into the clean count.
+
+Known findings may be BASELINED (the vault-relative paths, per category); the baseline is printed
+with its size every run so it cannot quietly grow.
+
+Requires PyYAML. Exit: 0 no finding outside the baseline · 1 at least one · 2 instrument fault.
+"""
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from frontmatter_paths import iter_markdown, looks_like_path, resolve  # noqa: E402
+
+try:
+    import yaml
+except ImportError:
+    print("check-cadence: PyYAML is required", file=sys.stderr)
+    sys.exit(2)
+
+ONE_TIME = {"once", "one-time", "one time", "onetime", "none", "ad hoc", "adhoc", "ad-hoc", "n/a", "na"}
+
+
+def scan(roots):
+    rep = {"roots": [], "checked": 0, "with_cadence": 0, "no_routine": [], "routine_names_nothing": [],
+           "unreadable": []}
+    for root in roots:
+        root = os.path.abspath(root)
+        rep["roots"].append(root)
+        sink = []
+        for path, fm_text, _ in iter_markdown(root, sink):
+            rel = os.path.relpath(path, root)
+            try:
+                fm = yaml.safe_load(fm_text)
+            except yaml.YAMLError:
+                rep["unreadable"].append(rel)
+                continue
+            if not isinstance(fm, dict):
+                rep["unreadable"].append(rel)
+                continue
+            rep["checked"] += 1
+            cadence = fm.get("cadence")
+            if cadence is None or str(cadence).strip() == "":
+                continue
+            if str(cadence).strip().lower() in ONE_TIME:
+                continue
+            rep["with_cadence"] += 1
+            routine = fm.get("routine")
+            if routine is None or str(routine).strip() == "":
+                rep["no_routine"].append(rel)
+                continue
+            value = str(routine).strip()
+            if looks_like_path(value) and not resolve(root, value):
+                rep["routine_names_nothing"].append(rel)
+        rep["unreadable"].extend(u["path"] for u in sink)
+    return rep
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--vault-root", action="append", required=True)
+    ap.add_argument("--baseline")
+    ap.add_argument("--write-baseline", action="store_true")
+    ap.add_argument("--json")
+    a = ap.parse_args()
+    try:
+        rep = scan(a.vault_root)
+    except SystemExit as exc:          # iter_markdown refuses a missing or empty root: an instrument fault
+        print(f"check-cadence: {exc}", file=sys.stderr)
+        return 2
+    cats = ("no_routine", "routine_names_nothing")
+    if a.write_baseline:
+        if not a.baseline:
+            print("check-cadence: --write-baseline needs --baseline", file=sys.stderr)
+            return 2
+        with open(a.baseline, "w") as fh:
+            json.dump({c: sorted(rep[c]) for c in cats}, fh, indent=1)
+            fh.write("\n")
+    base = {}
+    if a.baseline and os.path.exists(a.baseline):
+        base = json.load(open(a.baseline))
+    failing = {c: [p for p in rep[c] if p not in set(base.get(c, []))] for c in cats}
+    print(f"check-cadence — {len(rep['roots'])} root(s): {', '.join(rep['roots'])}")
+    print(f"  checked {rep['checked']} frontmatter(s) · {rep['with_cadence']} name a cadence · "
+          f"{len(rep['unreadable'])} unreadable")
+    print(f"  baseline: {sum(len(v) for v in base.values())} entr(ies)"
+          + (f" from {a.baseline}" if a.baseline else " (none)"))
+    for c, label in (("no_routine", "NO-ROUTINE"), ("routine_names_nothing", "ROUTINE-NAMES-NOTHING")):
+        for p in failing[c]:
+            print(f"  {label:<22} {p}")
+    for p in rep["unreadable"]:
+        print(f"  {'UNREADABLE':<22} {p}")
+    if a.json:
+        with open(a.json, "w") as fh:
+            json.dump({**rep, "failing": failing}, fh, indent=1)
+    return 1 if any(failing.values()) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
