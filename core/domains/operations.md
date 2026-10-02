@@ -101,6 +101,12 @@ value the label was computed from. If they differ, the report can route a live f
   copied the mislabel in as a finding; only re-deriving the values from the source exposed it.
 - **Binds the report's AUTHOR.** The careful reader is the one who got captured, so "read reports
   carefully" does not help. Make the classification and the action share an input.
+- **An actionable count excludes what a standing decision already settled.** A count meant to drive
+  action (*liftable*, *outstanding*, *untriaged*) that includes items someone deliberately decided to
+  keep never reaches zero, stops meaning "act now", and gets skimmed. Count decided items in their own
+  bucket, store each decision as data the report reads (naming its ticket), and flag a decision whose
+  subject has disappeared. Measured: once one deliberate pin moved into such a file, a nightly
+  report's actionable count went to 0, and a non-zero meant something again.
 - **Scope:** reports whose rows carry an action. A pure inventory that asks nothing of its reader has
   no action for a label to disagree with.
 - **Sibling:** an instrument that inspects nothing must not read green. There the population is empty;
@@ -136,6 +142,17 @@ its **public** half and stop — never regenerate. Auth preflight **inside** the
 store session → log in if missing) so a 403 is not a second human-invented ceremony. Simulate the
 sequence before hand-over: a first command that 403s because login wasn't a preflight was never
 simulated.
+
+**A credential the script holds is checked at the moment of USE, not only at its head.** Renewing a
+perishable credential (a short-lived token, a login, a lease) at the head of the chain is necessary,
+and not sufficient when the script then waits for a person: a run that sits at a prompt longer than
+the credential lives reaches its next step with an expired token. Measured: a run held a token for
+about 20 hours at a prompt, against an 18-hour lifetime, and the secret fetch after the prompt was
+refused; that step's output was suppressed, so the refusal showed no error. Re-validate after every
+wait, immediately before the call that needs it, and stop with the reason when it fails. Re-validate
+the **same** identity: a script that quietly re-authenticates as whoever is available has swapped
+principals. **Scope:** scripts that hold a time-limited credential across a human wait. A run that
+finishes well inside the lifetime needs only the head check.
 
 Mechanics: the script lives in the owning repo (committed BEFORE the human runs it); writes a
 machine-readable progress artifact from the first seconds (a silent multi-minute script is a
@@ -174,6 +191,17 @@ Four tests, applied to every line in the human's section **in the first message*
 
 Sending the citation form is not concision. It moves the synthesis the rule exists to do back onto
 the human, and it looks compliant while doing it.
+
+**A precondition written in prose gates nothing.** A sentence above a command (*"only if the key
+exists"*) is read after the command has run. Chain the check into the command, `check && change`, so a
+failed check stops the change, and assert that the external resource exists, not only that a variable
+is set. Derive the list of prompts a block will raise from the command's own flags, never from a
+description of it. **When a hand-off broke a rule that already existed, the fix is a mechanical check
+that would have flagged that hand-off, not a rewording:** restating a rule nobody read lengthens the
+thing that went unread. A checker for hand-off text fails loudly on a block it cannot parse. **Where it
+is wrong:** a check that cannot be scripted becomes two sittings with its result reported between them;
+a read-only block needs no gate; and a rule that was read and misapplied because it is ambiguous is a
+wording defect, where rewording is the fix.
 
 ### In a recipe, a number means ORDER and a bullet means INDEPENDENT
 
@@ -229,6 +257,14 @@ still asked.
 human picked the safe one, and the answer ran nothing: the step needed the human's own server password,
 and the ticket went back to an agent that could not run it. The human then asked exactly the questions
 the three lines answer: *what happens with my decision, and why was I needed?*
+
+**Run every precondition an agent can run before the ask is parked.** A hand-off that records the
+human's verb and drops the condition that gated it (*"file it upstream"*, without *"once you have
+checked whether a newer version fixes it"*) parks work an agent could have done. Name the precondition
+and its owner, and if an agent can run it, run it first. On a re-raise, read the source, not the
+record: a record that has been re-parked twice is evidence about the record. **Where it is wrong:**
+when the precondition is itself gated (a secret, production), the ask is ripe as it stands; name both
+gates.
 
 ## A lane that serves people runs AHEAD of them, not behind them
 
@@ -293,6 +329,19 @@ the routine. The fix is a change to the routine, not more effort in the next pas
   id-minting call with anything that cites its result;** send the citing message in the next step.
 - **A FILE link resolves only for a path UNDER the working directory, written relative.** Absolute
   paths outside it, `file://` URLs, and symlinks inside it all fail to open.
+- **A reference to another repository is fully qualified, everywhere, titles included.** A bare `#N`
+  resolves against the repository it is written in, so a cross-repository reference written bare
+  points at an unrelated item; a pull request's title becomes the merge commit's subject, which the
+  forge scans too. Write `owner/repo#N`, and make a link's visible text name the same repository as
+  its target. A reviewer treats a bare number that does not exist here, or does not match its wording,
+  as a defect, fixed by a retitle rather than a re-push. A rolling pull request's number maps to
+  different content over time, so a reference to one carries its subject line or a commit hash.
+  Same-repository references stay short.
+- **An ordinal written as `#N` is reworded, never qualified.** *"Power loss #3"* or *"item #2"* is not
+  a reference, but the forge links it to item 3 or 2 of the repository it sits in, and re-notifies
+  that item on every mention. Qualifying it makes a correct link to the wrong thing; write *"no. 3"*
+  or *"item 2"* instead. And a `#N` straight after a slash (`ADR-002/#16`, `#229/#239`) still links,
+  so a scan for bare references must not skip it.
 
 ## A dictated name is EVIDENCE, not IDENTIFICATION
 
@@ -394,10 +443,26 @@ old labels, and every "list the queue and work it" reader followed the labels.
 - **Execute in the same act as recording:** move the labels, edit the field, update the row. Then
   verify by re-running the **consumer's own query** after the writes, not by re-reading your comment.
 - **The comment is the rationale, never the mechanism.**
+- **A title is prose.** A priority or status written into a title is invisible to every label-keyed
+  query, so it has not been set. When a title and a label both carry one and disagree, nothing
+  reconciles them. Exactly one field is authoritative; remove the other mentions rather than keeping
+  them in sync. Measured: an epic titled as top priority sat for ten days with an empty label set,
+  invisible to the intake query built to find it. Where a tracker has no label vocabulary at all, the
+  title is the only channel, and then the query must parse it.
+- **The consumer's half: derive state from the field, never from matching prose.** A dashboard that
+  judged a pull request merge-ready by finding a word in a comment missed the one whose comment used
+  other words. Read the state the API holds (the run's jobs, the label) instead.
 - **Where two registries share a word with different vocabularies, name the enum at the schema.** A
   value that is meaningful in prose but absent from the enum consumers string-match is a silent miss:
   a status written in one registry's vocabulary into another registry's field makes the row invisible
   to every sweep that matches the correct values.
+
+- **A decision that names a cadence is recorded only when its routine exists.** *"Weekly"*, *"after
+  every import"* or *"each Monday"* is incomplete until the scheduled task, cron entry or hook that
+  fires it exists, or, where arming is gated, the ticket that arms it is opened in the same turn and
+  linked from the decision. Review rejects a cadence with no routine, as it rejects a decision with no
+  owner. A decision to **stop** a cadence removes the routine in the same turn. **Where it is wrong:** a
+  one-time decision, whose follow-through is a ticket, not a routine.
 
 ## Refuse to write a RATIONALE you have not measured, even when the CONCLUSION is right
 
@@ -490,6 +555,43 @@ nothing to reproduce. **Two mirrors:**
 **Observed:** the human reported, several times, a seat starting work on a bug that another change had
 already fixed.
 
+**Re-measure a diagnosis through the code that will act on it.** A cause table built by re-parsing
+the data with a different tool can name a cause the acting code already neutralises (whitespace its
+matcher strips, say), and a fix for that cause changes nothing. Before building it, re-run the
+measurement through the acting code's own parsing and re-derive the causes from its output. **Where
+it is wrong:** a diagnosis that already came from the acting tool's report. This diagnoses *inputs*
+through the actor; confirming an *outcome* is the opposite, and needs a check independent of the
+actor (technical.md → *A checker that FIRES is not a checker that is RIGHT*).
+
+## "Verified" for a user-visible outcome means OBSERVED on the user's surface
+
+**A done-claim of the form *forge + git + CI agree* proves that code landed.** It says nothing about
+an outcome that lives where a person looks: a dashboard, a rendered page, a message. Observed: a
+coordinator confirmed a receipt existed and told the user *"fixed, reload"*; the user reloaded and the
+thing was not there. In the same exchange the implementer had changed **what** was asked, on its own
+measurement, and the coordinator accepted the change without asking the user.
+
+1. **"Verified" for a user-visible outcome means observed on the user's surface, by someone other
+   than the party claiming it**: a read of what renders, a screenshot, or the user's own
+   confirmation. Say which surface and how. Not observed ⇒ the claim is **"landed, not seen"**,
+   never *"fixed"*.
+2. **A done-when for a user-facing fix names the user's surface and what will be observed there.**
+   Prefer an observation an agent can take, a committed command that reads what renders
+   (`technical.md` → *A done-when names the COMMITTED SURFACE*); the user's confirmation is the
+   fallback, not the plan.
+3. **A change to WHAT was asked, not how, goes to the user as a decision**, with the implementer's
+   reason attached. A peer or a coordinator never accepts it on the user's behalf. An ask the user has
+   already repeated raises the bar further: the repetition is the evidence that the scope mattered.
+
+**Scope: outcomes whose purpose is to be seen or used by a person.** Internal artifacts with no user
+surface (a library function, a migration, a CI gate) are out of scope: for them, forge + git + CI *is*
+the surface. **Two boundaries:**
+- **The user's surface is unreachable by any agent** (a device only the user holds). Rule 1 read
+  literally would block forever. Do not block: report *"landed, not seen on your surface"* and name the
+  one observation the user can make.
+- **Rule 3 cuts both ways.** Narrowing an ask and widening it are both changes to what was asked. A
+  change to *how* (the approach, the tool, the order of work) stays the implementer's call.
+
 ## Declare a cross-repository dependency as a LABEL the sequencer reads, not as prose
 
 When work in one repository cannot land before work in another, record it where a scheduler looks: a
@@ -509,6 +611,29 @@ blocker, and why clearing it belongs to landing the blocker.
 **Scope:** dependencies between repositories or lanes. Inside one repository, branch order already
 sequences the work. It depends on something reading the labels to sequence; where nothing does, they are
 still the most compact statement of the dependency, but they gate nothing.
+
+## A search that returns ZERO before you create is evidence about the QUERY
+
+**Before concluding "nothing exists yet, so I'll file one", corroborate a zero from a keyword search.**
+A tokenised index misses on singular and plural, hyphenation, compounding and words the author never
+used, and it misses silently: a zero from a near-miss query looks exactly like a zero from an empty
+repository. Measured twice in one week: one search returned 0 because the matching ticket's title used
+the plural; another returned 0 for a ticket filed a minute earlier whose title did not contain the word.
+
+- **Corroborate on a different surface, not the same index twice.** A second query through the same
+  tokeniser is the first check run again. Use a form that differs in the way the index could have
+  failed, or leave the index: list the newest items unfiltered and read them. For a topic someone may
+  have just split out, the newest list is the check and the keyword search only a supplement.
+- **Prove the search is healthy in the same pass:** an absurd token returns 0, and a known term returns
+  its known matches. Without that, a zero can also mean the filter was ignored.
+- **A tracker's default listing hides closed items.** Surveying a project you do not control, set the
+  state filter explicitly and sweep issues and pull requests, closed included, before reading its
+  documents: the measured corpus (numbers, environments, reproductions) often lives only there, and
+  the docs are the curated subset. A closed item may be closed because it was wrong, so read its status
+  and provenance; the rule widens the candidates, it does not raise their weight.
+- **Scope:** keyword or full-text search used as the precondition for *creating* something
+  (route-before-create, dedupe by goal). A lookup by a durable identifier (an id, a commit hash, a
+  ticket number) is exempt: there, a zero does mean absent.
 
 ## Routines are infrastructure — they migrate, or they silently die
 
@@ -567,6 +692,14 @@ times; an unpushed state would have been destroyed silently.
    past-due one-time tasks** — the platform does not auto-disable reliably, so the sweep is the
    backstop.
 
+**A recurring routine checks, at the start of each pass, that its report target is still open, and
+fails loudly when it is not.** A routine that comments its findings on a fixed ticket outlives that
+ticket: once it closes, every pass files into a closed thread that nobody reads, and the routine
+reports success. Point it at a standing ticket that exists for the routine's reports, not at a defect
+ticket that closes when its fix lands; or have each pass file its own. **Where it is wrong:** a
+routine that only writes its own artifact (a log, a page) and reports to no ticket has no target to
+lose.
+
 ## A context reset releases nothing — walk what the session holds before it
 
 Clearing or compacting an agent's context in place keeps the seat and destroys its memory. Every
@@ -607,6 +740,12 @@ predecessor's activity after the record's newest stamp**, sorted by time.
 - **Scope:** this needs a readable log of the predecessor's actions. Where the harness keeps none,
   the record is all there is, and writing it last stops being a courtesy and becomes the only
   control.
+
+**Distil, do not dump.** The record a successor reads holds the reduced fact (what is true, what to
+do) with a one-way link to the raw source, never the raw source pasted in. The raw material is for
+finding things; the record is what gets acted on. Never edit the source to link back to the record.
+**Where it is wrong:** text the reader must act on word for word (an agreed term, a signed clause)
+belongs in the record verbatim, not behind a link.
 
 ## North Star — enduring goals that outlive a session
 
@@ -682,6 +821,19 @@ wrong path makes the move more expensive and the misplacement more authoritative
 spec was authored into the knowledge vault instead of the initiative repo, and its path was copied
 into an epic and two hand-off blocks before a human caught it.
 
+## An id used as a resolution key is validated like one
+
+**Once documents are cited by id rather than by path, the id must be unique, and it must be the kind
+of value a generator produces, not one a person might re-type differently.** A check beside the
+frontmatter lint asserts, per document: the frontmatter parses; the id is present; it parses as a
+generated id (a UUID, say) or matches a namespace the schema's owner has declared for readable ids; it
+is unique across the scanned roots; and it equals no other field in the same document. Run it on the
+working tree, not only on committed state. Measured: one store held eleven ids that looked like UUIDs
+and parsed as nothing, and one whose id was another record's identifier, so a lookup returned the
+wrong document. **Where it is wrong:** a store that cites by path needs none of this, and readable ids
+in a declared namespace are deliberate: a naive *"must be a UUID"* rule floods with false positives and
+gets switched off.
+
 ## A record's coverage ends at its LAST CITED EVENT, not at when it was WRITTEN
 
 **"The record is recent" is not evidence that it is current.** A hand-off, status or summary is
@@ -734,6 +886,12 @@ draft, a queued reply, a scheduled send), re-read the recipient's thread since t
 time found two new messages from the recipient: one reported that what the draft promised to do had
 already happened, and one added two new asks. One of the draft's four lines was stale, and both new
 asks would have gone unanswered.
+
+**A finding carries its as-of time and the inputs it compared** (the revision, the commit, the query),
+**and its consumer re-verifies it before relaying it**, saying which findings still hold and which
+were resolved since. A finding carried forward keeps its stamp or is dropped. **Where it is wrong:**
+*fine now* does not prove the detector was wrong then, and a finding of irreversible harm is relayed
+first and verified after.
 
 ## A retirement falsifies every CLAIM that names the thing, and none of the RECORDS
 

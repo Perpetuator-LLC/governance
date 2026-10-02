@@ -111,13 +111,19 @@ if echo "$cmd" | grep -qE '^\s*rm\s+-rf\s+(/|~|\$HOME|\.\.)'; then
   deny rm-rf-root "Destructive rm -rf targeting root, home, or parent directory. Requires manual execution."
 fi
 
+# git subcommands are matched within ONE command segment (no ; & |), and git's GLOBAL options may sit
+# between `git` and the subcommand: `git -C <dir> push` and `git -c k=v push` are the ordinary agent
+# forms, and both ran unchecked while the patterns required `git push` adjacent. A force is `--force`,
+# `--force-with-lease`, `--force-if-includes`, `-f`, or a `+`-prefixed refspec (`push origin +main`).
+GIT_SEG='(^|[^[:alnum:]_-])git([[:space:]]+[^;&|]*)?[[:space:]]'
+
 # Block force pushes
-if echo "$cmd" | grep -qE 'git\s+push\s+.*--force'; then
+if echo "$cmd" | grep -qE "${GIT_SEG}push([[:space:]][^;&|]*)?[[:space:]]((--force[a-z-]*|-f)([[:space:]=]|\$)|\+[^[:space:];&|])"; then
   deny force-push "Force push requires manual confirmation. Run this command yourself if intended."
 fi
 
 # Block hard resets
-if echo "$cmd" | grep -qE 'git\s+reset\s+--hard'; then
+if echo "$cmd" | grep -qE "${GIT_SEG}reset([[:space:]][^;&|]*)?[[:space:]]--hard([[:space:]]|\$)"; then
   deny hard-reset "Hard reset requires manual confirmation. Run this command yourself if intended."
 fi
 
@@ -126,8 +132,10 @@ if echo "$cmd" | grep -qiE '(DROP\s+(TABLE|DATABASE)|TRUNCATE\s+TABLE|DELETE\s+F
   deny database-destroy "Destructive database operation. Requires manual confirmation."
 fi
 
-# Block piping remote scripts to shell
-if echo "$cmd" | grep -qE '(curl|wget)\s+.*\|\s*(bash|sh|zsh)'; then
+# Block piping remote scripts to shell. The shell name needs a RIGHT boundary (#148): without one,
+# `| sha256` or `| shellcheck` read as `| sh`, and the review this rule prescribes was refused. And
+# the shell may sit behind `sudo [flags]` or a full path (`| /bin/bash`), which passed unchecked.
+if echo "$cmd" | grep -qE '(curl|wget)[[:space:]].*\|[[:space:]]*(sudo([[:space:]]+-[^[:space:]]+)*[[:space:]]+)?([^[:space:]|;&]*/)?(bash|sh|zsh)([[:space:];&|)]|$)'; then
   deny remote-pipe-shell "Piping remote content to shell is unsafe. Download and review first."
 fi
 

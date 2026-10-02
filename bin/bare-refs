@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""bare-refs — list the bare `#N` references in a piece of forge text (a title, a body, a comment).
+
+  bare-refs [--repo OWNER/REPO] [--json] [FILE ...]     (reads standard input when no FILE is named)
+
+A bare `#N` resolves against the repository the text sits in, so a reference meant for another
+repository links an unrelated item (core operations.md → "Git refs in human-facing text"). This
+finds every candidate, for a sweep or a reviewer to judge.
+
+What counts as bare, matching what the forge autolinks:
+  - `#N` not preceded by a word character or a hyphen (`ABC#12`, `-#12` and `owner/repo#12` are
+    not bare);
+  - a `#N` straight after a SLASH is bare: `ADR-002/#16` and `#229/#239` both link, and a scan that
+    skipped them missed a real cross-repository mistake;
+  - text inside inline code, fenced code blocks and URLs is skipped: the forge links none of it.
+
+Each finding has a KIND, because the mistakes that survive are the ones whose number also exists
+in the host repository, so "does #N exist here?" catches none of them. Two text-only kinds do:
+  link-text   `[#N](…/OWNER/REPO/issues/N)`: the visible text is bare while the link names another
+              repository (every reader sees the wrong number; the href hides it).
+  back-ref    a bare `#N` in text that also writes `REPO#N` qualified: the author knew the form and
+              referred back bare.
+  bare        any other bare `#N`: a cross-repository mistake, an ordinal (reword, never qualify),
+              or a correct same-repository reference. The reader decides.
+`--repo OWNER/REPO` names the host, so a link or back-reference to the host itself is not reported.
+
+Output: `#N<TAB>line<TAB>kind<TAB>suggested<TAB>context`. Exit: 0 none found · 1 at least one ·
+2 a file could not be read, or bad arguments.
+"""
+import json
+import re
+import sys
+
+FENCE = re.compile(r"```.*?```", re.S)
+INLINE = re.compile(r"`[^`\n]*`")
+URL = re.compile(r"https?://\S+")
+BARE = re.compile(r"(?<![\w-])#(\d+)\b")
+LINK = re.compile(r"\[#(\d+)\]\(https?://[^/\s)]+/([^/\s)]+)/([^/\s)]+)/(?:issues|pulls)/(\d+)[^)\s]*\)")
+QUALIFIED = re.compile(r"(?<![\w/#-])(?:([A-Za-z0-9][\w.-]*)/)?([A-Za-z][\w.-]*)#(\d+)\b")
+
+
+def blank(m):
+    # Keep line numbers and columns stable: replace the span with spaces, newlines kept.
+    return re.sub(r"[^\n]", " ", m.group(0))
+
+
+def scan(text, host=None):
+    host_owner, host_repo = (host.split("/", 1) + [None])[:2] if host else (None, None)
+    nocode = INLINE.sub(blank, FENCE.sub(blank, text))
+    qualified = {}
+    for m in QUALIFIED.finditer(nocode):
+        owner, repo, n = m.group(1), m.group(2), m.group(3)
+        if repo != host_repo:
+            qualified.setdefault(n, f"{owner}/{repo}" if owner else repo)
+    clean = URL.sub(blank, nocode)
+    out = []
+    for lineno, (raw, line) in enumerate(zip(text.splitlines(), clean.splitlines()), 1):
+        links = {}
+        for m in LINK.finditer(raw):
+            text_n, owner, repo, href_n = m.groups()
+            if text_n == href_n:
+                links[m.start() + 1] = (owner, repo)
+        for m in BARE.finditer(line):
+            n = m.group(1)
+            lo, hi = max(0, m.start() - 30), min(len(raw), m.end() + 30)
+            kind, suggested = "bare", ""
+            if m.start() in links:
+                owner, repo = links[m.start()]
+                if (owner, repo) == (host_owner, host_repo):
+                    continue
+                kind, suggested = "link-text", f"{owner}/{repo}#{n}"
+            elif n in qualified:
+                kind, suggested = "back-ref", f"{qualified[n]}#{n}"
+            out.append({"ref": f"#{n}", "line": lineno, "kind": kind, "suggested": suggested,
+                        "context": raw[lo:hi].strip()})
+    return out
+
+
+def main(argv):
+    as_json, host, files = False, None, []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--json":
+            as_json = True
+        elif a == "--repo" and i + 1 < len(argv) and "/" in argv[i + 1]:
+            host = argv[i + 1]; i += 1
+        elif a.startswith("-"):
+            print("usage: bare-refs [--repo OWNER/REPO] [--json] [FILE ...]", file=sys.stderr)
+            return 2
+        else:
+            files.append(a)
+        i += 1
+    try:
+        texts = [open(f, encoding="utf-8").read() for f in files] if files else [sys.stdin.read()]
+    except OSError as exc:
+        print(f"bare-refs: {exc}", file=sys.stderr)
+        return 2
+    found = [r for t in texts for r in scan(t, host)]
+    if as_json:
+        json.dump(found, sys.stdout, indent=1)
+        print()
+    else:
+        for r in found:
+            print(f"{r['ref']}\t{r['line']}\t{r['kind']}\t{r['suggested']}\t{r['context']}")
+    return 1 if found else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

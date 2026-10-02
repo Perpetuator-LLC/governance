@@ -181,7 +181,7 @@ check "…changes nothing and writes no second backup" \
 echo "governance check --home"
 rc="$(gov check --home "$H")"
 check "right after install: in sync (exit 0), every output reported" \
-  "[ '$rc' = '0' ] && [ \"\$(grep -c '^in sync' '$TMP/stdout')\" -ge 20 ] && ! grep -qv '^in sync' '$TMP/stdout'"
+  "[ '$rc' = '0' ] && [ \"\$(grep -c '^in sync' '$TMP/stdout')\" -ge 20 ] && ! command grep -qv '^in sync' '$TMP/stdout'"
 
 cp "$A1/AGENTS.md" "$TMP/a1-agents.bak"
 echo "# adapter one rules, amended" > "$A1/AGENTS.md"

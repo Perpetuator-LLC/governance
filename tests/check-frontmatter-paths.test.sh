@@ -49,6 +49,21 @@ rc="$(run --vault-root "$V")"
 check "unparseable frontmatter is a FAILURE (exit 1), not a skip" "[ '$rc' = '1' ] && grep -q 'UNPARSEABLE' '$TMP/out'"
 rm "$V/notes/broken.md"
 
+# --- a provenance scheme on an absolute path (#136): strip it, then resolve -----------------------
+printf 'x' > "$TMP/present.md"
+printf -- '---\nid: s1\nsource: scraped:%s\n---\n' "$TMP/present.md" > "$V/notes/scraped-ok.md"
+rc="$(run --vault-root "$V")"
+check "known-GOOD: scraped:<present absolute path> resolves (it was reported dead)" \
+  "[ '$rc' = '0' ] && grep -q '^FAILING *: 0' '$TMP/out'"
+printf -- '---\nid: s2\nsource: scraped:%s\n---\n' "$TMP/absent.md" > "$V/notes/scraped-dead.md"
+rc="$(run --vault-root "$V")"
+check "known-BAD: scraped:<absent absolute path> still fails" "[ '$rc' = '1' ] && grep -q 'DEAD notes/scraped-dead.md :: source' '$TMP/out'"
+rm "$V/notes/scraped-ok.md" "$V/notes/scraped-dead.md"
+printf -- '---\nid: s3\nsource: https://x.example/doc.md\n---\n' > "$V/notes/url.md"
+rc="$(run --vault-root "$V")"
+check "a URL is not a path: neither resolved nor failed" "[ '$rc' = '0' ] && grep -q '^FAILING *: 0' '$TMP/out' && grep -q '^resolved *: 1' '$TMP/out'"
+rm "$V/notes/url.md"
+
 # --- the instrument refusing is exit 2, never 0 and never the findings code ------------------------
 rc="$(run --vault-root "$TMP/does-not-exist")"
 check "a missing root exits 2 with the reason on stderr" "[ '$rc' = '2' ] && grep -q 'VAULT ROOT MISSING' '$TMP/err'"

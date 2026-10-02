@@ -7,8 +7,12 @@
 #
 # SAFETY, by construction rather than by care:
 #   - DRY RUN IS THE DEFAULT. Deleting requires --apply, typed on purpose.
-#   - `git branch -d` ONLY, never a force delete. git's own merged-check is the gate; anything it
-#     refuses is REPORTED and kept. The script has no opinion that can override git.
+#   - Never a force delete. A branch is deleted only when the FORGE's default branch contains it:
+#     its commit is read with `git ls-remote` (the server, not the cached ref) and the delete is
+#     `git update-ref -d` guarded by the branch's classified sha, so it deletes exactly what was
+#     checked. When the forge cannot be asked, or does not contain the branch, the only delete path
+#     left is git's own `git branch -d`, and anything it refuses is REPORTED and kept (#158: `-d`
+#     gates on HEAD, and lanes never check out the default branch, so alone it reaped nothing there).
 #   - PROTECTED, never considered: the default branch, the current branch, every `merge/*`
 #     integration branch, any branch checked out in any worktree, and anything matching --protect.
 #   - Containment is asserted against `origin/<default>` — which is a LOCAL, CACHED ref, not the
@@ -91,6 +95,17 @@ for repo in "${REPOS[@]}"; do
     echo "  $name: origin/$def missing locally — run a fetch first; skipping" >&2; rc=1; continue
   fi
 
+  # The forge's own answer, never the cached ref: a cache can be behind (keeps too much) or AHEAD of a
+  # rewound forge (would delete what the forge no longer holds). A failed ask is no answer, never "no".
+  forge=$(git -C "$repo" ls-remote --exit-code origin "refs/heads/$def" 2>/dev/null | cut -f1)
+  if [ -n "$forge" ] && ! git -C "$repo" cat-file -e "$forge^{commit}" 2>/dev/null; then
+    echo "  $name: the forge's $def is at ${forge:0:9}, which this clone has not fetched; only git's -d may delete here" >&2
+    forge=""
+  elif [ -z "$forge" ]; then
+    echo "  $name: the forge could not be asked for $def; only git's -d may delete here" >&2
+  fi
+  on_forge() { [ -n "$forge" ] && git -C "$repo" merge-base --is-ancestor "$1" "$forge" 2>/dev/null; }
+
   cur=$(git -C "$repo" branch --show-current 2>/dev/null)
   # A branch checked out in ANY worktree is off-limits, not just the current one.
   # `git branch -d` refuses these anyway, but PROPOSING them inflates the dry-run
@@ -124,7 +139,10 @@ for repo in "${REPOS[@]}"; do
       # Log BEFORE deleting: a log written after a delete is missing exactly the
       # entries that mattered if the delete is what went wrong.
       [ -n "$LOG" ] && printf '%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$name" "$b" "$sha" >> "$LOG"
-      if out=$(git -C "$repo" branch -d "$b" 2>&1); then
+      if on_forge "$sha" && git -C "$repo" update-ref -d "refs/heads/$b" "$sha" 2>/dev/null; then
+        echo "      reaped $b ($(printf '%.9s' "$sha"); on the forge's $def)"
+        total_del=$((total_del+1))
+      elif out=$(git -C "$repo" branch -d "$b" 2>&1); then
         echo "      reaped $b ($(printf '%.9s' "$sha"))"
         total_del=$((total_del+1))
       else
@@ -134,14 +152,21 @@ for repo in "${REPOS[@]}"; do
         reason=$(first_line 'error:' "$out" || first_line 'warning:' "$out" || printf '%s' "${out%%$'\n'*}")
         up=$(git -C "$repo" rev-parse --abbrev-ref "$b@{upstream}" 2>/dev/null)
         echo "      REFUSED $b — git says: ${reason#*: }"
-        # A branch reaches -d only when every commit is already in origin/$def (the containment
-        # check above), so git's refusal is never unmerged work: `-d` measured a DIFFERENT base.
-        echo "              every commit IS in origin/$def; git compared against ${up:-the checked-out HEAD} instead"
+        # A branch reaches -d only when every commit is in the CACHED origin/$def. Say which half of
+        # that holds: the forge may not have been asked, or may no longer hold it (rewound).
+        if [ -z "$forge" ]; then
+          echo "              every commit is in the cached origin/$def, but the forge could not be asked; git compared against ${up:-the checked-out HEAD}"
+        else
+          echo "              the cached origin/$def holds it and the forge's $def does NOT (rewound?); kept"
+        fi
         total_kept=$((total_kept+1)); rc=1
       fi
-    else
-      echo "      would reap $b ($(printf '%.9s' "$sha"))"
+    elif on_forge "$sha"; then
+      echo "      would reap $b ($(printf '%.9s' "$sha"); on the forge's $def)"
       total_del=$((total_del+1))
+    else
+      # Not provably on the forge: under --apply only git's -d decides, so do not promise the reap.
+      echo "      git -d decides $b ($(printf '%.9s' "$sha")): in the cached origin/$def, not confirmed on the forge"
     fi
   done
 done
