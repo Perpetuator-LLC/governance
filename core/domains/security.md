@@ -272,6 +272,14 @@ never argv. A ceremony that PRINTS a secret is worse than one that asks for it.
   `git ls-files`), or drop the diff flag so it lists files without printing them. **Scope:** the
   hazard is directory scope plus untracked or ignored files. A differ on named, tracked paths is fine,
   and so is `git diff`, which reads only what git tracks unless told otherwise.
+- **The same hazard lives in a tool you WRITE.** A script that walks a directory to rewrite or report
+  lines (a migration helper, a search-and-replace, a checker) reads the filesystem, so on an
+  operator's checkout it opens the ignored secrets files beside the code and echoes them in its diff
+  or its findings. Enumerate files from `git ls-files`, and report a finding as `file:line` plus a
+  kind, never the line's content. **Mirror:** a walker restricted to tracked files silently skips an
+  ignored file that *does* need the change (a local inventory, a variables file), so it must **name**
+  what it skipped without reading it. **Scope:** any walker whose output reaches a log or a person;
+  one that only counts matches still reads, but prints nothing to leak.
 
 ⚠️ **CODE that prints a secret — and the day its output gains a reader.** The rules above bind what an
 agent does and the commands it hands a human; they say nothing about **code that prints a secret at
