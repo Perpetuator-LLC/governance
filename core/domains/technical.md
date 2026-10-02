@@ -1013,10 +1013,12 @@ claim names the run and its time, and is re-checked at merge.
 **A trigger that names only the default branch never runs on a pull request into an integration
 branch.** The pull request then shows no check at all, not a failing one, and a claim that "CI is
 green" is quoting a manually dispatched run, or nothing. Put the integration branch in the trigger;
-until then, a merge-ready claim names the event that produced its run, because a dispatched run tests
-what was dispatched, not necessarily the pull request's head. **Where it is wrong:** leaving the
-integration branch ungated to save runner time is a legitimate choice, and then the claim says the
-branch is ungated instead of citing a run.
+until then, a merge-ready claim names the event that produced its run, because a dispatched run
+tests what was dispatched, not necessarily the pull request's head. **Where it is wrong:** leaving
+the integration branch ungated to save runner time is a legitimate choice, and then the claim says
+the branch is ungated instead of citing a run. Either way, the full suite must pass at the head of
+the integration-to-default pull request before it merges, since that is the first run guaranteed to
+cover the folded work.
 
 ## A hold on a pull request lives in the forge's own WIP / draft gate — never only in a comment
 
