@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""bare-refs — list the bare `#N` references in a piece of forge text (a title, a body, a comment).
+
+  bare-refs [--json] [FILE ...]        (reads standard input when no FILE is named)
+
+A bare `#N` resolves against the repository the text sits in, so a reference meant for another
+repository links an unrelated item (core operations.md → "Git refs in human-facing text"). This
+finds every candidate, for a sweep or a reviewer to judge; it does not decide which are wrong.
+
+What counts as bare, matching what the forge autolinks:
+  - `#N` not preceded by a word character or a hyphen (`ABC#12`, `-#12` and `owner/repo#12` are
+    not bare);
+  - a `#N` straight after a SLASH is bare: `ADR-002/#16` and `#229/#239` both link, and a scan that
+    skipped them missed a real cross-repository mistake;
+  - text inside inline code, fenced code blocks and URLs is skipped: the forge links none of it.
+
+Each finding prints `#N<TAB>line<TAB>context`. Deciding whether one is a cross-repository mistake
+(qualify it) or an ordinal (reword it, never qualify it) needs the surrounding text, so that stays
+with the reader. Exit: 0 none found · 1 at least one · 2 a file could not be read.
+"""
+import json
+import re
+import sys
+
+FENCE = re.compile(r"```.*?```", re.S)
+INLINE = re.compile(r"`[^`\n]*`")
+URL = re.compile(r"https?://\S+")
+BARE = re.compile(r"(?<![\w-])#(\d+)\b")
+
+
+def blank(m):
+    # Keep line numbers and columns stable: replace the span with spaces, newlines kept.
+    return re.sub(r"[^\n]", " ", m.group(0))
+
+
+def scan(text):
+    clean = URL.sub(blank, INLINE.sub(blank, FENCE.sub(blank, text)))
+    out = []
+    for lineno, (raw, line) in enumerate(zip(text.splitlines(), clean.splitlines()), 1):
+        for m in BARE.finditer(line):
+            lo, hi = max(0, m.start() - 30), min(len(raw), m.end() + 30)
+            out.append({"ref": f"#{m.group(1)}", "line": lineno, "context": raw[lo:hi].strip()})
+    return out
+
+
+def main(argv):
+    as_json = "--json" in argv
+    files = [a for a in argv if a != "--json"]
+    if any(a.startswith("-") for a in files):
+        print("usage: bare-refs [--json] [FILE ...]", file=sys.stderr)
+        return 2
+    texts = []
+    try:
+        texts = [open(f, encoding="utf-8").read() for f in files] if files else [sys.stdin.read()]
+    except OSError as exc:
+        print(f"bare-refs: {exc}", file=sys.stderr)
+        return 2
+    found = [r for t in texts for r in scan(t)]
+    if as_json:
+        json.dump(found, sys.stdout, indent=1)
+        print()
+    else:
+        for r in found:
+            print(f"{r['ref']}\t{r['line']}\t{r['context']}")
+    return 1 if found else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
