@@ -337,6 +337,11 @@ the routine. The fix is a change to the routine, not more effort in the next pas
   as a defect, fixed by a retitle rather than a re-push. A rolling pull request's number maps to
   different content over time, so a reference to one carries its subject line or a commit hash.
   Same-repository references stay short.
+- **An ordinal written as `#N` is reworded, never qualified.** *"Power loss #3"* or *"item #2"* is not
+  a reference, but the forge links it to item 3 or 2 of the repository it sits in, and re-notifies
+  that item on every mention. Qualifying it makes a correct link to the wrong thing; write *"no. 3"*
+  or *"item 2"* instead. And a `#N` straight after a slash (`ADR-002/#16`, `#229/#239`) still links,
+  so a scan for bare references must not skip it.
 
 ## A dictated name is EVIDENCE, not IDENTIFICATION
 
@@ -657,6 +662,14 @@ times; an unpushed state would have been destroyed silently.
    procedure preserved via its ticket). **Every routines reconcile sweep checks `enabled` on
    past-due one-time tasks** — the platform does not auto-disable reliably, so the sweep is the
    backstop.
+
+**A recurring routine checks, at the start of each pass, that its report target is still open, and
+fails loudly when it is not.** A routine that comments its findings on a fixed ticket outlives that
+ticket: once it closes, every pass files into a closed thread that nobody reads, and the routine
+reports success. Point it at a standing ticket that exists for the routine's reports, not at a defect
+ticket that closes when its fix lands; or have each pass file its own. **Where it is wrong:** a
+routine that only writes its own artifact (a log, a page) and reports to no ticket has no target to
+lose.
 
 ## A context reset releases nothing — walk what the session holds before it
 
