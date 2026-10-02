@@ -2698,9 +2698,6 @@ reproducible.
   that delivers over one channel must not be gated on another it never uses. A routine *designed* to
   need a person may require one; the defect is a gate that turns "nobody is here" into "the system is
   down".
-- **Scope:** any credential or session cache that survives between an interactive login and a later
-  call. The mechanism names differ by tool; the question does not: *what did this call authenticate
-  with, and will the unattended run have it?*
 - **The same question covers the identity a privilege tool hands down.** A run under `sudo` is not
   the root scheduler's identity: sudo sets `SUDO_UID`/`SUDO_USER`, and some tools trust on them. git,
   for one, accepts a repository owned by `SUDO_UID` that it refuses to plain root. So an install step
@@ -2710,6 +2707,9 @@ reproducible.
   a silent no-op on the target's older one: an environment variable the older release does not read
   is ignored, not refused. Calibrate the fix on the target's release (a container of its OS release is
   enough). This does not apply when the job and the test run the same pinned image.
+- **Scope:** any credential, session cache or handed-down identity that survives between an interactive login and a later
+  call. The mechanism names differ by tool; the question does not: *what did this call authenticate
+  with, and will the unattended run have it?*
 
 ## A page is not a count
 
