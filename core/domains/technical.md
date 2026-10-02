@@ -1229,6 +1229,27 @@ from an abandoned one — only its owner can. Protect other seats' refs explicit
   fixture: a commit merged into X gives empty cherry output and ancestry true; the control, not
   merged, gives `+`.
 
+## A branch is archived only with proof its content landed, or a ticket that will land it
+
+**Renaming or moving an unmerged branch into an archive namespace parks work behind a name that reads
+as "done with".** Archive it only when one of two things is recorded at that moment: a check that its
+content is on the default branch, or the id of a ticket whose done-when is landing it. Measured: a
+triage of one repository's archived branches found about one in ten holding work that never reached
+the default branch.
+
+- **Check content, not ancestry.** A squash merge makes landed work look unmerged by commit; the mirror
+  matters as much: a branch whose every commit subject appears on the default branch can still change
+  the tree. Compare what the branch's net change *adds*, per file, with the default branch's current
+  copy of that file, and report three outcomes: *landed*, *missing*, *cannot tell* (a file that moved,
+  a line present for an unrelated reason). Only *landed* archives without a ticket. The check ships
+  with a known-landed control (a squash-merged branch) and a known-missing one (one unlanded line).
+- **Scope:** any tool or routine that renames, moves or re-prefixes a branch instead of deleting it. A
+  branch with no unique work needs no ticket; a release branch whose tag exists already has its
+  record; a branch its owner declares obsolete needs a one-line reason written at archive time, not
+  reconstructed later.
+- **Where it is wrong:** a repository with no default-branch gate (a notes store whose working tree is
+  the truth), where "landed" has no meaning.
+
 ## Before removing a worktree, check what is still running from it
 
 **A merged branch and a clean `git status` say nothing about what was started from the directory.**
