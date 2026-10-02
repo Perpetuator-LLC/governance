@@ -132,8 +132,10 @@ if echo "$cmd" | grep -qiE '(DROP\s+(TABLE|DATABASE)|TRUNCATE\s+TABLE|DELETE\s+F
   deny database-destroy "Destructive database operation. Requires manual confirmation."
 fi
 
-# Block piping remote scripts to shell
-if echo "$cmd" | grep -qE '(curl|wget)\s+.*\|\s*(bash|sh|zsh)'; then
+# Block piping remote scripts to shell. The shell name needs a RIGHT boundary (#148): without one,
+# `| sha256` or `| shellcheck` read as `| sh`, and the review this rule prescribes was refused. And
+# the shell may sit behind `sudo [flags]` or a full path (`| /bin/bash`), which passed unchecked.
+if echo "$cmd" | grep -qE '(curl|wget)[[:space:]].*\|[[:space:]]*(sudo([[:space:]]+-[^[:space:]]+)*[[:space:]]+)?([^[:space:]|;&]*/)?(bash|sh|zsh)([[:space:];&|)]|$)'; then
   deny remote-pipe-shell "Piping remote content to shell is unsafe. Download and review first."
 fi
 
