@@ -42,7 +42,7 @@ EXPECTED=(
   module/scripts/README.md module/tests/empty-inputs.test.sh
   overlay/README.md "overlay/deploy/vars.example.$Y" overlay/lint-denylist.example.txt
   tests/lib/lint.sh tests/no-checkout-paths.test.sh tests/secret-scan.test.sh tests/module-lint.test.sh
-  docs/decisions/0001-record-architecture-decisions.md
+  docs/decisions/0001-record-architecture-decisions.md docs/capabilities/CAPABILITY-TEMPLATE.md
   ".gitea/workflows/ci.$Y" .gitleaks.toml ".pre-commit-config.$YA"
 )
 SUITES=(tests/no-checkout-paths.test.sh tests/secret-scan.test.sh tests/module-lint.test.sh module/tests/empty-inputs.test.sh)
