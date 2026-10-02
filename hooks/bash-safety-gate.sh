@@ -111,13 +111,19 @@ if echo "$cmd" | grep -qE '^\s*rm\s+-rf\s+(/|~|\$HOME|\.\.)'; then
   deny rm-rf-root "Destructive rm -rf targeting root, home, or parent directory. Requires manual execution."
 fi
 
+# git subcommands are matched within ONE command segment (no ; & |), and git's GLOBAL options may sit
+# between `git` and the subcommand: `git -C <dir> push` and `git -c k=v push` are the ordinary agent
+# forms, and both ran unchecked while the patterns required `git push` adjacent. A force is `--force`,
+# `--force-with-lease`, `--force-if-includes`, `-f`, or a `+`-prefixed refspec (`push origin +main`).
+GIT_SEG='(^|[^[:alnum:]_-])git([[:space:]]+[^;&|]*)?[[:space:]]'
+
 # Block force pushes
-if echo "$cmd" | grep -qE 'git\s+push\s+.*--force'; then
+if echo "$cmd" | grep -qE "${GIT_SEG}push([[:space:]][^;&|]*)?[[:space:]]((--force[a-z-]*|-f)([[:space:]=]|\$)|\+[^[:space:];&|])"; then
   deny force-push "Force push requires manual confirmation. Run this command yourself if intended."
 fi
 
 # Block hard resets
-if echo "$cmd" | grep -qE 'git\s+reset\s+--hard'; then
+if echo "$cmd" | grep -qE "${GIT_SEG}reset([[:space:]][^;&|]*)?[[:space:]]--hard([[:space:]]|\$)"; then
   deny hard-reset "Hard reset requires manual confirmation. Run this command yourself if intended."
 fi
 

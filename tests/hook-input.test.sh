@@ -76,7 +76,18 @@ for mode in host nojq; do
     rc="$(bash_json "$c" | hook bash-safety-gate.sh)"
     check "[$mode] bash gate BLOCKS via stdin, reason on STDERR (the channel the harness returns to the model): $c" "[ '$rc' = '2' ] && grep -q 'BLOCKED' '$TMP/err' && [ ! -s '$TMP/out' ]"
   done
-  for c in 'ls -la' 'git status' 'git push origin feature/x'; do
+  # A git GLOBAL option between `git` and the subcommand is the ordinary agent form (`git -C <dir>`,
+  # `git -c k=v`), and the short and lease forms of a force are still forces. Each of these ran
+  # unchecked while the patterns required `git push` / `git reset` adjacent and `--force` spelled out.
+  for c in 'git -C /tmp/x push --force-with-lease origin HEAD:main' 'git -c core.x=y push origin main --force' \
+           'git push -f origin main' 'git -C /tmp/x reset --hard HEAD~1' 'git push origin +main' \
+           'git -C /tmp/x push origin +HEAD:main'; do
+    rc="$(bash_json "$c" | hook bash-safety-gate.sh)"
+    check "[$mode] bash gate BLOCKS a global-option / short-flag form: $c" "[ '$rc' = '2' ] && grep -q 'BLOCKED' '$TMP/err'"
+  done
+  for c in 'ls -la' 'git status' 'git push origin feature/x' 'git -C /tmp/x push origin feature/x' \
+           'git push origin feature/x-f' 'git -C /tmp/x status; echo --force' 'git status; echo push --force' \
+           'git -C /tmp/x reset --soft HEAD~1' 'git push origin main:feature/x'; do
     rc="$(bash_json "$c" | hook bash-safety-gate.sh)"
     check "[$mode] bash gate ALLOWS via stdin: $c" "[ '$rc' = '0' ]"
   done
