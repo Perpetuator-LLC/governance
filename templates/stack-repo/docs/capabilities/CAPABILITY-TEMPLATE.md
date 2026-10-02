@@ -9,6 +9,7 @@ created: YYYY-MM-DD
 objective: "<the strategy objective this capability serves, as a link>"
 requirement_packages: []          # the requirement-package epics that build it, fully qualified
 data_owned: []                    # the object types this stack is the source of truth for
+# An organisation's own required fields go below this line (its adapter names them).
 ---
 # Capability: <title>
 
@@ -53,7 +54,9 @@ section; a change to either changes both in the same commit.
 
 ## Keep-it-running gate
 
-Filled in before any engine is replaced:
+Filled in before any engine is replaced. An item that does not exist yet (no release tags, no stage
+environment) is written as a named gap with the ticket that closes it, never left blank: a blank reads
+as unfinished, a gap reads as known.
 - **rollback:** the tagged previous release and the one command that restores it;
 - **headline flow walked on stage:** who · the exact artifact pair · steps · what was observed;
 - **presence probe:** the check that proves the old engine is gone, not merely unused.
