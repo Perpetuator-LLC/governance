@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""landed-check — is a branch's CONTENT on the default branch? Three outcomes, never two.
+
+  landed-check [--repo DIR] [--base REF] BRANCH [BRANCH ...]
+
+Run it before a branch is archived (renamed, moved, re-prefixed) instead of deleted: an archive name
+reads as "done with", so it is allowed only when the content is proven landed, or a ticket that lands
+it is recorded (core technical.md → "A branch is archived only with proof its content landed, or a
+ticket that will land it").
+
+Content, not ancestry. A squash merge makes landed work look unmerged by commit, and a branch whose
+every commit subject is on the default branch can still change the tree. So, for the branch's net
+change since its merge-base with BASE, per file:
+  - every non-trivial line it ADDED is in BASE's current copy of that file, and
+  - every non-trivial line it REMOVED is gone from it.
+A file absent at its path in BASE is looked for by name elsewhere in BASE (a move).
+
+Per branch, one verdict:
+  LANDED       an ancestor of BASE, or nothing of substance to land, or every file's change is in BASE
+  MISSING      at least one file's change is not in BASE (named, with counts)
+  CANNOT-TELL  the check could not decide (a bad ref, no merge-base, a partly-matching moved file):
+               never read as either of the others
+
+Exit: 0 all LANDED · 1 any MISSING · 2 any CANNOT-TELL and none MISSING. BASE defaults to
+origin/<default> read from the remote HEAD; the SHA it compared against is printed, because a cached
+ref is only as fresh as the last fetch. Known limit: a line present in BASE for an unrelated reason
+counts as present; the trivial-line filter narrows it, and nothing here removes it.
+"""
+import subprocess
+import sys
+
+TRIVIAL = {"{", "}", "};", "});", "],", ")", "(", "pass", "else:", "return", "*/", "/**", '"""', "---",
+           "fi", "done", "end", "esac", "then", "do", "else"}
+
+
+def git(repo, *a):
+    r = subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True, errors="replace")
+    return r.returncode, r.stdout
+
+
+def trivial(line):
+    return len(line) < 4 or line in TRIVIAL
+
+
+def lines_of(text):
+    return {l.strip() for l in text.splitlines()}
+
+
+def changed_lines(repo, base, tip, path, old_path=None):
+    args = ["diff", "-U0", base, tip, "--"] + ([old_path, path] if old_path else [path])
+    _, d = git(repo, *args)
+    added, removed = set(), set()
+    for l in d.splitlines():
+        if l.startswith("+++") or l.startswith("---"):
+            continue
+        if l.startswith("+") and not trivial(l[1:].strip()):
+            added.add(l[1:].strip())
+        elif l.startswith("-") and not trivial(l[1:].strip()):
+            removed.add(l[1:].strip())
+    return added, removed
+
+
+def check_branch(repo, base, b):
+    if git(repo, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")[0] != 0:
+        return "CANNOT-TELL", [f"{b}: not a commit"]
+    if git(repo, "merge-base", "--is-ancestor", b, base)[0] == 0:
+        return "LANDED", ["an ancestor of the base"]
+    rc, mb = git(repo, "merge-base", base, b)
+    if rc != 0 or not mb.strip():
+        return "CANNOT-TELL", ["no merge-base with the base"]
+    mb = mb.strip()
+    _, names = git(repo, "diff", "--name-status", "-M", mb, b)
+    _, tree = git(repo, "ls-tree", "-r", "--name-only", base)
+    base_files = tree.splitlines()
+    missing, unsure, landed_files = [], [], 0
+    for row in names.splitlines():
+        parts = row.split("\t")
+        status, path = parts[0], parts[-1]
+        old = parts[1] if status.startswith("R") and len(parts) == 3 else None
+        if status.startswith("D"):
+            rc, _ = git(repo, "cat-file", "-e", f"{base}:{path}")
+            (missing.append(f"{path}: deleted on the branch, still in the base") if rc == 0 else None)
+            landed_files += rc != 0
+            continue
+        added, removed = changed_lines(repo, mb, b, path, old)
+        if not added and not removed:
+            continue
+        rc, cur = git(repo, "show", f"{base}:{path}")
+        if rc != 0:
+            name = path.rsplit("/", 1)[-1]
+            cands = [f for f in base_files if f.rsplit("/", 1)[-1] == name]
+            best = None
+            for c in cands:
+                have = lines_of(git(repo, "show", f"{base}:{c}")[1])
+                hit = len(added & have)
+                best = max(best or 0, hit)
+                if hit == len(added) and not (removed & have):
+                    best = "all"
+                    break
+            if best == "all":
+                landed_files += 1
+            elif not cands:
+                missing.append(f"{path}: not in the base at this path or by this name ({len(added)} added line(s))")
+            else:
+                unsure.append(f"{path}: absent here; a same-named file elsewhere holds {best}/{len(added)} added line(s)")
+            continue
+        have = lines_of(cur)
+        not_in = len(added - have)
+        still = len(removed & have)
+        if not_in or still:
+            missing.append(f"{path}: {not_in}/{len(added)} added line(s) not in the base"
+                           + (f", {still}/{len(removed)} removed line(s) still there" if still else ""))
+        else:
+            landed_files += 1
+    if missing:
+        return "MISSING", missing + unsure
+    if unsure:
+        return "CANNOT-TELL", unsure
+    return "LANDED", [f"{landed_files} file(s) with substance, all in the base" if landed_files
+                      else "nothing of substance to land"]
+
+
+def main(argv):
+    repo, base, branches = ".", None, []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-h", "--help"):
+            print(__doc__.strip()); return 0
+        if a == "--repo":
+            repo = argv[i + 1]; i += 2; continue
+        if a == "--base":
+            base = argv[i + 1]; i += 2; continue
+        if a.startswith("-"):
+            print(f"landed-check: unknown argument {a}", file=sys.stderr); return 2
+        branches.append(a); i += 1
+    if not branches:
+        print("landed-check: name at least one branch", file=sys.stderr); return 2
+    if base is None:
+        rc, head = git(repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+        if rc != 0 or not head.strip():
+            print("landed-check: cannot determine origin's default branch; pass --base", file=sys.stderr)
+            return 2
+        base = head.strip()
+    rc, sha = git(repo, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}")
+    if rc != 0:
+        print(f"landed-check: base {base} is not a commit here", file=sys.stderr); return 2
+    print(f"base {base} @ {sha.strip()[:12]} (as fresh as its last fetch)")
+    worst = 0
+    for b in branches:
+        verdict, why = check_branch(repo, base, b)
+        print(f"{verdict:<12} {b}")
+        for w in why:
+            print(f"             {w}")
+        worst = max(worst, {"LANDED": 0, "CANNOT-TELL": 2, "MISSING": 3}[verdict])
+    return {0: 0, 2: 2, 3: 1}[worst]
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
