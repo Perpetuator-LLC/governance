@@ -87,6 +87,56 @@ check "a directory argument is expanded, not counted as one file" "grep -q '\"fi
 rc="$(run "$TMP/c/nope.md")"
 check "a nonexistent path ⇒ exit 2" "[ '$rc' = '2' ]"
 
+# --- a private name on a comment line is still a private name ----------------------
+mkdir -p "$TMP/cm"; printf '#!/bin/sh\n# deploys to acme-fe after the gate\necho ok\n' > "$TMP/cm/commented.sh"
+printf 'literal:acme-fe\n' > "$TMP/mpriv"
+rc="$(run --json --private-patterns "$TMP/mpriv" "$TMP/cm/commented.sh")"
+check "a private name on a '#' comment line is caught (comment lines skip SHAPES only)" "kind 'instance-name:1'"
+
+# --- commit messages (--commits) ---------------------------------------------------
+# Expected values derived by hand from the scratch history and the one-name list (acme-fe):
+#   c1 cites widget#12 and names ci.yml   -> 0  (a message may cite its ticket and the files it changed)
+#   c2 trailer "Seat: acme-fe"            -> 1 instance-name
+#   c3 mentions /Users/someone/notes      -> 1 home-path
+#   c4 Co-Authored-By <noreply@...>       -> 0
+#   c5 acme-fe on a '#' line              -> 1 instance-name
+#   s1 on a side branch, clean            -> 0
+#   M  merge of side, names acme-fe       -> 1 instance-name (merges are read)
+#   root..HEAD: 7 commits, 4 findings (3 instance, 1 home-path) · c5..HEAD: 2 commits, 1 · HEAD..HEAD: 0
+G="$TMP/g"; git init -q "$G"
+gc() { git -C "$G" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -q --allow-empty --cleanup=verbatim -m "$1"; }
+gc "root"; R=$(git -C "$G" rev-parse HEAD)
+gc "$(printf 'add x\n\nfor widget#12; edits ci.yml')"
+gc "$(printf 'fix y\n\nSeat: acme-fe')"
+gc "$(printf 'docs\n\nlogged at /Users/someone/notes')"
+gc "$(printf 'chore\n\nCo-Authored-By: An Agent <noreply@anthropic.com>')"
+gc "$(printf 'tidy\n\n# carried over from acme-fe')"; C5=$(git -C "$G" rev-parse HEAD)
+git -C "$G" checkout -q -b side; gc "side work"; git -C "$G" checkout -q -
+git -C "$G" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false merge -q --no-ff --cleanup=verbatim \
+  -m "$(printf 'Merge side\n\nInitiated-By: acme-fe lane')" side
+cr() { (cd "$G" && run "$@"); }
+rc="$(cr --json --private-patterns "$TMP/mpriv" --commits "$R..HEAD")"
+check "root..HEAD: 7 commit messages scanned, report-only exit 0" \
+  "[ '$rc' = '0' ] && grep -q '\"commits_scanned\": 7' '$TMP/out'"
+check "root..HEAD: 4 findings, 3 names and 1 home path" \
+  "[ \"\$(grep -c '\"kind\"' '$TMP/out')\" = 4 ] && [ \"\$(grep -c '\"instance-name:1\"' '$TMP/out')\" = 3 ] && kind home-path"
+check "a message may cite its ticket and its files: no ticket-ref, no workflow-filename" \
+  "! kind ticket-ref && ! kind workflow-filename"
+check "a name on a message's '#' line is caught" "grep -q \"commit:\$(echo $C5 | cut -c1-12)\" '$TMP/out'"
+rc="$(cr --enforce --private-patterns "$TMP/mpriv" --commits "$R..HEAD")"
+check "--enforce: a name in a message fails (exit 1)" "[ '$rc' = '1' ]"
+rc="$(cr --json --private-patterns "$TMP/mpriv" --commits "$C5..HEAD")"
+check "c5..HEAD: the side commit and the merge, 1 finding (the merge's)" \
+  "grep -q '\"commits_scanned\": 2' '$TMP/out' && [ \"\$(grep -c '\"kind\"' '$TMP/out')\" = 1 ]"
+rc="$(cr --json --enforce --private-patterns "$TMP/mpriv" --commits "HEAD..HEAD")"
+check "an empty range is a clean answer: 0 scanned, exit 0" "[ '$rc' = '0' ] && grep -q '\"commits_scanned\": 0' '$TMP/out'"
+rc="$(cr --private-patterns "$TMP/mpriv" --commits "no-such-ref..HEAD")"
+check "a range git refuses ⇒ exit 2, never clean" "[ '$rc' = '2' ]"
+rc="$(cr --private-patterns "$TMP/mpriv" --commits "$R..HEAD" "$TMP/c/clean.md")"
+check "--commits with a path ⇒ exit 2" "[ '$rc' = '2' ]"
+rc="$(cr --commits "$R..HEAD")"
+check "messages with no private list ⇒ exit 3, SKIPPED" "[ '$rc' = '3' ] && grep -q 'SKIPPED' '$TMP/out'"
+
 # --- the checker must not BE the disclosure ----------------------------------------
 check "the checker embeds no quoted dotted hostname" \
   "! grep -qE '\"[a-z0-9-]+\.(internal|lan|local|corp|io|com)\"' '$CHECK'"

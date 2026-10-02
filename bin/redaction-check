@@ -19,7 +19,12 @@ a plain file with one pattern per line. `#` starts a comment; a `literal:` prefi
 regex" and is escaped. A Markdown file WITHOUT the fence is refused, because prose compiles into
 patterns that match ordinary English.
 
+COMMIT MESSAGES ARE PUBLISHED TOO. --commits RANGE scans the message of every commit in a git range
+(merges included) instead of files: the name leg, plus only the personal-data shapes (a message may
+cite its ticket). A range git refuses exits 2; an empty range is a real, clean answer.
+
 Usage:  redaction-check [--enforce] [--private-patterns FILE] [--json] [PATHS...]
+        redaction-check [--enforce] [--private-patterns FILE] [--json] --commits RANGE
         default PATHS: README.md core adapter-template agents templates   (Markdown files only)
         env GOVERNANCE_PRIVATE_PATTERNS is used when --private-patterns is not given, and
         ~/.governance/private-patterns (a file, or a symlink to the note in the private layer) when
@@ -28,7 +33,7 @@ Usage:  redaction-check [--enforce] [--private-patterns FILE] [--json] [PATHS...
 Exit:   0 clean, or findings without --enforce · 1 findings with --enforce · 2 cannot run ·
         3 the instance-name leg was not checked
 """
-import argparse, json, os, re, sys
+import argparse, json, os, re, subprocess, sys
 
 SHAPE_PATTERNS = [
     ("vendor-tool-noun", re.compile(r"\b(?:gitea|github|gitlab|jira|linear|slack|matrix|posthog|loki|tempo|prom|crm)_[a-z_]{3,}\b"),
@@ -56,6 +61,9 @@ SHAPE_PATTERNS = [
 # Comment lines, shell-prompt lines and fence markers legitimately carry shapes; a checker that flags
 # its own explanation trains people to ignore it.
 SKIP_LINE = re.compile(r"^\s*(?:#|//)|^\s{4,}[$>]|^\s*```")
+# A commit message is a RECORD, not a rule: it cites its ticket (tracing up) and may name a workflow
+# file it changed. Only the shapes that are personal or identifying data apply to it.
+MESSAGE_SHAPES = {"home-path", "contact-address", "registration-id"}
 FENCE_TAG = "redaction-instances"
 DEFAULT_PATHS = ["README.md", "core", "adapter-template", "agents", "templates"]
 DEFAULT_PRIVATE = os.path.join(os.path.expanduser("~"), ".governance", "private-patterns")
@@ -132,22 +140,49 @@ def expand(paths):
     return out, bad
 
 
-def scan(paths, patterns):
+def scan_lines(name, lines, shapes, private):
+    """SKIP_LINE exempts a line from the SHAPES only. A private name in a comment or a prompt line is
+    exactly as public as one in prose, so the name leg reads every line."""
+    findings = []
+    for n, line in enumerate(lines, 1):
+        patterns = list(private) if SKIP_LINE.match(line) else list(shapes) + list(private)
+        for kind, rx, why in patterns:
+            for m in rx.finditer(line):
+                findings.append({"file": name, "line": n, "kind": kind, "match": m.group(0), "why": why})
+    return findings
+
+
+def scan(paths, shapes, private):
     findings, unreadable = [], []
     for path in paths:
         try:
             with open(path, encoding="utf-8", errors="ignore") as fh:
-                for n, line in enumerate(fh, 1):
-                    if SKIP_LINE.match(line):
-                        continue
-                    for kind, rx, why in patterns:
-                        for m in rx.finditer(line):
-                            findings.append({"file": path, "line": n, "kind": kind,
-                                             "match": m.group(0), "why": why})
+                findings += scan_lines(path, fh, shapes, private)
         except OSError as e:
             print(f"error: cannot read {path}: {e}", file=sys.stderr)
             unreadable.append(path)
     return findings, unreadable
+
+
+def commit_messages(rev_range):
+    """→ [(sha, message)] for every commit in the range, merges included, or None when git refuses
+    the range. An empty list is a real answer (the range holds no commits), not a failure."""
+    try:
+        out = subprocess.run(["git", "log", "--format=%H%x00%B%x1e", "--end-of-options", rev_range],
+                             capture_output=True, text=True, errors="replace")
+    except OSError as e:
+        print(f"error: cannot run git: {e}", file=sys.stderr)
+        return None
+    if out.returncode != 0:
+        print(f"error: git log {rev_range!r} failed: {out.stderr.strip()}", file=sys.stderr)
+        return None
+    msgs = []
+    for rec in out.stdout.split("\x1e"):
+        rec = rec.lstrip("\n")
+        if rec:
+            sha, _, body = rec.partition("\x00")
+            msgs.append((sha, body))
+    return msgs
 
 
 def main():
@@ -156,23 +191,36 @@ def main():
     ap.add_argument("--enforce", action="store_true")
     ap.add_argument("--private-patterns", default=os.environ.get("GOVERNANCE_PRIVATE_PATTERNS") or None)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--commits", metavar="RANGE")
     ap.add_argument("-h", "--help", action="store_true")
     a = ap.parse_args()
     if a.help:
         print(__doc__)
         return 0
+    if a.commits and a.paths:
+        print("error: --commits scans commit messages; it takes no paths. Run the two scans separately.",
+              file=sys.stderr)
+        return 2
 
-    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)
-    paths = a.paths or [os.path.join(root, p) for p in DEFAULT_PATHS]
-    paths, missing = expand(paths)
-    if missing:
-        print("error: no such file or directory: " + ", ".join(missing), file=sys.stderr)
-        print("refusing to report a result over a path set I could not resolve.", file=sys.stderr)
-        return 2
-    paths = sorted(set(paths))
-    if not paths:
-        print("error: no files to scan — refusing to report a clean result on an empty set.", file=sys.stderr)
-        return 2
+    if a.commits:
+        msgs = commit_messages(a.commits)
+        if msgs is None:
+            print("refusing to report a result over a range I could not read.", file=sys.stderr)
+            return 2
+        unit, count = "commit message(s)", len(msgs)
+    else:
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)
+        paths = a.paths or [os.path.join(root, p) for p in DEFAULT_PATHS]
+        paths, missing = expand(paths)
+        if missing:
+            print("error: no such file or directory: " + ", ".join(missing), file=sys.stderr)
+            print("refusing to report a result over a path set I could not resolve.", file=sys.stderr)
+            return 2
+        paths = sorted(set(paths))
+        if not paths:
+            print("error: no files to scan — refusing to report a clean result on an empty set.", file=sys.stderr)
+            return 2
+        unit, count = "file(s)", len(paths)
 
     source = a.private_patterns
     if not source and os.path.exists(DEFAULT_PRIVATE):
@@ -180,17 +228,23 @@ def main():
     private, note = load_private(source)
     if private is not None and source == DEFAULT_PRIVATE:
         note += f" from {DEFAULT_PRIVATE}"
-    findings, unreadable = scan(paths, list(SHAPE_PATTERNS) + (private or []))
-    if unreadable:
-        print(f"refusing to report: {len(unreadable)} of {len(paths)} path(s) could not be read.", file=sys.stderr)
-        return 2
+    if a.commits:
+        shapes = [p for p in SHAPE_PATTERNS if p[0] in MESSAGE_SHAPES]
+        findings = []
+        for sha, body in msgs:
+            findings += scan_lines(f"commit:{sha[:12]}", body.splitlines(), shapes, private or [])
+    else:
+        findings, unreadable = scan(paths, SHAPE_PATTERNS, private or [])
+        if unreadable:
+            print(f"refusing to report: {len(unreadable)} of {len(paths)} path(s) could not be read.", file=sys.stderr)
+            return 2
 
     if a.json:
-        print(json.dumps({"findings": findings, "files_scanned": len(paths),
+        print(json.dumps({"findings": findings, ("commits_scanned" if a.commits else "files_scanned"): count,
                           "instance_leg": "skipped" if private is None else "ran",
                           "instance_note": note, "enforce": a.enforce}, indent=2))
     else:
-        print(f"redaction-check — {len(paths)} file(s), {len(findings)} finding(s)")
+        print(f"redaction-check — {count} {unit}, {len(findings)} finding(s)")
         print(f"  instance-name leg: {'SKIPPED — ' if private is None else 'ran — '}{note}")
         by_kind = {}
         for f in findings:
