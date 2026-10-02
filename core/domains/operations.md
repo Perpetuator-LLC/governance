@@ -563,6 +563,35 @@ it is wrong:** a diagnosis that already came from the acting tool's report. This
 through the actor; confirming an *outcome* is the opposite, and needs a check independent of the
 actor (technical.md → *A checker that FIRES is not a checker that is RIGHT*).
 
+## "Verified" for a user-visible outcome means OBSERVED on the user's surface
+
+**A done-claim of the form *forge + git + CI agree* proves that code landed.** It says nothing about
+an outcome that lives where a person looks: a dashboard, a rendered page, a message. Observed: a
+coordinator confirmed a receipt existed and told the user *"fixed, reload"*; the user reloaded and the
+thing was not there. In the same exchange the implementer had changed **what** was asked, on its own
+measurement, and the coordinator accepted the change without asking the user.
+
+1. **"Verified" for a user-visible outcome means observed on the user's surface, by someone other
+   than the party claiming it**: a read of what renders, a screenshot, or the user's own
+   confirmation. Say which surface and how. Not observed ⇒ the claim is **"landed, not seen"**,
+   never *"fixed"*.
+2. **A done-when for a user-facing fix names the user's surface and what will be observed there.**
+   Prefer an observation an agent can take, a committed command that reads what renders
+   (`technical.md` → *A done-when names the COMMITTED SURFACE*); the user's confirmation is the
+   fallback, not the plan.
+3. **A change to WHAT was asked, not how, goes to the user as a decision**, with the implementer's
+   reason attached. A peer or a coordinator never accepts it on the user's behalf. An ask the user has
+   already repeated raises the bar further: the repetition is the evidence that the scope mattered.
+
+**Scope: outcomes whose purpose is to be seen or used by a person.** Internal artifacts with no user
+surface (a library function, a migration, a CI gate) are out of scope: for them, forge + git + CI *is*
+the surface. **Two boundaries:**
+- **The user's surface is unreachable by any agent** (a device only the user holds). Rule 1 read
+  literally would block forever. Do not block: report *"landed, not seen on your surface"* and name the
+  one observation the user can make.
+- **Rule 3 cuts both ways.** Narrowing an ask and widening it are both changes to what was asked. A
+  change to *how* (the approach, the tool, the order of work) stays the implementer's call.
+
 ## Declare a cross-repository dependency as a LABEL the sequencer reads, not as prose
 
 When work in one repository cannot land before work in another, record it where a scheduler looks: a

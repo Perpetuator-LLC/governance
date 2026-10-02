@@ -210,6 +210,10 @@ forever.**
 expensive one is discovering the gap at release time, when the tool cannot be added without growing a
 release-gating PR — which is precisely when it was discovered.
 
+**For a user-facing outcome, the surface to name is the user's own**: what renders where the person
+looks, and what will be observed there. A receipt that the code landed is not that observation
+(`operations.md` → *"Verified" for a user-visible outcome means OBSERVED on the user's surface*).
+
 ### Every shell session is a tool request
 
 The rule above catches the gap when the work is *planned*. Most shell use is not planned: an operator
@@ -947,6 +951,44 @@ mechanism's files as the revert path; and say in the ready claim that CI could n
 is wrong:** a pipeline that can be rehearsed (a second environment, a scratch target, a check mode)
 is rehearsed instead. Ordering is the mitigation for what genuinely cannot be, not a reason to skip a
 rehearsal.
+
+## A deploy trigger's exit code is not the deploy's outcome — observe the served version, then record
+
+**The failure shape.** A release pipeline sends a deploy request and waits for the deploy to finish
+*inside that one request*. The request crosses a proxy or edge with a fixed origin timeout, and a long
+deploy (many migrations) outlasts it. The edge returns a timeout, the step fails, and every record
+step chained on it is skipped: tag, release record, changelog, branch retirement. Meanwhile the target
+finishes and serves the new build, healthy. **Production changed and nothing records it**, the worst
+of the combinations, because every reader of the record believes the old build is live.
+
+1. **A deploy trigger returns at once (accepted); completion is OBSERVED.** Poll the target's version
+   or health endpoint until it reports the expected build, with a timeout sized for the largest
+   plausible deploy. Never wait for a deploy inside a request that crosses a timeout-bounded hop.
+2. **Record steps key off the observed served version, never the trigger's exit code.** If production
+   serves the release build, the release is tagged and recorded, whatever the trigger said.
+3. **"Deploy failed" is a three-state claim, and the pipeline says which:** trigger failed and
+   production unchanged · trigger failed and production changed · production changed and the record
+   incomplete. An operator should not have to probe production to find out. An observation that
+   itself fails (the endpoint unreachable) is *unknown*, reported as such and never as either side.
+4. **Gate endpoints are named by their exact path, trailing slash included.** A redirect on a gate's
+   URL is a silent gate: the probe reads the redirect, or follows it somewhere else, and never reads
+   the endpoint it names.
+
+**Not a contradiction of *test the status; the payload is not a proxy for it*** (*A fleet audit
+measures against the FORGE*). The trigger's status is honest; it reports on the request. The deploy is
+a different event, and a status speaks only for the event it belongs to.
+
+**Scope: any deploy whose trigger response is not itself an observation of what is served**:
+asynchronous deploys, boxes that deploy themselves (*Deploys & health*), and anything behind a proxy,
+edge or load balancer with a fixed timeout.
+- **Where rule 1 is overkill:** a synchronous deploy that crosses no timeout-bounded hop and returns
+  the served version in its response. That response *is* the observation; rule 2 still applies to it.
+- **The mirror case, which rule 2 also catches:** the trigger reports success and production did not
+  change (a cached build, the wrong target). Nothing is recorded until the served version matches, so
+  a green trigger cannot record a release that never shipped.
+- **Read the version from the service being deployed**: a health endpoint's version speaks only for
+  the service that serves it (*A done-when names the COMMITTED SURFACE*). A target with no version
+  endpoint cannot be observed, and adding one is part of the pipeline, not a follow-up.
 
 ## "Merged" is not "the reviewed code merged" — a verdict pins a HEAD, a click picks a MOMENT
 
