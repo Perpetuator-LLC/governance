@@ -28,6 +28,7 @@ EXTS = (".md", ".markdown", ".txt", ".csv", ".json", ".yaml", ".yml", ".pdf",
         ".docx", ".xlsx", ".pptx")
 
 FM_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
+PROVENANCE = re.compile(r"^[a-z][a-z0-9+.-]*:(?=/(?!/)|~/)")
 SKIP_DIRS = {".git", ".trash", ".obsidian", "node_modules", "__pycache__", ".workspace"}
 
 
@@ -71,6 +72,12 @@ def resolve(root, value, aliases=None):
     custody boundary — and the dead-path COUNT IMPROVES. A repair measured by "less of the bad thing"
     can always improve its own metric by manufacturing the good thing falsely.
     """
+    # A provenance scheme on an absolute path (`scraped:/abs/file.md`) tags where a value came from;
+    # the path is what follows. Read whole, a live reference reports dead (#136). Only a scheme
+    # directly followed by `/` (not `//`, a URL) or `~/` is stripped.
+    m = PROVENANCE.match(value)
+    if m:
+        value = value[m.end():]
     # A ~-prefixed value is HOME-relative, i.e. absolute — not vault-relative. Joining it to a vault
     # root produces a confident false positive: the instrument answers about a path that was never
     # the one being referenced.
