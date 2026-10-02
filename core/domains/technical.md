@@ -2701,6 +2701,15 @@ reproducible.
 - **Scope:** any credential or session cache that survives between an interactive login and a later
   call. The mechanism names differ by tool; the question does not: *what did this call authenticate
   with, and will the unattended run have it?*
+- **The same question covers the identity a privilege tool hands down.** A run under `sudo` is not
+  the root scheduler's identity: sudo sets `SUDO_UID`/`SUDO_USER`, and some tools trust on them. git,
+  for one, accepts a repository owned by `SUDO_UID` that it refuses to plain root. So an install step
+  that runs the job once under sudo "to prove it" says nothing about the cron. It can pass while every
+  scheduled run fails.
+- **And the tool version on the target.** A workaround proved on a workstation's newer release can be
+  a silent no-op on the target's older one: an environment variable the older release does not read
+  is ignored, not refused. Calibrate the fix on the target's release (a container of its OS release is
+  enough). This does not apply when the job and the test run the same pinned image.
 
 ## A page is not a count
 
