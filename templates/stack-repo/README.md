@@ -30,6 +30,9 @@ The hosts themselves are inventory, and live in `overlay/`.
 
 ## Contracts
 
+What this stack does, why, and what it does not do lives in `docs/capabilities/`, one document per
+capability (copy `CAPABILITY-TEMPLATE.md`); each capability's *Contracts* section agrees with this one.
+
 Every core service this module consumes and every runtime edge it shares with another repository.
 Splitting repositories does not split the runtime fabric: this section is the only place that coupling
 stays visible, so a change to any of it changes this section in the same commit. **Names and
