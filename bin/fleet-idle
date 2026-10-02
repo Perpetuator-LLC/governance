@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""fleet-idle — is the whole fleet idle while it is expected to be working? Asked from OUTSIDE any seat.
+
+  fleet-idle --repos-from FILE [--marker FILE] [--state FILE] [--window-min 30] [--consecutive 2]
+             [--min-idle K] [--ignore-subject REGEX] [--now ISO] [--no-fetch] [--json OUT]
+  fleet-idle --repos-from FILE --replay START END [--window-min 30] [--consecutive 2] [--min-idle K]
+             [--ignore-subject REGEX] [--no-fetch]
+
+A liveness check must not share a failure mode with what it watches. A watch that runs inside an
+agent session stops when the sessions stop (a usage limit stops them all at once), so this one needs
+no model and no session: it reads, per lane repository, the commits on its remote branches in the
+last window, which a timer can observe with nobody working.
+
+Live mode, one call per window (from a system timer):
+  - No marker file, or the marker's time has passed: the fleet is not expected to be working, so the
+    check is SILENT (exit 0) however quiet it is. Without this, it pages on every quiet evening.
+  - A marker that will not parse is an instrument fault (exit 2), never read as "no marker".
+  - A lane is IDLE in a window when its remote branches gained no commit in that window, ignoring
+    commits whose subject matches --ignore-subject (a backup timer is not a worker). A lane whose
+    fetch failed is CANNOT-TELL: reported, and never counted as idle or as active.
+  - It FIRES (exit 1, one FINDING line per idle lane) when at least K lanes (default: every lane it
+    could read) have been idle for --consecutive windows in a row. It fires ONCE per stall: later idle
+    windows stay silent until a lane shows work again, which resets it. State lives in --state.
+  - Busy-but-producing-nothing is the same finding: sessions that report running but push nothing
+    look idle here, because this reads only what was produced.
+
+Replay mode (--replay START END): evaluate every window end from START to END and print each STALL
+span (K lanes idle for --consecutive windows). Exit 1 if any stall was found.
+
+It never merges, deploys, messages or changes anything; acting on a finding is the caller's job.
+Exit: 0 silent · 1 fired (live) or a stall found (replay) · 2 instrument fault.
+"""
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import subprocess
+import sys
+
+UTC = dt.timezone.utc
+
+
+def parse_time(s):
+    s = s.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    t = dt.datetime.fromisoformat(s)
+    return t if t.tzinfo else t.replace(tzinfo=UTC)
+
+
+def iso(t):
+    return t.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def fetch(repo):
+    r = subprocess.run(["git", "-C", repo, "fetch", "-q", "--all", "--prune"], capture_output=True, text=True)
+    return r.returncode == 0
+
+
+def commit_times(repo, since, until, ignore):
+    """Committer times of commits on remote branches in (since, until], minus ignored subjects."""
+    r = subprocess.run(["git", "-C", repo, "log", "--remotes", "--format=%ct%x09%s",
+                        f"--since=@{int(since.timestamp())}", f"--until=@{int(until.timestamp())}"],
+                       capture_output=True, text=True, errors="replace")
+    if r.returncode != 0:
+        return None
+    out = []
+    for line in r.stdout.splitlines():
+        ts, _, subject = line.partition("\t")
+        t = dt.datetime.fromtimestamp(int(ts), UTC)
+        if since < t <= until and not (ignore and ignore.search(subject)):
+            out.append(t)
+    return out
+
+
+def lanes(repos):
+    return [(os.path.basename(os.path.normpath(r)), r) for r in repos]
+
+
+def window_idle(readable, since, until, ignore):
+    idle, unread = [], []
+    for name, repo in readable:
+        times = commit_times(repo, since, until, ignore)
+        if times is None:
+            unread.append(name)
+        elif not times:
+            idle.append(name)
+    return idle, unread
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--repos-from", required=True)
+    ap.add_argument("--marker")
+    ap.add_argument("--state")
+    ap.add_argument("--window-min", type=int, default=30)
+    ap.add_argument("--consecutive", type=int, default=2)
+    ap.add_argument("--min-idle", type=int)
+    ap.add_argument("--ignore-subject")
+    ap.add_argument("--now")
+    ap.add_argument("--no-fetch", action="store_true")
+    ap.add_argument("--json")
+    ap.add_argument("--replay", nargs=2, metavar=("START", "END"))
+    a = ap.parse_args()
+
+    try:
+        repos = [l.strip() for l in open(a.repos_from) if l.strip() and not l.startswith("#")]
+    except OSError as exc:
+        print(f"fleet-idle: {exc}", file=sys.stderr); return 2
+    if not repos:
+        print("fleet-idle: the repo list is empty — refusing to report on a fleet of none", file=sys.stderr)
+        return 2
+    ignore = re.compile(a.ignore_subject) if a.ignore_subject else None
+    win = dt.timedelta(minutes=a.window_min)
+    all_lanes = lanes(repos)
+
+    readable, cannot = [], []
+    for name, repo in all_lanes:
+        if not os.path.isdir(repo) or (not a.no_fetch and not fetch(repo)):
+            cannot.append(name)
+        else:
+            readable.append((name, repo))
+    if not readable:
+        print(f"fleet-idle: no lane could be read ({', '.join(cannot)})", file=sys.stderr)
+        return 2
+    k = a.min_idle or len(readable)
+
+    if a.replay:
+        start, end = parse_time(a.replay[0]), parse_time(a.replay[1])
+        spans, run, t = [], [], start + win
+        cannot_now = sorted(cannot)
+        while t <= end:
+            idle, unread = window_idle(readable, t - win, t, ignore)
+            cannot_now = sorted(set(cannot) | set(unread))
+            if len(idle) >= k:
+                run.append((t, idle))
+            else:
+                if len(run) >= a.consecutive:
+                    spans.append(run)
+                run = []
+            t += win
+        if len(run) >= a.consecutive:
+            spans.append(run)
+        print(f"fleet-idle replay {iso(start)} → {iso(end)} · {len(readable)} lane(s) · window {a.window_min} min · "
+              f"K={k}" + (f" · cannot tell: {', '.join(cannot_now)}" if cannot_now else ""))
+        for run in spans:
+            lanes_idle = sorted(set.intersection(*(set(i) for _, i in run)))
+            print(f"STALL {iso(run[0][0] - win)} → {iso(run[-1][0])} · {len(run)} window(s) · "
+                  f"idle throughout: {', '.join(lanes_idle)}")
+        if not spans:
+            print("no stall")
+        return 1 if spans else 0
+
+    now = parse_time(a.now) if a.now else dt.datetime.now(UTC)
+    if a.marker and os.path.exists(a.marker):
+        try:
+            until = parse_time(open(a.marker).read().strip().splitlines()[0])
+        except (ValueError, IndexError):
+            print(f"fleet-idle: marker {a.marker} does not hold an ISO time — refusing to guess", file=sys.stderr)
+            return 2
+        if now >= until:
+            print(f"fleet-idle: not expected to be working (marker expired {iso(until)}); silent")
+            return 0
+    else:
+        print("fleet-idle: not expected to be working (no marker); silent")
+        return 0
+
+    idle, unread = window_idle(readable, now - win, now, ignore)
+    cannot = sorted(set(cannot) | set(unread))
+    state = {"windows": [], "fired_at": None}
+    if a.state and os.path.exists(a.state):
+        try:
+            state = json.load(open(a.state))
+        except ValueError:
+            print(f"fleet-idle: state {a.state} is not JSON — refusing to guess the streak", file=sys.stderr)
+            return 2
+    stalled = len(idle) >= k
+    state["windows"] = (state.get("windows", []) + [{"at": iso(now), "idle": idle, "stalled": stalled}])[-12:]
+    streak = 0
+    for w in reversed(state["windows"]):
+        if not w["stalled"]:
+            break
+        streak += 1
+    fire = stalled and streak >= a.consecutive and not state.get("fired_at")
+    if not stalled:
+        state["fired_at"] = None
+    if fire:
+        state["fired_at"] = iso(now)
+    if a.state:
+        tmp = a.state + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(state, fh, indent=1)
+        os.replace(tmp, a.state)
+
+    print(f"fleet-idle {iso(now)} · {len(readable)} lane(s) read · {len(idle)} idle · K={k} · "
+          f"stalled {streak} window(s)" + (f" · cannot tell: {', '.join(cannot)}" if cannot else ""))
+    if fire:
+        for name in idle:
+            print(f"FINDING idle {name} — no commit pushed for {streak} window(s) of {a.window_min} min "
+                  f"while expected working until {iso(until)}")
+    elif stalled and state.get("fired_at"):
+        print(f"already reported at {state['fired_at']}; silent until a lane shows work")
+    if a.json:
+        with open(a.json, "w") as fh:
+            json.dump({"at": iso(now), "fired": fire, "idle": idle, "cannot_tell": cannot, "streak": streak,
+                       "expected_until": iso(until)}, fh, indent=1)
+    return 1 if fire else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
