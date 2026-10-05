@@ -2808,6 +2808,30 @@ does nothing and when it destroys uncommitted work.
   destroys the checkout. Measured: a nightly survey ran `checkout origin/main -- .` against a peer's
   checkout; it did no harm only because that checkout happened to be clean and already at the ref.
 
+## A read can PROMPT: a recursive scan of a home or another app's data raises one consent prompt per app
+
+**On a desktop OS that gates each application's data behind a user-consent prompt (macOS privacy
+controls, for one), a recursive walk is not a passive read.** A size or search scan (`du`, `find`, a
+disk-usage tool) over a user's home directory, or over another application's data directory, reaches
+every protected location under it, and the OS raises **one prompt per application whose data it
+touches**. The prompts queue in front of the person and take focus, and an answer is remembered
+against the scanning tool. Measured: one home-directory size scan raised prompts faster than they
+could be answered, and the machine had to be rebooted.
+
+- **Scan only named paths you own**: the project, your tool's own cache, the directory the task
+  names. To learn what is large elsewhere, use the OS's own storage report, or ask.
+- **Never re-run an interrupted scan of that kind.** The interruption is usually the prompts, and a
+  re-run raises them again from the start. Narrow the scope first.
+- **Another application's data is read only when the task names that path**, and then once: one
+  prompt, expected, answered by the person.
+
+**Scope: interactive desktops with per-application consent.** A server or a container has no such
+prompt, so the mechanism is absent there, though scanning only what you own remains the
+privacy-respecting default. **Where it is wrong:** a scan the person asked for, over a location they
+named; one prompt is then the expected cost, and the rule is only not to re-run it. **The mirror:** a
+tool already granted full-disk access raises no prompt and reads everything, the same overreach
+without the warning. It does not license the wide scan; it removes the only signal that one happened.
+
 ## A fleet audit measures against the FORGE, never against `refs/remotes/*` as found
 
 **`origin/<default>` is a local file.** It is a pointer cached by the last fetch, and its *spelling*
