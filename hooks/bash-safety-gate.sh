@@ -301,4 +301,115 @@ if echo "$cmd" | grep -qE 'printenv|/proc/.*/environ'; then
   deny process-env-read "Reading process environment would expose secrets to the AI context."
 fi
 
+# zsh expansion traps (#181). An inline command runs under the harness's shell, usually the user's login
+# shell, and in zsh two ordinary bash idioms do something else. Both are already prose rules (technical.md,
+# "the SHELL an agent's command runs in"), and both kept recurring, which is the case for a gate:
+#   - `$name:<letter>` is a MODIFIER, even inside double quotes: `"$H:refs/heads/x"` loses its `:r`.
+#   - an unquoted `$name` is NOT word-split, so a variable holding a space-separated list reaches the
+#     command as ONE argument. A grep over two directories then exits 2 on a path that does not exist,
+#     and with its stderr discarded that reads as a clean zero.
+# Scoped to a zsh harness shell: `$SHELL`, or `GOVERNANCE_HARNESS_SHELL` where a harness runs another
+# shell than the login one. Both fixes it asks for (brace the name; use an array, or quote) are correct
+# in bash too, so a refusal on a mis-detected shell costs one edit, never a wrong command. A script run
+# by path is unaffected: it runs under its shebang, and this gate never sees its contents. Fails OPEN
+# without python3: this check catches mistakes; it is not a security control.
+harness_shell="${GOVERNANCE_HARNESS_SHELL:-${SHELL:-}}"
+if [[ "${harness_shell##*/}" == "zsh" ]] && command -v python3 >/dev/null 2>&1; then
+  zsh_trap=$(python3 - "$cmd" <<'PY' 2>/dev/null
+import re, sys
+cmd = sys.argv[1]
+MARK = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*(?:(\\)?([A-Za-z_]\w*)|'([A-Za-z_]\w*)'|\"([A-Za-z_]\w*)\")")
+
+def blank_heredocs(text, quoted_only):
+    """Heredoc bodies blanked. A QUOTED body is expanded by no shell. An unquoted body is expanded by
+    THIS shell (zsh) while it is built, so it keeps its modifiers; no body is ever word-split."""
+    lines, out, i = text.split("\n"), [], 0
+    while i < len(lines):
+        out.append(lines[i])
+        marks = list(MARK.finditer(lines[i]))
+        if len(marks) != 1:
+            i += 1
+            continue
+        m = marks[0]
+        tag = m.group(3) or m.group(4) or m.group(5)
+        quoted = bool(m.group(2) or m.group(4) or m.group(5))
+        j = i + 1
+        while j < len(lines) and (lines[j].lstrip("\t") if m.group(1) else lines[j]) != tag:
+            j += 1
+        if j == len(lines) or (quoted_only and not quoted):
+            i += 1
+            continue
+        out += [""] * (j - i - 1) + [lines[j]]
+        i = j + 1
+    return "\n".join(out)
+
+def states(text):
+    """Per character: N unquoted, D inside double quotes, S never expanded (single-quoted, escaped, or
+    a comment)."""
+    st, q, i, word_start = [], None, 0, True
+    while i < len(text):
+        c = text[i]
+        if q is None:
+            if c == "\\":
+                st += ["S", "S"]; i += 2; word_start = False; continue
+            if c == "#" and word_start:
+                while i < len(text) and text[i] != "\n":
+                    st.append("S"); i += 1
+                continue
+            if c == "'" or (c == "$" and text[i + 1:i + 2] == "'"):
+                n = 2 if c == "$" else 1
+                j = text.find("'", i + n)
+                j = len(text) - 1 if j < 0 else j
+                st += ["S"] * (j - i + 1); i = j + 1; word_start = False; continue
+            if c == '"':
+                q = '"'; st.append("D"); i += 1; word_start = False; continue
+            st.append("N"); word_start = c in " \t\n;&|()"; i += 1; continue
+        if c == "\\" and text[i + 1:i + 2] in ('$', '"', "\\", "`"):
+            st += ["S", "S"]; i += 2; continue
+        if c == '"':
+            q = None
+        st.append("D"); i += 1
+    return st[:len(text)]
+
+# 1. `$name:<modifier>`, unbraced, wherever this shell expands it.
+a = blank_heredocs(cmd, quoted_only=True)
+sa = states(a)
+for m in re.finditer(r"\$([A-Za-z_][A-Za-z0-9_]*|[0-9]):([aAcehlPqQrstux&])", a):
+    if sa[m.start()] in "ND":
+        print(f"modifier\t{m.group(1)}\t{m.group(2)}")
+        sys.exit(0)
+
+# 2. An unquoted expansion of a variable that this same command assigned a literal holding whitespace.
+b = blank_heredocs(cmd, quoted_only=False)
+sb = states(b)
+ASSIGN = re.compile(r"(?:^|(?<=[\s;&|(]))(?:(?:export|local|typeset|declare|readonly)\s+)?"
+                    r"([A-Za-z_]\w*)=(\"(?:[^\"\\]|\\.)*\"|'[^']*')")
+spaced = {}
+for m in ASSIGN.finditer(b):
+    if sb[m.start(1)] == "N" and re.search(r"\s", m.group(2)[1:-1]):
+        spaced.setdefault(m.group(1), m.end())
+for name, after in spaced.items():
+    for m in re.finditer(r"\$(?:%s(?![A-Za-z0-9_])|\{%s\})" % (name, name), b):
+        if m.start() < after or sb[m.start()] != "N":
+            continue
+        seg = re.split(r"&&|\|\||[;|&\n(`]|\$\(", b[:m.start()])[-1]
+        words = [w for w in seg.split() if not re.match(r"[A-Za-z_]\w*=", w)]
+        if not words:
+            continue            # the right-hand side of an assignment is never split, in either shell
+        if words[0] in ("echo", "print", "printf"):
+            continue            # output reads the same as one argument or as several
+        print(f"split\t{name}")
+        sys.exit(0)
+PY
+)
+  case "$zsh_trap" in
+    modifier*)
+      IFS=$'\t' read -r _ zname zmod <<<"$zsh_trap"
+      deny zsh-modifier "zsh reads \`\$${zname}:${zmod}\` as the \`:${zmod}\` modifier, even inside double quotes, and edits the value. Brace the name: \`\${${zname}}:…\`." ;;
+    split*)
+      IFS=$'\t' read -r _ zname <<<"$zsh_trap"
+      deny zsh-no-word-split "zsh does not word-split an unquoted \`\$${zname}\`: it holds spaces, so it reaches the command as ONE argument. For several, use an array, ${zname}=(a b) and \"\${${zname}[@]}\"; for one, quote it, \"\$${zname}\"." ;;
+  esac
+fi
+
 exit 0

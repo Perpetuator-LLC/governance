@@ -2021,9 +2021,16 @@ instructions, which run under whatever shell the reader has.
 **A second zsh trap on the same path: `$var:<letter>` is a MODIFIER, even inside double quotes.**
 `:r`, `:h`, `:t`, `:e` and others edit the value (root, head, tail, extension), so in zsh
 `"$sha:refs/heads/x"` becomes `abc123efs/heads/x`: the `:r` is consumed. bash prints it as written.
-As a `git push origin $sha:refs/heads/x`, that silently targets a mangled ref. `$h:$port` is safe,
-because a colon followed by `$` is not a modifier. **Brace any variable followed by a colon:
+A `git push` of that fails loudly (`src refspec … does not match any`); the silent case is a value
+that still resolves after the edit, such as `:h` or `:t` on a path. `$h:$port` is safe, because a
+colon followed by `$` is not a modifier. **Brace any variable followed by a colon:
 `${sha}:refs/…`, `${host}:${port}`.** It costs nothing and removes the letter-by-letter question.
+
+**Both traps are refused by the floor gate under a zsh harness shell** (`hooks/bash-safety-gate.sh`):
+an unbraced `$name:<letter>`, and an unquoted expansion of a variable the same command assigned a
+literal holding whitespace. The prose alone did not stop either from recurring. The gate sees only the
+command text, so a list built by command substitution (`files=$(git ls-files)`) is still yours to
+expand as an array.
 
 **A third: a word that BEGINS with `=` is a command lookup.** zsh replaces `=name` with the path of the
 command `name` (`echo =ls` prints `/bin/ls`), and when no such command exists it is a **fatal error
