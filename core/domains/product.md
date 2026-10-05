@@ -42,3 +42,31 @@ pays full price. It loses every urgency contest, so by default it is scheduled l
 that runs ahead of it. A hard external deadline is the routine exception. **Where it is wrong:** when
 the lever's payoff is uncertain or slow to build, putting deadline work behind it costs more than it
 saves.
+
+## A published claim is a dependency of the code that makes it true
+
+**A product's published claims (its privacy policy, its terms, what it says it collects, keeps or
+shares, which third parties it uses) are true because of specific code and configuration.** A change
+to that code can make a claim false while every test still passes, and the person writing the change
+is rarely the person who owns the claim. So the dependency is declared where the code lives:
+
+- **The repository declares its sensitive surfaces.** For each: the paths, the change patterns (a new
+  data field, a new third-party script or processor, a new outbound destination, a retention setting),
+  the claim it supports, and where that claim is tracked.
+- **A change that touches a surface gets a comment on its pull request**, naming each claim to re-read
+  and linking where it is tracked. The author updates the claim, or says on the pull request why it
+  still holds. `bin/claim-check` does this from the pull request's diff against its base; wire it as a
+  pull-request step that posts the comment through the forge's API with the job's own token, and
+  vendor the script at a pinned commit rather than fetching it at run time.
+- **It flags; it blocks only by the claim owner's decision.** A blocking check that raises false
+  alarms gets switched off. Start with flags only, measure them, and block only a short named list once
+  the flags have proved accurate.
+- **"Could not evaluate" is reported, never passed.** A missing declaration, an unreadable diff, or a
+  binary file in a checked path says so in the same comment.
+
+**Scope: claims made to people outside the team (users, customers, regulators) that code can
+falsify.** **Where it is wrong:** a claim no code touches (an address, a support promise) needs a
+calendar review, not a diff check. **The mirror:** a REMOVED line falsifies a claim as surely as an
+added one (a deleted retention limit or consent check), so a surface declares both directions. **The
+claims, their wording and the register belong to whoever owns them**, not to the code repository: the
+check needs only the paths, the patterns and a link.

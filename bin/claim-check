@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""claim-check — flag a change that may make a published claim untrue.
+
+  claim-check --base REF [--head REF] [--declaration FILE] [--comment-out FILE] [--json]
+
+A product publishes claims about itself: what data it collects, who it shares data with, how long it
+keeps it, which third parties run in a visitor's browser. Each claim is true because of some code or
+configuration, and a change to that code can make the claim false while every test still passes.
+This check makes the dependency explicit. The repository DECLARES its sensitive surfaces, each naming
+the claim it supports and the register row where that claim is tracked. A change that touches one is
+reported as a comment listing the claims to re-read (core product.md → "A published claim is a
+dependency of the code that makes it true").
+
+It FLAGS. It never fails the build unless the declaration sets "block": true, which is a decision for
+the claim's owner, not for this tool. It never reports clean when it could not look: a missing or
+invalid declaration, a diff git refuses, or a binary file it was asked to read is reported as NOT
+EVALUATED, with the reason, in the same comment.
+
+The change examined is HEAD's change since its merge base with BASE (`git diff BASE...HEAD`), which
+is what a pull request shows.
+
+DECLARATION (JSON; default .claims/surfaces.json in the repository):
+  {"version": 1,
+   "title":  "legal review: these claims may need updating",       optional
+   "footer": "A flag, not a block.",                                 optional
+   "block":  false,                                                  optional, default false
+   "surfaces": [
+     {"id": "tracking-pixel",                                        unique, [a-z0-9-]
+      "claim": "We do not embed third-party advertising trackers.",
+      "register": "https://forge.example/org/register#tracking",     where the claim is tracked
+      "paths":   ["web/**/*.html", "web/src/**"],                    optional; default: every file
+      "exclude": ["**/*.spec.ts", "**/tests/**"],                     optional: paths taken back out
+      "added":   ["<script[^>]+src=\\"https?://", "fbq\\\\("],        optional: regexes over ADDED lines
+      "removed": ["RETENTION_DAYS"],                                 optional: regexes over REMOVED lines
+      "ignore":  ["https?://cdn\\\\.example\\\\.com/"]}]}              optional: a line matching one is skipped
+  A surface with neither "added" nor "removed" matches ANY change to a file under its paths.
+  Globs: `**` crosses directories, `*` and `?` do not.
+
+Output: the comment body (Markdown) is written to --comment-out when there is something to say
+(findings, or anything not evaluated), and the file is emptied when the change is clean. --json
+prints {"status": "clean" | "flagged" | "not-evaluated", "findings": [...], "not_evaluated": [...]}.
+Exit: 0 report produced (always, when not blocking) · 1 flagged and blocking · 2 not evaluated and
+blocking · 64 bad arguments.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+
+DEFAULT_DECLARATION = ".claims/surfaces.json"
+DEFAULT_TITLE = "legal review: these claims may need updating"
+STATUSES = ("clean", "flagged", "not-evaluated")
+ID_SHAPE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+SHOWN_PER_SURFACE = 10
+
+
+class NotEvaluated(Exception):
+    """The check could not look. Carries the reason; never becomes a clean result."""
+
+
+def glob_to_regex(glob):
+    out, i = [], 0
+    while i < len(glob):
+        if glob.startswith("**/", i):
+            out.append("(?:.*/)?"); i += 3
+        elif glob.startswith("**", i):
+            out.append(".*"); i += 2
+        elif glob[i] == "*":
+            out.append("[^/]*"); i += 1
+        elif glob[i] == "?":
+            out.append("[^/]"); i += 1
+        else:
+            out.append(re.escape(glob[i])); i += 1
+    return re.compile("^" + "".join(out) + "$")
+
+
+def load_declaration(path):
+    if not os.path.isfile(path):
+        raise NotEvaluated(f"no declaration at {path}: the repository has not declared its surfaces")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as e:
+        raise NotEvaluated(f"the declaration {path} is not readable JSON: {e}")
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise NotEvaluated(f"the declaration {path} must be an object with \"version\": 1")
+    surfaces = data.get("surfaces")
+    if not isinstance(surfaces, list) or not surfaces:
+        raise NotEvaluated(f"the declaration {path} lists no surfaces")
+    if not isinstance(data.get("block", False), bool):
+        raise NotEvaluated("\"block\" must be true or false")
+    seen, out = set(), []
+    for n, s in enumerate(surfaces, 1):
+        where = f"surface {n}"
+        if not isinstance(s, dict):
+            raise NotEvaluated(f"{where} is not an object")
+        sid = s.get("id")
+        if not isinstance(sid, str) or not ID_SHAPE.match(sid) or sid in seen:
+            raise NotEvaluated(f"{where}: \"id\" must be unique and shaped [a-z0-9-]")
+        seen.add(sid)
+        for key in ("claim", "register"):
+            if not isinstance(s.get(key), str) or not s[key].strip():
+                raise NotEvaluated(f"surface {sid}: \"{key}\" is required")
+        compiled = {}
+        for key in ("paths", "exclude", "added", "removed", "ignore"):
+            vals = s.get(key, [])
+            if not isinstance(vals, list) or not all(isinstance(v, str) and v for v in vals):
+                raise NotEvaluated(f"surface {sid}: \"{key}\" must be a list of non-empty strings")
+            try:
+                compiled[key] = [glob_to_regex(v) if key in ("paths", "exclude") else re.compile(v) for v in vals]
+            except re.error as e:
+                raise NotEvaluated(f"surface {sid}: \"{key}\" holds an invalid pattern: {e}")
+        out.append({"id": sid, "claim": s["claim"].strip(), "register": s["register"].strip(), **compiled})
+    return {"title": data.get("title") or DEFAULT_TITLE, "footer": data.get("footer") or "",
+            "block": data.get("block", False), "surfaces": out}
+
+
+def git(args):
+    r = subprocess.run(["git", "-c", "core.quotePath=false"] + args, capture_output=True, text=True,
+                       errors="replace")
+    if r.returncode != 0:
+        raise NotEvaluated(f"git {' '.join(args[:3])} … failed: {r.stderr.strip() or r.returncode}")
+    return r.stdout
+
+
+def changed_files(base, head):
+    """→ [(path, is_binary)] from --numstat -z, renames shown as delete + add."""
+    raw = git(["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", f"{base}...{head}"])
+    out = []
+    for rec in raw.split("\0"):
+        if not rec:
+            continue
+        added, deleted, path = rec.split("\t", 2)
+        out.append((path, added == "-" and deleted == "-"))
+    return out
+
+
+HUNK = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def changed_lines(base, head, path):
+    """→ [(side, line_number, text)]: side '+' with the new line number, '-' with the old one."""
+    raw = git(["diff", "--unified=0", "--no-color", "--no-ext-diff", "--no-renames",
+               f"{base}...{head}", "--", path])
+    out, old, new, in_hunk = [], 0, 0, False
+    for line in raw.splitlines():
+        m = HUNK.match(line)
+        if m:
+            old, new, in_hunk = int(m.group(1)), int(m.group(2)), True
+            continue
+        if not in_hunk or line.startswith("\\"):
+            continue
+        if line.startswith("+"):
+            out.append(("+", new, line[1:])); new += 1
+        elif line.startswith("-"):
+            out.append(("-", old, line[1:])); old += 1
+    return out
+
+
+def evaluate(decl, base, head):
+    findings, not_evaluated = [], []
+    files = changed_files(base, head)
+    for s in decl["surfaces"]:
+        in_scope = [(p, b) for p, b in files if (not s["paths"] or any(r.match(p) for r in s["paths"]))
+                    and not any(r.match(p) for r in s["exclude"])]
+        wants_lines = bool(s["added"] or s["removed"])
+        for path, binary in in_scope:
+            if not wants_lines:
+                findings.append({"surface": s["id"], "file": path, "line": None, "side": None, "text": ""})
+                continue
+            if binary:
+                not_evaluated.append(f"{path} is binary, so surface {s['id']} could not read its lines")
+                continue
+            for side, num, text in changed_lines(base, head, path):
+                patterns = s["added"] if side == "+" else s["removed"]
+                if any(r.search(text) for r in patterns) and not any(r.search(text) for r in s["ignore"]):
+                    findings.append({"surface": s["id"], "file": path, "line": num, "side": side,
+                                     "text": text.strip()})
+    return findings, not_evaluated
+
+
+def cell(text, limit=80):
+    text = text.replace("`", "'").replace("|", "\\|").replace("\n", " ")
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def comment(decl, findings, not_evaluated):
+    lines = [f"### ⚖️ {decl['title'] if decl else DEFAULT_TITLE}", ""]
+    if findings:
+        lines += ["This change touches code that a published claim depends on. Re-read each claim below:",
+                  "update it, or say on this pull request why it still holds.", "",
+                  "| Claim | Tracked at | In this change |", "|---|---|---|"]
+        by_surface = {}
+        for f in findings:
+            by_surface.setdefault(f["surface"], []).append(f)
+        for s in decl["surfaces"]:
+            hits = by_surface.get(s["id"])
+            if not hits:
+                continue
+            where = []
+            for f in hits[:SHOWN_PER_SURFACE]:
+                if f["line"] is None:
+                    where.append(f"`{cell(f['file'], 60)}` changed")
+                else:
+                    verb = "added" if f["side"] == "+" else "removed"
+                    where.append(f"`{cell(f['file'], 60)}:{f['line']}` {verb} `{cell(f['text'], 60)}`")
+            if len(hits) > SHOWN_PER_SURFACE:
+                where.append(f"and {len(hits) - SHOWN_PER_SURFACE} more")
+            lines.append(f"| {cell(s['claim'], 200)} | [{s['id']}]({s['register']}) | {'<br>'.join(where)} |")
+        lines.append("")
+    if not_evaluated:
+        lines += ["**Not evaluated** (this is not a clean result):", ""]
+        lines += [f"- {cell(r, 300)}" for r in not_evaluated]
+        lines.append("")
+    if decl and decl["footer"]:
+        lines.append(f"<sub>{decl['footer']}</sub>")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--base")
+    ap.add_argument("--head", default="HEAD")
+    ap.add_argument("--declaration", default=DEFAULT_DECLARATION)
+    ap.add_argument("--comment-out")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("-h", "--help", action="store_true")
+    try:
+        a = ap.parse_args()
+    except SystemExit:
+        return 64
+    if a.help:
+        print(__doc__)
+        return 0
+    if not a.base:
+        print("error: --base is required (the branch the change will merge into)", file=sys.stderr)
+        return 64
+
+    decl, findings, not_evaluated = None, [], []
+    try:
+        decl = load_declaration(a.declaration)
+        findings, not_evaluated = evaluate(decl, a.base, a.head)
+    except NotEvaluated as e:
+        not_evaluated = [str(e)]
+    except Exception as e:  # an unforeseen failure is reported, never passed as clean
+        not_evaluated = [f"internal error: {type(e).__name__}: {e}"]
+
+    status = "flagged" if findings else ("not-evaluated" if not_evaluated else "clean")
+    assert status in STATUSES
+    body = comment(decl, findings, not_evaluated) if status != "clean" else ""
+    if a.comment_out:
+        with open(a.comment_out, "w", encoding="utf-8") as fh:
+            fh.write(body)
+    if a.json:
+        print(json.dumps({"status": status, "findings": findings, "not_evaluated": not_evaluated,
+                          "block": bool(decl and decl["block"])}, indent=2))
+    else:
+        print(f"claim-check: {status} — {len(findings)} finding(s), {len(not_evaluated)} not evaluated")
+        if body and not a.comment_out:
+            print(body)
+
+    blocking = bool(decl and decl["block"])
+    if blocking and status == "flagged":
+        return 1
+    if blocking and status == "not-evaluated":
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
