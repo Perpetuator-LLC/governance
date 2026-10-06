@@ -134,6 +134,19 @@ backslashes. Measured: a credential mint handed over as a `/tmp` `&&` chain — 
 to the secret store out of band, then re-run; the second `ssh-keygen` overwrote the deploy key
 (`Overwrite (y/n)?`), so the public key already pasted into the forge no longer matched the store.
 
+**Where a one-click job runner serves the host, the step is a job on it, not text to copy.** When the
+organisation runs a runner a person approves in one click (it executes a committed script on that host
+and posts the output back), a human command step is filed there: what it does, what it unlocks, the
+prompts the person will see, and the undo. Text to copy is the fallback for a host no runner serves.
+Measured: two store commands embedded as a stringified list in a dashboard card sat unrun; the same
+step filed as a runner job was run within a minute, and its receipt posted itself.
+- **Scope:** non-interactive commands, and interactive ones the runner supports (a browser sign-in, a
+  TTY). Secrets go through the runner's hidden prompt, never the command text.
+- **Not a job:** a click in a web interface (merging a pull request, approving a thread), which stays a
+  live link; a step the runner refuses by design (network control); a host with no runner.
+- **The mirror:** a step where the person must type a decision mid-run needs the runner's interactive
+  mode, or it stays a manual step. Output read after the fact is fine either way.
+
 **The script file itself must be idempotent** — not just "some future automation." Re-running from
 any partial state converges on the same secret material / the same end-state, and **does not mint a
 second key, password, or token.** `ssh-keygen`/`openssl`/store writes that clobber on rerun are
