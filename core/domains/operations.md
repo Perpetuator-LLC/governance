@@ -311,6 +311,12 @@ the routine. The fix is a change to the routine, not more effort in the next pas
 - **A ref is a LINK — a forge URL — never bare.** A branch or tag written as plain text renders as
   a dead file path; issues, PRs and commits are the same. The reader cannot click an identifier,
   and cannot tell a live object from one that was never created.
+- **A LIST of refs into ANOTHER repository qualifies every element.** `<other-repo>#413 #415 #417` reads to a person as three
+  refs in that repository, and to the forge as one: the rest link in the repository the text lives in.
+  That is worse than a bare ref, because those numbers usually exist locally too, so the reader is
+  sent to a real, unrelated object, and the cross-reference notice lands on it. The writer qualifies
+  the first and lets the rest ride, which is why this is the shape that recurs. Refs into the
+  repository the text lives in need no qualifier, alone or listed.
 - ⚠️ **Never fabricate a ref.** Quote a number or SHA only after the tool that mints it answered in
   THIS turn. A plausible-looking issue number or short SHA is worse than a bare one: correct in shape,
   rendered as a link, and therefore trusted — resolving either to nothing or to a real and

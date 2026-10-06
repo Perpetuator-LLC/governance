@@ -990,6 +990,34 @@ edge or load balancer with a fixed timeout.
   the service that serves it (*A done-when names the COMMITTED SURFACE*). A target with no version
   endpoint cannot be observed, and adding one is part of the pipeline, not a follow-up.
 
+## A "done" marker is written when the thing is up, and cleared when an attempt begins
+
+**A marker that records "this step succeeded" is read later as a fact, so when it is written and when
+it is cleared decide what it can mean.** Two halves, each a measured failure:
+
+- **Write it when the target is serving and healthy, before any step that only VERIFIES it.**
+  Written after such a receipt, a receipt that fails on every run makes the marker unwritable: the
+  next catch-up sees "not deployed", redeploys identical code and recreates every container, and the
+  loop has no error state. Measured: a stage database was recreated 23–24 times every 6 hours, on
+  the catch-up timer's cadence, for about six days; it was found by its consequences, not by an
+  alarm. **A catch-up that finds the target serving the target version with a receipt failing
+  reports which receipt failed, and stops.** Re-applying is the answer to drift, never to a failing
+  receipt.
+- **Clear it when an attempt that changes the thing begins.** A marker written only on success and
+  tested only for existence cannot tell *"it succeeded"* from *"it succeeded once, and the retry
+  failed"*: the old marker survives the failed attempt, and the next gate reads it as a pass, failing
+  open toward the dangerous step. Measured, in review before it ran: a cutover gated on a
+  restore-drill marker that nothing cleared, so a re-run whose drill failed would still have cut
+  over. A run that only checks, and changes nothing, leaves the marker alone.
+- **Prove the gate on both sides:** a failed attempt leaves it closed (the next step refuses), and a
+  successful one leaves it open.
+- **Scope:** a marker consumed as a gate or as an idempotence check. A step that CONSTITUTES the
+  deploy (a migration that must apply before traffic is served) is not a receipt: success is
+  recorded after it. The deciding question is whether the target already serves the new version
+  when the step runs. An append-only ledger of attempts keeps its old entries, and its reader
+  selects the newest. A marker whose content the gate reads and compares (a version, a timestamp)
+  can already tell a stale pass from a fresh one; reading it is the fix.
+
 ## "Merged" is not "the reviewed code merged" — a verdict pins a HEAD, a click picks a MOMENT
 
 **A review verdict names a commit. A merge names an instant. Nothing in a forge binds the two.**
@@ -1915,6 +1943,16 @@ accident — so the defect cannot appear in them. Two properties that do it:
   asserts that it REACHED the decision point**, with one positive marker, before any negative
   assertion is believed. *Scope:* when the precondition's failure is itself the case under test, that
   stub fails, and the marker is the early exit.
+- **Filtered out — the control lacks what the subject SELECTS on, so it is never judged.** Most
+  checkers filter their input before judging it: by type, status, extension, a frontmatter key. A
+  known-bad record built without the fields that filter admits is skipped, and a skipped control
+  returns the clean result, **identical to a real pass**. Measured: a conformance checker read 0
+  findings over 107 records; the three broken records written to test that zero lacked the two keys
+  it filters on, all three were skipped, and the run stayed 0. With the keys present it named both
+  offenders and exited 1. **So the control must fail as designed AND be seen to enter**: counted
+  among the records examined, named in the output, or absent from an explicit "skipped" list.
+  *Scope:* a subject that selects its input before judging it. A linter that judges every file it is
+  handed has no admission step, and there failing as designed is the whole assertion.
 - **Perturbed unlike the real mechanism — same visible result, different MECHANICS.** A fixture that
   stands in for something that mutates the system under test (replacing a file, restarting a process,
   rotating a credential, swapping a link) must reproduce how the mutation happens, not only what it
@@ -2718,6 +2756,26 @@ signal on its **absolute** value, and keep the ratio only for detecting the onse
 wrong:** a seasonal or traffic-driven series, where the absolute number means nothing and an absolute
 floor pages every quiet weekend. The deciding question is whether **zero is a legitimate value** for
 the series. If it is not, zero must trip an absolute rule.
+
+## A ticket looked up by an alert's NAME is the last incident of that name, not this one
+
+**An alert is not an incident, and a map from alert name to ticket is a map to the most recent
+incident under that name.** When a recurring alert has a known benign cause, the lookup succeeds and
+returns that cause, so a new and different cause firing under the same name is triaged as the old
+one. The successful lookup is what hides it. Measured: a disk-space alert had fired many times from
+one developer machine's read-only disk image, a known false positive with a ticket; it then fired for
+a production host filling at 1.79 GiB a day with 2.69 GiB left, and the ledger returned the
+disk-image ticket.
+
+- **A stored ticket is a hypothesis, tested against this firing's own labels** (host, filesystem,
+  rate) before it is reused. A row earns reuse only when its identifying labels match, and a row
+  keyed on the name alone says so.
+- **A closed ticket is never the answer to a new firing.** A ledger that appends and returns its
+  first match keeps handing back the closed predecessor; it must return the newest open match, or
+  nothing.
+- **Scope:** any alert-to-ticket or alert-to-runbook mapping used for deduplication or triage. An
+  alert whose name already identifies one resource (one host, one job) is keyed narrowly enough; the
+  rule binds alerts that span many resources under one name.
 
 ## A test of an UNATTENDED job, run from an interactive session, borrows that session's credentials
 
