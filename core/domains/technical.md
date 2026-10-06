@@ -1075,6 +1075,24 @@ action; and **a merge-ready claim on a head with zero runs is void**, never "gre
 that a run EXISTS for the exact head before assessing its conclusion; treat *no run* as a third
 state alongside passed and failed, and say which of the three you observed.
 
+**A local run offered in place of a missing one runs the WORKFLOW's steps, through one entry point.**
+When a head has no run (no runner, or the run never started) and the claim offers local evidence
+instead, that run executes the steps the workflow runs, through one committed entry point the workflow
+itself calls: each workflow step invokes `tests/ci.sh <step>`, and the claim runs `tests/ci.sh` whole.
+A step it cannot run here (no container runtime, a missing tool, a secret CI holds and you do not) is
+reported **NOT RUN** and fails the run; it is never left off the list. A claim listing the suites its
+author remembered reads like a CI result, and it is honest about every step it names, so review does
+not catch the step it omits. Measured: four successive claims on one pull request cited the unit-test
+runner while the workflow's shell test file had been failing for five commits; nothing caught it until
+someone ran the workflow's steps by hand.
+- **Scope:** the stand-in only. A head whose run exists and passed has its evidence; the entry point is
+  not an extra gate.
+- **The mirror, a local run that does MORE than CI** (probes needing a store or a binary CI lacks): fine,
+  often better, but listed apart from the entry point, so the claim never implies CI covers them. The
+  entry point holds exactly CI's steps.
+- **A step CI cannot run either** (it needs a secret CI does not hold) stays out of the entry point.
+  Listed there, it makes every local run look worse than CI and teaches readers to ignore NOT RUN.
+
 **A green that queries a live feed ages.** Gates that consult an external, changing source — a
 dependency or vulnerability audit, a licence database — can pass and then fail on the same commit
 minutes apart, so a green observed earlier is not a current green. For those gates, the merge-ready
