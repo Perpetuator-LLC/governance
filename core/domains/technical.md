@@ -2271,6 +2271,27 @@ not there.
 **The one-minute test for any self-updating tool:** what does its self-check compare, and could the
 two sides ever be the same file?
 
+## A command inside an instruction file is code no test runs
+
+**Skills, routines and runbooks embed runnable commands in prose, and no suite executes them, so a
+change aimed at something else breaks them silently.** A change that touches such a command, or the
+tool it calls, runs it or at least checks it in the same change.
+
+- **A redaction pass rewrites names in prose, never inside a command or a path.** A name replaced by a
+  phrase with spaces turns a path into a word-split command, and the failure can read as a legitimate
+  empty result. Move command-bearing text to the private layer rather than redacting it.
+- **An interface change greps every caller in every layer**: instruction files and scheduled routines,
+  not only scripts. `bin/prose-command-check` checks the cheapest part mechanically: every
+  `bin/<tool> --flag` named in a fenced shell block or in inline code must still appear in that tool's
+  source.
+- Measured: a tool dropped a flag, its own tests were updated, and two nightly routines still called the
+  old flag in their text; separately, a redaction pass broke a skill's lookup command for weeks, and the
+  failure read as "nothing found".
+- **Scope:** commands a reader or an agent runs from the text. A command quoted as an example of what
+  not to do, or as a historical exhibit, is prose: put it in a non-shell fence, so a checker does not
+  hold it to the tool's current interface. **The mirror:** the checker sees a flag that is gone, not a
+  newly required flag the text omits. A change that adds one still greps its callers.
+
 ### Committed is not running
 
 **A change that adds an observer (a monitor, an alert, a scheduled check) delivers it running, or ships
