@@ -2935,6 +2935,29 @@ named; one prompt is then the expected cost, and the rule is only not to re-run 
 tool already granted full-disk access raises no prompt and reads everything, the same overreach
 without the warning. It does not license the wide scan; it removes the only signal that one happened.
 
+## A local run that needs no credential must not be able to reach one
+
+**Container CLIs, package managers and cloud SDKs load the user's own config, and when that config
+names a credential store (an OS keychain helper) the tool may ask it for every saved login, including
+ones the run never uses.** On a store gated by the person's presence, each ask is a dialog on their
+screen: once per container, per run, per agent. Measured: a machine's local CI raised repeated keychain
+dialogs for a registry no step ever contacted; with a credential-free config, the same 6 jobs made 0
+helper calls.
+
+- **Point the tool at an empty, credential-free config for that run** (for Docker,
+  `DOCKER_CONFIG=<an empty directory>`), and pin the daemon endpoint from the user's current context
+  first, because the empty config has none. Put it in a **committed wrapper**, so no invocation can
+  forget it, and have the wrapper refuse a config that names a credential helper.
+- **Never fix it with "Always Allow".** That turns a per-use presence gate into a standing read.
+- **Prove it with a positive control:** put a logging stand-in for the helper first on `PATH` (it records
+  the call and answers "not found" without touching the store). A lookup under the normal config must
+  reach it, and the real run must then log zero calls. Without the control, a zero means nothing.
+- **Scope:** runs that pull or push nothing private: local CI with pulls disabled, offline actions,
+  builds from cached images. **The mirror:** a step that truly needs a registry login is named on its
+  ticket and gets one approved prompt in its own invocation, never the wrapper. And an *unattended* job
+  that needs a credential must not depend on a presence-gated store at all (*A test of an UNATTENDED
+  job, run from an interactive session, borrows that session's credentials*).
+
 ## A fleet audit measures against the FORGE, never against `refs/remotes/*` as found
 
 **`origin/<default>` is a local file.** It is a pointer cached by the last fetch, and its *spelling*
