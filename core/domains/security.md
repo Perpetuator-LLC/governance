@@ -521,6 +521,30 @@ encoded form. Measured: a widely deployed authorization server accepted both `%4
 - **Mirror:** a pattern that is too narrow (an exact port, for an app that picks an ephemeral one) fails
   at sign-in, loudly. Only the too-wide pattern fails silently, and that is the one this rule prevents.
 
+## A credential your code sends over HTTP is pinned to its hosts, and a redirect may carry it elsewhere
+
+**Some HTTP clients copy a header you set yourself, `Authorization` included, onto a redirect to any
+host.** Measured: Python's `urllib` does this with every header added by `add_header`. A recording
+download whose URL answered 302 to a CDN delivered an account-wide bearer token to that second origin,
+and the script reported success. Clients differ by library and version: current `curl` strips it when
+the host changes (measured), `requests` documents the same, and `urllib` keeps a header off every
+redirect only when it is set with `add_unredirected_header`. Find out what yours does; never assume
+either way.
+
+- **Pin before sending.** Refuse a target that is not `https` or whose host is not on the service's own
+  list. A URL copied from an API answer or a tool result is input, and a wrong or injected one otherwise
+  receives the credential.
+- **Drop the credential when a redirect leaves the pinned hosts,** and keep it on a redirect within
+  them. A signed URL carries its own authorization and needs no token.
+- **Prove it with two local origins.** The first redirects to the second, which logs what it receives.
+  Pass only when the second origin sees no credential **and** a redirect within the pinned hosts still
+  succeeds. Stripping on every redirect breaks the service in the mirror direction, and a test of only
+  the stripping cannot see that.
+- **Scope:** a credential your own code attaches (a header, basic auth, a session cookie) to a request
+  that follows redirects. A 307 or 308 re-sends the body too, so a credential in a POST body is covered.
+  Outside it: a client set never to follow redirects, and a credential the protocol binds to the
+  destination (mutual TLS, a request signature over the host).
+
 ## Security review: identify → ticket → hand off
 
 **A security reviewer's deliverable is a triaged, verified finding that has REACHED THE WORK
