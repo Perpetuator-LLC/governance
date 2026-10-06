@@ -1397,6 +1397,14 @@ credentials had lived in an ignored file there. The stack's own stop command no 
 data volume was orphaned with a password that matched nothing on disk. **The mirror:** a job scheduled
 to start there later passes a live-process check, so look at the schedulers too.
 
+**Changing the tree under a running suite is the quieter form.** A test run reads files as it reaches
+them, so a merge, checkout, reset or timed pull into its worktree mid-run yields a verdict about no
+single commit, and nothing reports it. Run a long suite against a frozen copy of the commit (a
+detached worktree at that SHA, or an export when the suite reads no git history), or leave the tree
+alone until it finishes. Measured: a merge into a worktree while its full suite ran swapped the gate
+under test halfway through, and the run had to be stopped and repeated on a snapshot. **Where it is
+wrong:** a snapshot tests the commit; when the change under test is uncommitted, it is the wrong tree.
+
 ## Agent attribution lives in the BODY — the author field is one shared identity
 
 **Write side.** Every agent-authored commit, PR body, review and forge comment carries its own
