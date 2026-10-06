@@ -131,20 +131,24 @@ echo "governance reconcile — second run is a noop"
 snap "$R" "$H" > "$TMP/state.before"
 rc="$(gov reconcile --home "$H")"
 check "second reconcile exits 0" "[ '$rc' = '0' ]"
-check "…every line ok" "[ \"\$(count_status ok)\" = '9' ] && [ \"\$(count_status fixed)\" = '0' ] && [ \"\$(count_status refused)\" = '0' ]"
+# Eleven items: the nine below plus the two render sources (core, adapter), which this fixture does not
+# version, so each reads `ok — merged state not checked` (#101), visible, never silently skipped.
+check "…every line ok" "[ \"\$(count_status ok)\" = '11' ] && [ \"\$(count_status fixed)\" = '0' ] && [ \"\$(count_status refused)\" = '0' ]"
+check "…an unversioned source says its merged state was NOT checked" \
+  "[ \"\$(grep -c '^ok *source .*merged state not checked: not in a git repository' '$TMP/stdout')\" = '2' ]"
 snap "$R" "$H" > "$TMP/state.after"
 check "…zero writes: no backup added, every file's mtime and bytes unchanged under the root and the home" \
   "[ \"\$(backups '$H')\" = '1' ] && cmp -s '$TMP/state.before' '$TMP/state.after'"
 rc="$(gov reconcile --home "$H" --json)"
-check "--json reports the same nine items as ok" \
-  "[ '$rc' = '0' ] && python3 -c \"import json,sys; r=json.load(open('$TMP/stdout'))['results']; assert len(r)==9 and all(x['status']=='ok' for x in r)\" 2>/dev/null"
+check "--json reports the same eleven items as ok" \
+  "[ '$rc' = '0' ] && python3 -c \"import json,sys; r=json.load(open('$TMP/stdout'))['results']; assert len(r)==11 and all(x['status']=='ok' for x in r)\" 2>/dev/null"
 
 echo "governance reconcile — repairs one item, leaves the rest"
 rm "$CL/GOVERNANCE.md"
 snap "$R" "$H" > "$TMP/state.before"
 rc="$(gov reconcile --home "$H")"
 check "a deleted member GOVERNANCE.md ⇒ that item fixed, exit 0" "[ '$rc' = '0' ] && status_of fixed 'client-vault/GOVERNANCE.md'"
-check "…and only that item: eight ok, one fixed" "[ \"\$(count_status ok)\" = '8' ] && [ \"\$(count_status fixed)\" = '1' ]"
+check "…and only that item: ten ok, one fixed" "[ \"\$(count_status ok)\" = '10' ] && [ \"\$(count_status fixed)\" = '1' ]"
 snap "$R" "$H" > "$TMP/state.after"
 check "…every other file untouched (mtime and bytes)" \
   "[ \"\$(diff '$TMP/state.before' '$TMP/state.after' | grep -c '^[<>]' )\" = '1' ]"
@@ -242,6 +246,67 @@ check "…and the run after that is all ok with no second backup" \
   "[ '$rc' = '0' ] && [ \"\$(count_status fixed)\" = '0' ] && [ \"\$(backups '$H2')\" = '1' ]"
 rc="$(gov install --home "$H2" --repo "$C" --adapter "$ORG/.governance" --adapter "$C" --write-manifest)"
 check "--write-manifest with two adapters is refused (exit 2)" "[ '$rc' = '2' ]"
+
+echo "governance reconcile — a render source must be at merged canon (#101)"
+# A render from a checkout BEHIND its origin omits merged rules; one AHEAD, or dirty, publishes unmerged
+# ones. Both have happened (21 hours of stale rules once). Each case builds the state, then requires the
+# verdict, and the first case is the control: in sync, it renders.
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+G="$TMP/git"; mkdir -p "$G"
+mkrepo() { # mkrepo <name> <populate-cmd>: a bare origin and a clone of it holding one pushed commit
+  git init -q --bare -b main "$G/$1.git"; git clone -q "$G/$1.git" "$G/$1" 2>/dev/null
+  ( cd "$G/$1" && eval "$2" && git add -A && git commit -qm base --no-gpg-sign && git push -q origin main ) >/dev/null 2>&1
+  git -C "$G/$1" remote set-head origin main >/dev/null 2>&1
+}
+mkrepo core 'mkdir -p core/domains hooks settings && echo "# core rules" > core/AGENTS.md && echo "# sec" > core/domains/security.md && echo "echo gate" > hooks/gate.sh && echo "{\"permissions\": {\"deny\": [\"Bash(rm -rf *)\"]}}" > settings/claude.json'
+mkrepo vault 'mkdir -p .obsidian .governance && echo "# org rules" > .governance/AGENTS.md && echo note > note.md'
+H3="$TMP/home3"; mkdir -p "$H3/.claude" "$H3/.governance"
+python3 - "$H3/.governance/manifest.json" "$G/core" "$G/vault" "$H3" <<'PY'
+import json, sys
+p, core, vault, home = sys.argv[1:]
+json.dump({"version": 1, "core": core, "home": home, "harnesses": ["claude"], "local": None,
+           "adapter": {"vault": vault, "path": vault + "/.governance"},
+           "vaults": [{"name": "vault", "path": vault, "role": "adapter"}]}, open(p, "w"), indent=2)
+PY
+rc="$(gov reconcile --home "$H3")"
+check "in sync with origin: exit 0, both sources at merged canon, the home installed (the control)" \
+  "[ '$rc' = '0' ] && [ \"\$(grep -c '^ok *source .*at merged canon (origin/main @' '$TMP/stdout')\" = '2' ] && status_of fixed \"$H3\""
+# BEHIND: a merged rule lands on origin from elsewhere; this checkout has fetched but not pulled it.
+git clone -q "$G/core.git" "$G/core-peer" 2>/dev/null
+( cd "$G/core-peer" && echo "# core rules + a merged rule" > core/AGENTS.md && git commit -qam merged --no-gpg-sign && git push -q origin main ) >/dev/null 2>&1
+git -C "$G/core" fetch -q origin
+snap "$H3" > "$TMP/h3.before"
+rc="$(gov reconcile --home "$H3")"
+snap "$H3" > "$TMP/h3.after"
+check "core BEHIND origin: exit 1, its source refused as omitting merged canon, the home NOT installed, nothing written" \
+  "[ '$rc' = '1' ] && grep -q '^refused *source .*core.* 1 commit(s) on origin/main touching it are not here: a render would omit merged canon' '$TMP/stdout' && status_of refused \"$H3\" && cmp -s '$TMP/h3.before' '$TMP/h3.after'"
+git -C "$G/core" pull -q --ff-only origin main >/dev/null 2>&1
+rc="$(gov reconcile --home "$H3")"
+check "…after a pull: exit 0 and the merged rule is rendered" \
+  "[ '$rc' = '0' ] && grep -q 'a merged rule' '$H3/.claude/CLAUDE.md'"
+# AHEAD: a local commit to the core that origin has not merged.
+( cd "$G/core" && echo "# draft" >> core/domains/security.md && git commit -qam draft --no-gpg-sign ) >/dev/null 2>&1
+rc="$(gov reconcile --home "$H3")"
+check "core AHEAD of origin: exit 1, refused as publishing unmerged canon" \
+  "[ '$rc' = '1' ] && grep -q '^refused *source .*core.* 1 commit(s) touching it are not on origin/main: a render would publish unmerged canon' '$TMP/stdout'"
+rc="$(gov reconcile --home "$H3" --allow-unmerged)"
+check "…--allow-unmerged renders anyway and says so on the source line" \
+  "[ '$rc' = '0' ] && grep -q '^ok *source .*UNMERGED, rendered anyway by --allow-unmerged' '$TMP/stdout' && grep -q '# draft' '$H3/.claude/governance/security.md'"
+( cd "$G/core" && git reset -q --keep origin/main ) >/dev/null 2>&1
+# DIRTY adapter subtree: an untracked file inside the layer counts.
+echo "# half-written" > "$G/vault/.governance/new-rule.md"
+rc="$(gov reconcile --home "$H3")"
+check "an untracked file inside the adapter subtree: exit 1, refused as uncommitted" \
+  "[ '$rc' = '1' ] && grep -q '^refused *source .*vault/.governance.* 1 uncommitted change(s) in it' '$TMP/stdout'"
+rm "$G/vault/.governance/new-rule.md"
+# The mirrors that must stay quiet: what is OUTSIDE the source is not the source.
+echo "edited" >> "$G/vault/note.md"
+( cd "$G/vault" && echo more > note2.md && git add note2.md && git commit -qm "notes only" --no-gpg-sign ) >/dev/null 2>&1
+mkdir -p "$G/core/.claude" && echo x > "$G/core/.claude/state.json"
+rc="$(gov reconcile --home "$H3")"
+check "a vault note edited, a notes-only commit ahead, and an untracked dir in the core: none of them refuse" \
+  "[ '$rc' = '0' ] && [ \"\$(grep -c '^ok *source .*at merged canon' '$TMP/stdout')\" = '2' ]"
+# Outside git entirely: never refused, and says it was not checked (the fixture above already shows it).
 
 echo
 echo "  $pass passed, $fail failed"

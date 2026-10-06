@@ -8,7 +8,7 @@
   governance check    --home DIR
   governance restore  --home DIR [--backup TIMESTAMP]
   governance discover --root DIR [--home DIR] [--max-depth N] [--write]
-  governance reconcile --home DIR [--manifest FILE] [--dry-run] [--json]
+  governance reconcile --home DIR [--manifest FILE] [--dry-run] [--json] [--allow-unmerged]
   governance scaffold --template NAME --out DIR [--name NAME] [--dry-run] [--json]
 
 RENDER. Layers are concatenated CORE → ADAPTER(s), in the order given → LOCAL, so on conflict the later
@@ -79,6 +79,13 @@ RECONCILE reads the manifest and ensures, in order, reporting one line per item 
 nothing written) / `fixed` (changed) / `refused` (cannot be fixed safely):
   a. adapter shape      <adapter>/AGENTS.md exists (created from adapter-template/ if not); optional parts
                         (skills/ hooks/ agents/ bin/ domains/ settings/ scheduled-tasks/), if present, are dirs
+  a2. sources           core and adapter each match their repository's origin/<default> by CONTENT: no
+                        commit ahead or behind that touches them, no uncommitted change in them (untracked
+                        files count inside a subtree source such as <vault>/.governance). A source that
+                        differs is `refused` and the home is not installed, because a render from it would
+                        publish unmerged canon or omit merged canon. Compared against the remote ref as of
+                        the last fetch, so fetch first. A source outside git, or with no origin default, is
+                        `ok — merged state not checked`. --allow-unmerged renders anyway, for a scratch home.
   b. home               the install for the manifest's harnesses, adapter and local — a noop when in state
   c. GOVERNANCE.md      in every vault: frontmatter keys type/canonical_home/adapter/role and a pointer
                         block between <!-- governance:begin --> and <!-- governance:end -->; nothing else
@@ -992,6 +999,54 @@ def cmd_discover(a):
 
 # --- reconcile ---------------------------------------------------------------------------------------
 
+def _git(cwd, *args):
+    import subprocess
+    return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
+
+
+def merged_canon(path):
+    """('merged' | 'unmerged' | 'unchecked', detail) for a render source against origin/<default>.
+
+    By CONTENT, both directions (#101): a commit that touches the source on one side and not the other
+    is unmerged whether HEAD is ahead (a render publishes unmerged canon) or behind (a render omits
+    merged canon), and so is an uncommitted change in it. A whole-repository source ignores untracked
+    files (editor state, tool caches); a subtree source is the layer itself, so untracked files in it
+    count."""
+    top = _git(path, "rev-parse", "--show-toplevel")
+    if top.returncode != 0:
+        return "unchecked", "not in a git repository"
+    top = top.stdout.strip()
+    rel = os.path.relpath(os.path.realpath(path), os.path.realpath(top))
+    ref = _git(top, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    base = ref.stdout.strip() if ref.returncode == 0 else ""
+    if not base:
+        for cand in ("origin/main", "origin/master"):
+            if _git(top, "rev-parse", "--verify", "-q", cand).returncode == 0:
+                base = cand
+                break
+    if not base:
+        return "unchecked", "the repository has no origin default branch"
+    at = _git(top, "rev-parse", "--short", base).stdout.strip()
+    spec = ["--", rel]
+    problems = []
+    if _git(top, "diff", "--quiet", base, "HEAD", *spec).returncode != 0:
+        counts = _git(top, "rev-list", "--left-right", "--count", f"{base}...HEAD", *spec).stdout.split()
+        behind, ahead = (int(counts[0]), int(counts[1])) if len(counts) == 2 else (0, 0)
+        if ahead:
+            problems.append(f"{ahead} commit(s) touching it are not on {base}: a render would publish unmerged canon")
+        if behind:
+            problems.append(f"{behind} commit(s) on {base} touching it are not here: a render would omit merged canon (pull)")
+        if not ahead and not behind:
+            problems.append(f"its content differs from {base}")
+    untracked = "--untracked-files=no" if rel == "." else "--untracked-files=normal"
+    dirty = [l for l in _git(top, "status", "--porcelain", untracked, *spec).stdout.splitlines() if l.strip()]
+    if dirty:
+        problems.append(f"{len(dirty)} uncommitted change(s) in it: a render would publish them")
+    if problems:
+        return "unmerged", "; ".join(problems) + f" (compared with {base} @ {at}, as fresh as the last fetch)"
+    return "merged", f"at merged canon ({base} @ {at})"
+
+
 def load_manifest(path):
     if not os.path.isfile(path):
         raise Refusal(f"no manifest at {path} — run discover --write first")
@@ -1135,12 +1190,27 @@ def cmd_reconcile(a):
         if os.path.lexists(p) and not os.path.isdir(p):
             report(f"adapter {p}", "refused", "exists but is not a directory")
 
+    # a2. render sources at merged canon (#101)
+    unmerged = False
+    for src in (m["core"], adapter):
+        state, detail = merged_canon(src)
+        if state == "unmerged" and not a.allow_unmerged:
+            report(f"source {src}", "refused", detail)
+            unmerged = True
+        elif state == "unmerged":
+            report(f"source {src}", "ok", f"UNMERGED, rendered anyway by --allow-unmerged: {detail}")
+        else:
+            report(f"source {src}", "ok", detail if state == "merged" else f"merged state not checked: {detail}")
+
     # b. home
     invocation = {"repo": m["core"], "adapters": [adapter], "local": m.get("local"), "harnesses": m["harnesses"]}
     if invocation["local"] and not os.path.isfile(invocation["local"]):
         invocation["local"] = None    # a local layer is optional; a missing one is not a fault
     if any(r["status"] == "refused" and r["item"].startswith("adapter ") for r in results):
         report(f"home {home}", "refused", "the adapter is not in shape")
+    elif unmerged:
+        report(f"home {home}", "refused", "a render source is not at merged canon (see `source` above): fetch "
+               "and pull, or commit and merge, then re-run; --allow-unmerged renders anyway, for a scratch home")
     else:
         rc, n = install_home(home, invocation, a.dry_run, say=lambda _line: None)
         if rc != 0:
@@ -1331,6 +1401,8 @@ def main():
     p.add_argument("--manifest", help="default: <home>/.governance/manifest.json")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--allow-unmerged", action="store_true",
+                   help="render even when a source differs from its origin default (a scratch home)")
     p = sub.add_parser("scaffold")
     p.add_argument("--template", required=True, help="a directory under templates/, e.g. stack-repo")
     p.add_argument("--out", required=True, help="the repository to scaffold into; created if missing")
