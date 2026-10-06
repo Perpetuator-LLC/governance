@@ -286,6 +286,14 @@ never argv. A ceremony that PRINTS a secret is worse than one that asks for it.
   `git ls-files`), or drop the diff flag so it lists files without printing them. **Scope:** the
   hazard is directory scope plus untracked or ignored files. A differ on named, tracked paths is fine,
   and so is `git diff`, which reads only what git tracks unless told otherwise.
+- **The same hazard lives in a tool you WRITE.** A script that walks a directory to rewrite or report
+  lines (a migration helper, a search-and-replace, a checker) reads the filesystem, so on an
+  operator's checkout it opens the ignored secrets files beside the code and echoes them in its diff
+  or its findings. Enumerate files from `git ls-files`, and report a finding as `file:line` plus a
+  kind, never the line's content. **Mirror:** a walker restricted to tracked files silently skips an
+  ignored file that *does* need the change (a local inventory, a variables file), so it must **name**
+  what it skipped without reading it. **Scope:** any walker whose output reaches a log or a person;
+  one that only counts matches still reads, but prints nothing to leak.
 
 ⚠️ **CODE that prints a secret — and the day its output gains a reader.** The rules above bind what an
 agent does and the commands it hands a human; they say nothing about **code that prints a secret at
@@ -479,6 +487,39 @@ and human accounts. A process acting on a person's behalf is a third: a delegate
   cannot.
 - **Where it is wrong:** if the platform cannot express a subset grant, record the gap; never fall back
   to a shared account.
+
+## A redirect URI's wildcard must never be able to reach the authority
+
+**Many authorization servers match a registered redirect URI as a string, after percent-decoding.** A
+wildcard placed where the authority (userinfo, host, port) is parsed then lets an encoded request move
+the host: `http://127.0.0.1:*` admits `http://127.0.0.1:1%40evil.example/cb`, which decodes to userinfo
+`127.0.0.1:1` and host `evil.example`. The raw `@` is often refused, and that refusal is what hides the
+encoded form. Measured: a widely deployed authorization server accepted both `%40` and `%2540` under
+`127.0.0.1:*`, and refused the raw `@`.
+
+- **Register exact redirect URIs.** For a native app's loopback redirect, register the exact path on
+  the IP literal (`http://127.0.0.1/callback`); RFC 8252 §7.3 requires the server to accept any port
+  there. Never `127.0.0.1:*`, and never `localhost`, which can resolve beyond loopback (§8.3).
+- **A path wildcard confines nothing below the origin.** Double-encoded dot-segments (`%252E%252E`)
+  survive the server's single decode and become `..` in the browser, so `https://vendor.example/cb/*`
+  admits every page on `vendor.example`. PKCE does not help: an attacker who starts the flow holds its
+  verifier, and a public client has no secret to stop them redeeming the code. Any page on that origin
+  that echoes or leaks its URL receives redeemable codes. Pin the exact callback.
+- **Prove it against the real server, not its documentation.** For every client, send the
+  authorization endpoint each of these and require it to be **refused**: the `%40` userinfo form, the
+  double-encoded `%2540`, the encoded dot-segments `%2F%2E%2E` and `%252E%252E`, and a raw `@` and `..`.
+  Beside them, one **accepted** control on the registered URI, so that a server refusing everything is
+  not read as a pass. A pattern tested only with the raw `@` has not been tested.
+- **Scope:** `http`/`https` redirect URIs, on any authorization server you register a client with. On a
+  server that parses and compares URI components strictly the rule costs nothing: exact URIs work and
+  the probes pass. It does not cover where the client sends a code after a legitimate redirect; that is
+  the client's own code.
+- **Where it needs adjusting:** a server that rejects other ports on a loopback literal (it predates
+  RFC 8252) gets a short list of exact ports the app tries in order, never a wildcard. A private-use
+  scheme (`com.example.app:/cb`) has no authority to move; its risk is another app claiming the scheme,
+  which this rule does not address.
+- **Mirror:** a pattern that is too narrow (an exact port, for an app that picks an ephemeral one) fails
+  at sign-in, loudly. Only the too-wide pattern fails silently, and that is the one this rule prevents.
 
 ## Security review: identify → ticket → hand off
 
