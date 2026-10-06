@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""prose-command-check — a flag named in an instruction file must still exist in the tool it calls.
+
+  prose-command-check [--bin DIR ...] PATH [PATH ...]
+
+Skills, routines and runbooks embed runnable commands in prose, and no suite executes them, so an
+interface change aimed at the tool breaks them silently: a tool moved, dropped `--fleet` for
+`--repos-from -`, had its own tests updated, and two nightly routines still called `--fleet` in their
+instruction text (core technical.md → "A command inside an instruction file is code no test runs").
+
+For every fenced shell block (```bash, sh, shell, zsh, console) and every inline code span outside
+a fence, in the Markdown under PATH, each call
+of the form `…bin/<tool> … --flag` is resolved against the --bin directories (default: this
+repository's bin/). Then:
+
+  STALE_FLAG     the tool is found and `--flag` appears nowhere in its source: removed or misspelt
+  (unresolved)   the tool is not in any --bin directory: counted on the summary line, never a finding,
+                 because it belongs to another repository this run was not given
+
+A flag is matched as the literal `--name` in the tool's source, which is how argparse, a shell `case`
+and a getopt string all spell it. `--help`/`-h` are always accepted.
+
+Exit: 0 no stale flag · 1 at least one · 2 no Markdown found under the paths given.
+"""
+import os
+import re
+import sys
+
+SHELL_LANGS = {"bash", "sh", "shell", "zsh", "console"}
+FENCE = re.compile(r"^\s*(```+|~~~+)\s*([A-Za-z0-9_-]*)")
+CALL = re.compile(r"(?:^|[\s;&|(`$])([^\s;&|()`'\"]*/)?bin/([A-Za-z0-9_.-]+)((?:[ \t]+[^\s;&|()`]+)*)")
+SYSTEM = re.compile(r"^(#!)?(/|/usr/|/usr/local/|/opt/homebrew/)$")   # /bin/bash, #!/usr/bin/env: not ours
+INLINE = re.compile(r"`([^`\n]+)`")
+FLAG = re.compile(r"^(--[A-Za-z0-9][A-Za-z0-9-]*)")
+ALWAYS = {"--help"}
+
+
+def markdown_files(paths):
+    out = []
+    for p in paths:
+        if os.path.isdir(p):
+            for d, dirs, files in os.walk(p):
+                dirs[:] = [x for x in dirs if not x.startswith(".git") and x not in ("node_modules", "__pycache__")]
+                out += [os.path.join(d, f) for f in sorted(files) if f.endswith(".md")]
+        elif p.endswith(".md") and os.path.isfile(p):
+            out.append(p)
+    return sorted(set(out))
+
+
+def inline_spans(text):
+    """(line number, [span]) for inline code outside any fence: `bin/tool --flag` in prose is an
+    instruction too."""
+    out, fenced, fence = [], False, ""
+    for n, line in enumerate(text.splitlines(), 1):
+        m = FENCE.match(line)
+        if not fenced and m:
+            fenced, fence = True, m.group(1)[0] * 3
+            continue
+        if fenced:
+            fenced = not line.strip().startswith(fence)
+            continue
+        spans = INLINE.findall(line)
+        if spans:
+            out.append((n, spans))
+    return out
+
+
+def shell_blocks(text):
+    """(first line number, lines) for each fenced block tagged as a shell."""
+    blocks, cur, start, lang, fence = [], None, 0, "", ""
+    for n, line in enumerate(text.splitlines(), 1):
+        m = FENCE.match(line)
+        if cur is None and m:
+            fence, lang, cur, start = m.group(1)[0] * 3, m.group(2).lower(), [], n + 1
+        elif cur is not None and line.strip().startswith(fence):
+            if lang in SHELL_LANGS:
+                blocks.append((start, cur))
+            cur = None
+        elif cur is not None:
+            cur.append(line)
+    return blocks
+
+
+def resolve(tool, bins):
+    for b in bins:
+        p = os.path.join(b, tool)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def main(argv):
+    bins, paths, i = [], [], 0
+    while i < len(argv):
+        if argv[i] == "--bin" and i + 1 < len(argv):
+            bins.append(argv[i + 1]); i += 2
+        elif argv[i] in ("-h", "--help"):
+            print(__doc__); return 0
+        else:
+            paths.append(argv[i]); i += 1
+    if not bins:
+        bins = [os.path.dirname(os.path.abspath(__file__))]
+    files = markdown_files(paths)
+    if not files:
+        print("prose-command-check: no Markdown found under the paths given", file=sys.stderr)
+        return 2
+    sources, findings, calls, unresolved = {}, [], 0, set()
+    for f in files:
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+        where = [(start + k, line) for start, lines in shell_blocks(text) for k, line in enumerate(lines)]
+        where += [(n, span) for n, spans in inline_spans(text) for span in spans]
+        for ln, line in where:
+                for m in CALL.finditer(line):
+                    prefix, tool, args = m.group(1) or "", m.group(2), m.group(3)
+                    if SYSTEM.match(prefix):
+                        continue
+                    flags = [FLAG.match(a).group(1) for a in args.split() if FLAG.match(a)]
+                    calls += 1
+                    src = resolve(tool, bins)
+                    if src is None:
+                        unresolved.add(tool)
+                        continue
+                    if src not in sources:
+                        with open(src, encoding="utf-8", errors="replace") as fh:
+                            sources[src] = fh.read()
+                    for fl in flags:
+                        if fl not in ALWAYS and fl not in sources[src]:
+                            findings.append(f"STALE_FLAG  {f}:{ln}  bin/{tool} {fl} — not in {src}")
+    for x in findings:
+        print(x)
+    print(f"prose-command-check: {len(files)} file(s), {calls} call(s) of a bin/ tool, "
+          f"{len(findings)} stale flag(s), {len(unresolved)} tool(s) not in --bin: "
+          + (", ".join(sorted(unresolved)) if unresolved else "none"))
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
