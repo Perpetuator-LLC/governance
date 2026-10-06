@@ -46,17 +46,20 @@ def lines_of(text):
     return {l.strip() for l in text.splitlines()}
 
 
-def changed_lines(repo, base, tip, path, old_path=None):
+def changed_lines(repo, base, tip, path, old_path=None, keep_trivial=False):
     args = ["diff", "-U0", base, tip, "--"] + ([old_path, path] if old_path else [path])
     _, d = git(repo, *args)
     added, removed = set(), set()
     for l in d.splitlines():
         if l.startswith("+++") or l.startswith("---"):
             continue
-        if l.startswith("+") and not trivial(l[1:].strip()):
-            added.add(l[1:].strip())
-        elif l.startswith("-") and not trivial(l[1:].strip()):
-            removed.add(l[1:].strip())
+        line = l[1:].strip()
+        if not line or (trivial(line) and not keep_trivial):
+            continue
+        if l.startswith("+"):
+            added.add(line)
+        elif l.startswith("-"):
+            removed.add(line)
     return added, removed
 
 
@@ -84,6 +87,25 @@ def check_branch(repo, base, b):
             continue
         added, removed = changed_lines(repo, mb, b, path, old)
         if not added and not removed:
+            # Only short lines changed. The filter exists so that a `}` cannot fake a match, but a short
+            # line can be the whole change: a version bump, a flag, a new file holding one word. Judge
+            # those too, and fail toward CANNOT-TELL, never toward LANDED (governance#59).
+            short_add, short_rem = changed_lines(repo, mb, b, path, old, keep_trivial=True)
+            rc, cur = git(repo, "show", f"{base}:{path}")
+            if not short_add and not short_rem:
+                if status.startswith("A") and rc != 0:
+                    missing.append(f"{path}: a new file, not in the base")
+                continue
+            if rc != 0:
+                missing.append(f"{path}: not in the base at this path ({len(short_add)} short line(s) added)")
+                continue
+            have = lines_of(cur)
+            if not short_add <= have:
+                missing.append(f"{path}: {len(short_add - have)}/{len(short_add)} short added line(s) not in the base")
+            elif short_rem & have:
+                unsure.append(f"{path}: only short lines changed, and a removed one is still in the base")
+            else:
+                landed_files += 1
             continue
         rc, cur = git(repo, "show", f"{base}:{path}")
         if rc != 0:
