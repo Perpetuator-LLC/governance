@@ -309,6 +309,41 @@ one-word answer with a recommendation.
 **miss**. Log it, and send it to whoever owns the lane's routines. A miss that recurs is a defect in
 the routine. The fix is a change to the routine, not more effort in the next pass.
 
+## Shine a light on a near miss: name the adjustment that would make it work
+
+**Scope:** any analysis, test or build that turns up something *almost* valuable. That means a
+strategy, signal, design or result that fails by a margin one specific adjustment might close, or an
+adjacent opportunity the request did not ask about but the evidence points at. The sibling rule above
+is about people waiting on us. This one is about what the work lets us see.
+
+**Rule: say so in the same report, unasked.** State four things:
+1. **What** is close.
+2. **How close:** the measured gap, in the work's own units.
+3. **The adjustment** that might close it.
+4. **The cheapest test** that would show whether it does.
+
+Offer it as a one-word decision ("test it?"). A pass/fail verdict hides a near miss: "no" reads the
+same whether a result missed by a mile or by a hair. The person cannot ask for what they do not know
+exists.
+
+**Limits: where shining the light goes wrong.**
+- **Surface, do not pursue.** Beyond a cheap, reversible probe, the follow-up is the person's call.
+  The light is a pointer, not a project you started on their behalf.
+- **Evidence, not hunches.** A light names a measured gap and a concrete adjustment. "This might be
+  interesting" is noise. Too many lights and none of them gets read.
+- **A pre-registered test stays honest.** An adjustment found after seeing the result is a NEW
+  hypothesis. It must be tested on data it has not seen (held out, out of sample, or forward), never
+  used to rescue the old verdict. Re-running until something passes is how false edges are made.
+- **The adjustment changes the subject, never the yardstick.** Loosening a threshold, a tolerance, a
+  timeout, a test's expected value or a gate until the result passes is not a near miss. It is a
+  different verdict, and it belongs to whoever owns that bar, asked as that question. Name the gap and
+  leave the bar where it is; "missed by 2 ms, so raise the timeout" is how a gate stops gating.
+- **In a decision-support role it proposes a test, never an action.** It names what to examine next;
+  the decision to act stays with the principal.
+- **The mirrors count.** A risk, falsifier or failure mode close to firing is also a near miss. So is
+  a pass by a hair: a result that cleared its bar narrowly reads "yes" exactly as a wide pass does, and
+  fails as quietly. Each gets the same four lines, with the margin as the gap.
+
 ## Git refs in human-facing text
 
 - ⚠️ **The test is ACTIONABILITY, not FORMAT: not "is this ref a link?" but "can the reader reach
