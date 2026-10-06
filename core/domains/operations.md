@@ -321,10 +321,15 @@ exists.
 - **A pre-registered test stays honest.** An adjustment found after seeing the result is a NEW
   hypothesis. It must be tested on data it has not seen (held out, out of sample, or forward), never
   used to rescue the old verdict. Re-running until something passes is how false edges are made.
+- **The adjustment changes the subject, never the yardstick.** Loosening a threshold, a tolerance, a
+  timeout, a test's expected value or a gate until the result passes is not a near miss. It is a
+  different verdict, and it belongs to whoever owns that bar, asked as that question. Name the gap and
+  leave the bar where it is; "missed by 2 ms, so raise the timeout" is how a gate stops gating.
 - **In a decision-support role it proposes a test, never an action.** It names what to examine next;
   the decision to act stays with the principal.
-- **The mirror counts.** A risk, falsifier or failure mode that is close to firing is also a near
-  miss, and gets the same four lines.
+- **The mirrors count.** A risk, falsifier or failure mode close to firing is also a near miss. So is
+  a pass by a hair: a result that cleared its bar narrowly reads "yes" exactly as a wide pass does, and
+  fails as quietly. Each gets the same four lines, with the margin as the gap.
 
 ## Git refs in human-facing text
 
