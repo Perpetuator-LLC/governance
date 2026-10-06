@@ -772,6 +772,24 @@ shared store is a leak; a composition bug is a missing panel.
   relocates working resources to satisfy a convention trades real outages for
   tidiness. The convention is a direction to trend in, not a gate.
 
+**An AI writes where its connection is scoped, and sharing is a move.** Where AIs work in these spaces
+(one per person and one shared, say), each space has one AI connection scoped to it, with its own token,
+and one rules page that no AI can edit. The platform enforces that (a protected path, a write gate),
+not a request. Page shapes and routing inside a space live on its rules page, so they are its owner's
+conventions; the core holds only the boundary. Measured: two assistants in one household wrote the same
+weekly document in two shapes for a week, because each carried its own conventions instead of reading
+one page per space.
+- **The write target follows the connection.** Private work goes to the person's own space, and shared
+  work goes to the shared space only when the request names it. **Where one connection spans several
+  spaces, its default target is configured, never inferred** from the content: the first wrong guess
+  puts private work in every clone and backup of the shared space.
+- **Sharing is a move, with a pointer left behind,** never a per-document permission (the private-area
+  limit above). **Its mirror, unsharing,** moves the document back, and leaves no pointer in the shared
+  space when the title itself is private: a pointer names what it points at.
+- **Scope:** spaces stored in version control with access per repository, and AI connections with
+  per-space tokens. Storage that enforces access per document is a different system; the move is still
+  the safer default there, but not the only correct one.
+
 **A lookup must key on the segment too.** Segmenting where things are *stored* does not help if the
 code that *finds* them keys on a name alone. Where one service serves several identity realms or
 tenants, a secret or credential lookup keyed on the username returns another tenant's secret the day
