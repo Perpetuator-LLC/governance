@@ -14,6 +14,12 @@
 #   feat/moved-part   + lib/partial.py (2 lines); main's pkg/partial.py holds 1 of them -> CANNOT-TELL
 #   feat/delete       - app.py's two alpha lines; main still has both                  -> MISSING, 2/2 still there
 #   feat/empty        an empty commit                                                   -> LANDED, nothing to land
+# Short lines (governance#59): the filter that keeps `}` from faking a match must not hide a change
+# made only of short lines. The base also holds ver.txt = 1.2 and flags.txt = on / off.
+#   feat/short-new    + VERSION holding "1.3" (one short line)                          -> MISSING, a new file
+#   feat/bump-missing ver.txt 1.2 -> 1.3; main keeps 1.2                                -> MISSING, short line not in base
+#   feat/bump-landed  ver.txt 1.2 -> 1.4; main also moved to 1.4                        -> LANDED
+#   feat/short-unsure flags.txt drops "off"; main still has "off"                       -> CANNOT-TELL
 #   no/such           not a ref                                                         -> CANNOT-TELL
 # Exit: all LANDED 0 · any MISSING 1 · CANNOT-TELL and no MISSING 2.
 set -uo pipefail
@@ -30,7 +36,7 @@ fail() { printf '  FAIL  %s\n' "$1"; fails=$((fails + 1)); }
 
 git init -q --bare "$TMP/origin.git"; git clone -q "$TMP/origin.git" "$TMP/w" 2>/dev/null; R="$TMP/w"
 c() { git -C "$R" add -A; git -C "$R" commit -qm "$1"; }
-printf "def alpha():\n    return 'alpha-value'\n" > "$R/app.py"; c base
+printf "def alpha():\n    return 'alpha-value'\n" > "$R/app.py"; echo 1.2 > "$R/ver.txt"; printf "on\noff\n" > "$R/flags.txt"; c base
 git -C "$R" branch -M main; git -C "$R" push -q origin main; git -C "$R" remote set-head origin main >/dev/null 2>&1
 BASE=$(git -C "$R" rev-parse HEAD)
 
@@ -48,13 +54,17 @@ mkdir -p "$R/lib"; printf "def partial_one():\n    return 'partial-two'\n" > "$R
 git -C "$R" checkout -q -b feat/delete "$BASE"
 printf "" > "$R/app.py"; c "drop alpha"
 git -C "$R" checkout -q -b feat/empty "$BASE"; git -C "$R" commit -q --allow-empty -m empty
+git -C "$R" checkout -q -b feat/short-new "$BASE"; echo 1.3 > "$R/VERSION"; c short-new
+git -C "$R" checkout -q -b feat/bump-missing "$BASE"; echo 1.3 > "$R/ver.txt"; c bump-missing
+git -C "$R" checkout -q -b feat/bump-landed "$BASE"; echo 1.4 > "$R/ver.txt"; c bump-landed
+git -C "$R" checkout -q -b feat/short-unsure "$BASE"; echo on > "$R/flags.txt"; c short-unsure
 
 git -C "$R" checkout -q main
 git -C "$R" merge -q --squash feat/squashed >/dev/null; git -C "$R" commit -qm "squash: beta + helpers"
 git -C "$R" checkout -q -b feat/ancestor; echo n > "$R/notes.txt"; c notes
 git -C "$R" checkout -q main; git -C "$R" merge -q --ff-only feat/ancestor
 mkdir -p "$R/pkg"; printf "def moved_function():\n    return 'moved-content'\n" > "$R/pkg/mover.py"
-printf "def partial_one():\n    return 'something-else'\n" > "$R/pkg/partial.py"; c "pkg"
+printf "def partial_one():\n    return 'something-else'\n" > "$R/pkg/partial.py"; echo 1.4 > "$R/ver.txt"; c "pkg"
 git -C "$R" push -q origin main; git -C "$R" fetch -q origin
 
 verdict() { local o; o=$("$LC" --repo "$R" "$1"); awk -v b="$1" '$2==b{print $1}' <<<"$o"; }
@@ -78,6 +88,14 @@ grep -q '2/2 removed line(s) still there' <<<"$(out feat/delete)" && [ "$(verdic
 grep -q 'nothing of substance to land' <<<"$(out feat/empty)" && [ "$(verdict feat/empty)" = LANDED ] \
   && pass "mirror: a branch with no unique work reads LANDED (needs no ticket)" || fail "empty: $(verdict feat/empty)"
 [ "$(verdict no/such)" = CANNOT-TELL ] && pass "a bad ref reads CANNOT-TELL" || fail "bad ref: $(verdict no/such)"
+[ "$(verdict feat/short-new)" = MISSING ] && pass "a new file holding one short line reads MISSING (it is the whole change)" \
+  || fail "short new file: $(verdict feat/short-new)"
+[ "$(verdict feat/bump-missing)" = MISSING ] && pass "a version bump the base never got reads MISSING" \
+  || fail "unlanded bump: $(verdict feat/bump-missing)"
+[ "$(verdict feat/bump-landed)" = LANDED ] && pass "a version bump the base also made reads LANDED" \
+  || fail "landed bump: $(verdict feat/bump-landed)"
+[ "$(verdict feat/short-unsure)" = CANNOT-TELL ] && pass "a short removal the base still carries reads CANNOT-TELL, never LANDED" \
+  || fail "short unsure: $(verdict feat/short-unsure)"
 head -1 <<<"$(out feat/squashed)" | grep -q "base origin/main @ $(git -C "$R" rev-parse --short=12 origin/main)" \
   && pass "prints the base and the SHA it compared against" || fail "base line missing or wrong"
 

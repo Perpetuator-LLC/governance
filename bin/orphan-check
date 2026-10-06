@@ -23,12 +23,23 @@
 #   bin/orphan-check --repos-from FILE   # one repo path per line ('-' = stdin); empty list refuses
 #   bin/orphan-check --all DIR           # every git repo directly under DIR (slow: one fetch each)
 #   bin/orphan-check --no-fetch          # skip `git fetch` (fast, but reads stale refs)
+#   bin/orphan-check --known FILE        # verdicts already given, one `<tip-sha> <reason>` per line
+#
+# Adjudicated by CONTENT, not ancestry (governance#59). A branch ahead of the default branch by commit
+# is then asked whether its CONTENT landed (bin/landed-check): a squash, rebase or cherry-pick lands the
+# work under other commits, and an ancestry count reports it as stranded forever. LANDED is not a
+# candidate; MISSING is; CANNOT-TELL stays a candidate, never a clean result. A verdict in --known is
+# keyed on the branch's TIP SHA, so the next push to that branch surfaces it again: a name-keyed memory
+# would have hidden an orphan that appeared hours after the branch was last judged. A second checkout
+# of an origin already checked is skipped and named, so one repository is never counted twice.
 #
 # Exit: 0 nothing stranded · 1 candidates found · 2 usage/setup error
 
 set -uo pipefail
 
 FETCH=1
+KNOWN=""
+LANDED_CHECK="$(cd "$(dirname "$0")" && pwd)/landed-check"
 ALL_DIR=""
 REPOS_FROM=""
 REPOS=()
@@ -41,7 +52,9 @@ while [ $# -gt 0 ]; do
                   REPOS_FROM="$2"; shift 2 ;;
     --all) [ $# -ge 2 ] || { echo "--all needs a directory" >&2; exit 2; }
            ALL_DIR="$2"; shift 2 ;;
-    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --known) [ $# -ge 2 ] && [ -r "$2" ] || { echo "--known needs a readable file" >&2; exit 2; }
+             KNOWN="$2"; shift 2 ;;
+    -h|--help) sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "unknown flag: $1" >&2; exit 2 ;;
     *) REPOS+=("$1"); shift ;;
   esac
@@ -77,10 +90,19 @@ fi
 
 found=0
 checked=0
+landed=0
+known=0
+seen_origins=""
 
 for repo in "${REPOS[@]}"; do
   [ -e "$repo/.git" ] || continue
-  git -C "$repo" remote get-url origin >/dev/null 2>&1 || continue
+  url="$(git -C "$repo" remote get-url origin 2>/dev/null)" || continue
+  if printf '%s\n' "$seen_origins" | grep -Fxq -- "$url"; then
+    echo "·  $(basename "$repo"): same origin as a checkout already checked — skipped, not counted twice"
+    continue
+  fi
+  seen_origins="$seen_origins
+$url"
   checked=$((checked+1))
 
   if [ "$FETCH" -eq 1 ]; then
@@ -106,13 +128,31 @@ for repo in "${REPOS[@]}"; do
 
   while IFS= read -r branch; do
     [ -z "$branch" ] && continue
-    commits="$(git -C "$repo" log --oneline "origin/$default..$branch" 2>/dev/null)"
+    commits="$(git -C "$repo" log --oneline --no-merges "origin/$default..$branch" 2>/dev/null)"
     [ -z "$commits" ] && continue
+    tip="$(git -C "$repo" rev-parse "$branch" 2>/dev/null)"
+
+    if [ -n "$KNOWN" ] && reason="$(grep -E "^${tip}([[:space:]]|\$)" "$KNOWN" 2>/dev/null | head -1)" && [ -n "$reason" ]; then
+      known=$((known+1))
+      echo "·  $(basename "$repo"): ${branch#origin/} @ ${tip:0:8} already adjudicated:${reason#$tip} (a new push surfaces it again)"
+      continue
+    fi
+
+    verdict="CANNOT-TELL"
+    if [ -f "$LANDED_CHECK" ]; then
+      python3 "$LANDED_CHECK" --repo "$repo" --base "origin/$default" "$branch" >/dev/null 2>&1
+      case $? in 0) verdict="LANDED" ;; 1) verdict="MISSING" ;; esac
+    fi
+    n="$(printf '%s\n' "$commits" | wc -l | tr -d ' ')"
+    if [ "$verdict" = "LANDED" ]; then
+      landed=$((landed+1))
+      echo "·  $(basename "$repo"): ${branch#origin/} is $n commit(s) ahead by ancestry, but its CONTENT is on $default (a squash or rebase): not a candidate"
+      continue
+    fi
 
     found=$((found+1))
-    n="$(printf '%s\n' "$commits" | wc -l | tr -d ' ')"
     echo
-    echo "▸ $(basename "$repo"): $n commit(s) on ${branch#origin/} not on $default"
+    echo "▸ $(basename "$repo"): $n commit(s) on ${branch#origin/} not on $default (content: $verdict)"
     printf '%s\n' "$commits" | sed 's/^/    /'
 
     # Ticket references in the stranded commits. A forge's closing keyword does not
@@ -125,11 +165,14 @@ for repo in "${REPOS[@]}"; do
 done
 
 echo
+also=""
+[ "$landed" -gt 0 ] && also="$also · $landed landed by content"
+[ "$known" -gt 0 ] && also="$also · $known already adjudicated at their tip"
 if [ "$found" -eq 0 ]; then
-  echo "✅ $checked repo(s) checked — nothing stranded on a rolling branch"
+  echo "✅ $checked repo(s) checked — nothing stranded on a rolling branch$also"
   exit 0
 fi
-echo "⚠️  $checked repo(s) checked — $found rolling branch(es) ahead of default"
+echo "⚠️  $checked repo(s) checked — $found rolling branch(es) carry work not on default$also"
 echo "   Not necessarily a defect: a branch with an OPEN PR is covered."
 echo "   A branch with NO open PR is the failure — its commits have no path to the default branch."
 exit 1
