@@ -1118,6 +1118,16 @@ that smaller than the job's roster.**
   returns in a second or two and the wrapper still says *passed*. Accept a pass only when **this
   build's own** test summary, with its counts, is in the log. **Scope:** steps whose output is a
   verdict. Caching a step whose output is a file is the cache doing its job.
+- **A job-level condition can skip the GUARD inside the job.** It is evaluated before any step runs,
+  so when it is false the job is skipped: a step written to refuse never executes, prints nothing, and
+  the run shows no failure. "The guard refused" and "the guard never ran" look the same, and the
+  second lets the dangerous action through another route. Measured: a deploy workflow tested the
+  branch in the job's `if`; a dispatch from another branch skipped the job and its dependent deploy,
+  and the step that prints `REFUSING` never ran. **A guard sits at the narrowest scope that always
+  runs:** if a condition decides whether the work happens, that condition is the guard; if a step is
+  the control, its job is unconditional. **Scope:** a condition above a step whose job is to refuse.
+  Skipping *work* with a job-level `if` is cheap and correct, and a deliberately skipped publish step on
+  a pull request is the intent.
 
 ## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
 
@@ -1291,6 +1301,23 @@ the default branch.
   reconstructed later.
 - **Where it is wrong:** a repository with no default-branch gate (a notes store whose working tree is
   the truth), where "landed" has no meaning.
+
+## A forge closes a pull request only on its OWN merge — one merged another way stays open
+
+**A pull request whose head reached the default branch by any other route stays open indefinitely.**
+Forges close a pull request on the merge event they perform, not by re-testing ancestry, so a workflow
+that lands work indirectly (folding feature branches into a rolling integration branch, cherry-picking,
+landing an equivalent commit) leaves pull requests that shipped and still read as pending. Measured:
+eight pull requests were ancestors of the default branch through one rolling merge, and all eight were
+still open three days later.
+
+- **Shipped is a question for ancestry; closing is an act someone performs.** A workflow that merges
+  indirectly owes a reconciliation pass: for each open pull request, `git merge-base --is-ancestor
+  <head> <default>`, and close the ones that pass, naming the merge that carried them.
+- **Where it is wrong:** on a default branch that is rewritten, or where the head is an ancestor because
+  it was merged and then reverted. Ancestry says the commit is in the history, not that the change is
+  live; for that, read the deployed version. A pull request with unresolved review discussion keeps
+  the discussion open even when its code landed: close the code claim, not the conversation.
 
 ## Before removing a worktree, check what is still running from it
 
@@ -1466,6 +1493,19 @@ response — **including the structure a flattening view hides: nesting, field o
 parser that splits records on a delimiter passes a flat stub and then fails on a nested object sitting
 between two fields it needs. Tell: the fixture's field names match your tooling's output, not the
 vendor's schema.
+
+⚠️ **AND REPRODUCE THE EDGE, not only the origin.** Where production reaches a service through a CDN,
+web firewall or reverse proxy and the tests reach it through nothing, the two are different systems:
+the edge refuses on properties the origin never sees (client address, TLS fingerprint, request rate,
+the User-Agent), and every such refusal is invisible to the suite. Measured: an edge returned 403 to a
+language runtime's default User-Agent, so a service could never fetch its identity provider's signing
+keys and refused every signed-in call, while sign-in worked and the provider logged nothing; the tests
+used a local provider with no edge, and the deploy's checks probed only paths that need no key fetch.
+**So a double for a network collaborator can produce that collaborator's real refusals, captured from
+the real thing, and one committed check crosses the real edge from inside the deployed unit.** **Scope:**
+not every test: a parsing unit is better off without an edge, and reproducing a CDN in CI has costs of
+its own. Where production has no edge, that is a fact to re-check, not assume: an edge is often added
+later by someone else, and no test changes when it is.
 
 **Tells**, cheapest first:
 - a spec that passes over a branch you cannot trigger by hand;
