@@ -262,6 +262,16 @@ never argv. A ceremony that PRINTS a secret is worse than one that asks for it.
   present and well-shaped, not what it is.
 - **Never grep FOR a secret — search by SHAPE.** A literal search puts the value in your own
   command line and your own history, which is the disclosure you were checking for.
+- **The clipboard is not a secret channel: no `pbpaste`, `pbcopy`, `xclip` or `wl-paste` in a command
+  that handles a secret.** The human copies the commands you hand them, so the clipboard holds
+  whatever they copied last, and a pipe from it stores the wrong text. A pipe into it leaves the
+  secret readable by every app, kept by clipboard-history tools and, with clipboard sync, present on
+  other devices; the step that clears it is the first one a partial failure skips. A value already in
+  a store moves store-to-store; a new value goes into the silent prompt. **Scope:** commands that read
+  or write the clipboard. A human pasting a new value into a silent prompt is the intended path, and
+  non-secret text (commands, ids) is fine there. **Where it needs adjusting:** a destination that
+  offers only a web form needs the clipboard; use the secret store's own copy, which clears itself,
+  never a shell `pbcopy`.
 - **Blind writes MERGE, never clobber.** A store write that replaces the document drops every key
   you could not read, and you cannot read any of them — so a clobber is undetectable by the writer.
 - **Authenticated probes emit a status code and nothing else:** `-s -o /dev/null -w '%{http_code}'`.
