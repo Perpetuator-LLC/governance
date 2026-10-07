@@ -944,6 +944,24 @@ provider believes the change happened, the local store never hears of it, and th
 error state — and the pull path is also what lets every environment converge from the provider by
 command instead of by re-firing events.
 
+## An idempotent recipe over a merge-update API converges only on the fields it names
+
+**Where an API merges (an update keeps every field the request leaves out), a re-run converges only on
+the fields the write names.** A recipe that claims to be idempotent writes **every field it owns**,
+including the "off" values (a zero period, an empty allow-list, a disabled flag), **and no field it
+does not own**, which would clobber another owner's value exactly as a replace would. Otherwise a hand
+edit to a field the recipe never mentions survives every re-run, and every idempotence check still
+passes, because those checks start from an empty server. Measured: a recipe set a credential's token
+lifetime, and a hand-set 30-day renewal period on the same object survived its re-runs.
+
+- **Test from drift, not from empty.** Pre-set the object by hand with wrong values, **read it back to
+  prove the drift took** (a refused setup write makes the test vacuous, as the first such test here
+  was), run the recipe, and assert every owned field equals its value. One mutant per dropped field.
+- **Scope:** merge-update APIs. Where the write **replaces** the whole object, naming every field
+  happens on its own and the danger flips: the write deletes fields another owner set, so read or
+  compare before writing there. A field the server adds in a later version is owned once the recipe
+  depends on its default, so check the read-back for fields you did not know about.
+
 ## The promotion gate is a walked STAGE, and a deploy is fully automated
 
 **Nothing is promoted until the release's headline flows have been walked end to end on the staging
