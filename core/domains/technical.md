@@ -1405,6 +1405,23 @@ alone until it finishes. Measured: a merge into a worktree while its full suite 
 under test halfway through, and the run had to be stopped and repeated on a snapshot. **Where it is
 wrong:** a snapshot tests the commit; when the change under test is uncommitted, it is the wrong tree.
 
+## Agents that share a scratch directory write unique paths, and a publish step proves the file is its own
+
+**Some harnesses give every background agent launched from a session that session's scratch
+directory.** Two agents that both write a generic name (`pr-body.md`, `out.json`) overwrite each other
+and neither sees it; a publish step then posts the other agent's content. Measured: two parallel
+agents wrote the same body file, and a private registry body carrying host identifiers nearly reached
+a public pull request, caught only by a diff before posting.
+
+- **Each brief names a unique subdirectory** (the task or agent id), and the writer creates its file
+  exclusively (`set -o noclobber`, `O_EXCL`), so a collision fails loudly instead of overwriting.
+- **The publish step reads back the exact file it wrote** and checks that it carries this task's own
+  identifier before posting. A file at the right path is not proof of the right content.
+- **The mirror is sequential, not parallel:** a stale file of the same name, left by an earlier agent
+  or run, gets published by the next one. Exclusive creation catches it, because the file exists.
+- **Scope:** agents sharing one scratch directory. Isolated worktrees and a single agent are outside
+  it, and a deliberate hand-off path is fine when both briefs name it.
+
 ## Agent attribution lives in the BODY — the author field is one shared identity
 
 **Write side.** Every agent-authored commit, PR body, review and forge comment carries its own
