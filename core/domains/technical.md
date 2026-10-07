@@ -772,6 +772,24 @@ shared store is a leak; a composition bug is a missing panel.
   relocates working resources to satisfy a convention trades real outages for
   tidiness. The convention is a direction to trend in, not a gate.
 
+**An AI writes where its connection is scoped, and sharing is a move.** Where AIs work in these spaces
+(one per person and one shared, say), each space has one AI connection scoped to it, with its own token,
+and one rules page that no AI can edit. The platform enforces that (a protected path, a write gate),
+not a request. Page shapes and routing inside a space live on its rules page, so they are its owner's
+conventions; the core holds only the boundary. Measured: two assistants in one household wrote the same
+weekly document in two shapes for a week, because each carried its own conventions instead of reading
+one page per space.
+- **The write target follows the connection.** Private work goes to the person's own space, and shared
+  work goes to the shared space only when the request names it. **Where one connection spans several
+  spaces, its default target is configured, never inferred** from the content: the first wrong guess
+  puts private work in every clone and backup of the shared space.
+- **Sharing is a move, with a pointer left behind,** never a per-document permission (the private-area
+  limit above). **Its mirror, unsharing,** moves the document back, and leaves no pointer in the shared
+  space when the title itself is private: a pointer names what it points at.
+- **Scope:** spaces stored in version control with access per repository, and AI connections with
+  per-space tokens. Storage that enforces access per document is a different system; the move is still
+  the safer default there, but not the only correct one.
+
 **A lookup must key on the segment too.** Segmenting where things are *stored* does not help if the
 code that *finds* them keys on a name alone. Where one service serves several identity realms or
 tenants, a secret or credential lookup keyed on the username returns another tenant's secret the day
@@ -990,6 +1008,34 @@ edge or load balancer with a fixed timeout.
   the service that serves it (*A done-when names the COMMITTED SURFACE*). A target with no version
   endpoint cannot be observed, and adding one is part of the pipeline, not a follow-up.
 
+## A "done" marker is written when the thing is up, and cleared when an attempt begins
+
+**A marker that records "this step succeeded" is read later as a fact, so when it is written and when
+it is cleared decide what it can mean.** Two halves, each a measured failure:
+
+- **Write it when the target is serving and healthy, before any step that only VERIFIES it.**
+  Written after such a receipt, a receipt that fails on every run makes the marker unwritable: the
+  next catch-up sees "not deployed", redeploys identical code and recreates every container, and the
+  loop has no error state. Measured: a stage database was recreated 23–24 times every 6 hours, on
+  the catch-up timer's cadence, for about six days; it was found by its consequences, not by an
+  alarm. **A catch-up that finds the target serving the target version with a receipt failing
+  reports which receipt failed, and stops.** Re-applying is the answer to drift, never to a failing
+  receipt.
+- **Clear it when an attempt that changes the thing begins.** A marker written only on success and
+  tested only for existence cannot tell *"it succeeded"* from *"it succeeded once, and the retry
+  failed"*: the old marker survives the failed attempt, and the next gate reads it as a pass, failing
+  open toward the dangerous step. Measured, in review before it ran: a cutover gated on a
+  restore-drill marker that nothing cleared, so a re-run whose drill failed would still have cut
+  over. A run that only checks, and changes nothing, leaves the marker alone.
+- **Prove the gate on both sides:** a failed attempt leaves it closed (the next step refuses), and a
+  successful one leaves it open.
+- **Scope:** a marker consumed as a gate or as an idempotence check. A step that CONSTITUTES the
+  deploy (a migration that must apply before traffic is served) is not a receipt: success is
+  recorded after it. The deciding question is whether the target already serves the new version
+  when the step runs. An append-only ledger of attempts keeps its old entries, and its reader
+  selects the newest. A marker whose content the gate reads and compares (a version, a timestamp)
+  can already tell a stale pass from a fresh one; reading it is the fix.
+
 ## "Merged" is not "the reviewed code merged" — a verdict pins a HEAD, a click picks a MOMENT
 
 **A review verdict names a commit. A merge names an instant. Nothing in a forge binds the two.**
@@ -1046,6 +1092,24 @@ that actually triggers the gate — a user token — or dispatch the workflow ex
 action; and **a merge-ready claim on a head with zero runs is void**, never "green by absence". Assert
 that a run EXISTS for the exact head before assessing its conclusion; treat *no run* as a third
 state alongside passed and failed, and say which of the three you observed.
+
+**A local run offered in place of a missing one runs the WORKFLOW's steps, through one entry point.**
+When a head has no run (no runner, or the run never started) and the claim offers local evidence
+instead, that run executes the steps the workflow runs, through one committed entry point the workflow
+itself calls: each workflow step invokes `tests/ci.sh <step>`, and the claim runs `tests/ci.sh` whole.
+A step it cannot run here (no container runtime, a missing tool, a secret CI holds and you do not) is
+reported **NOT RUN** and fails the run; it is never left off the list. A claim listing the suites its
+author remembered reads like a CI result, and it is honest about every step it names, so review does
+not catch the step it omits. Measured: four successive claims on one pull request cited the unit-test
+runner while the workflow's shell test file had been failing for five commits; nothing caught it until
+someone ran the workflow's steps by hand.
+- **Scope:** the stand-in only. A head whose run exists and passed has its evidence; the entry point is
+  not an extra gate.
+- **The mirror, a local run that does MORE than CI** (probes needing a store or a binary CI lacks): fine,
+  often better, but listed apart from the entry point, so the claim never implies CI covers them. The
+  entry point holds exactly CI's steps.
+- **A step CI cannot run either** (it needs a secret CI does not hold) stays out of the entry point.
+  Listed there, it makes every local run look worse than CI and teaches readers to ignore NOT RUN.
 
 **A green that queries a live feed ages.** Gates that consult an external, changing source — a
 dependency or vulnerability audit, a licence database — can pass and then fail on the same commit
@@ -1120,6 +1184,16 @@ that smaller than the job's roster.**
   returns in a second or two and the wrapper still says *passed*. Accept a pass only when **this
   build's own** test summary, with its counts, is in the log. **Scope:** steps whose output is a
   verdict. Caching a step whose output is a file is the cache doing its job.
+- **A job-level condition can skip the GUARD inside the job.** It is evaluated before any step runs,
+  so when it is false the job is skipped: a step written to refuse never executes, prints nothing, and
+  the run shows no failure. "The guard refused" and "the guard never ran" look the same, and the
+  second lets the dangerous action through another route. Measured: a deploy workflow tested the
+  branch in the job's `if`; a dispatch from another branch skipped the job and its dependent deploy,
+  and the step that prints `REFUSING` never ran. **A guard sits at the narrowest scope that always
+  runs:** if a condition decides whether the work happens, that condition is the guard; if a step is
+  the control, its job is unconditional. **Scope:** a condition above a step whose job is to refuse.
+  Skipping *work* with a job-level `if` is cheap and correct, and a deliberately skipped publish step on
+  a pull request is the intent.
 
 ## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
 
@@ -1293,6 +1367,23 @@ the default branch.
   reconstructed later.
 - **Where it is wrong:** a repository with no default-branch gate (a notes store whose working tree is
   the truth), where "landed" has no meaning.
+
+## A forge closes a pull request only on its OWN merge — one merged another way stays open
+
+**A pull request whose head reached the default branch by any other route stays open indefinitely.**
+Forges close a pull request on the merge event they perform, not by re-testing ancestry, so a workflow
+that lands work indirectly (folding feature branches into a rolling integration branch, cherry-picking,
+landing an equivalent commit) leaves pull requests that shipped and still read as pending. Measured:
+eight pull requests were ancestors of the default branch through one rolling merge, and all eight were
+still open three days later.
+
+- **Shipped is a question for ancestry; closing is an act someone performs.** A workflow that merges
+  indirectly owes a reconciliation pass: for each open pull request, `git merge-base --is-ancestor
+  <head> <default>`, and close the ones that pass, naming the merge that carried them.
+- **Where it is wrong:** on a default branch that is rewritten, or where the head is an ancestor because
+  it was merged and then reverted. Ancestry says the commit is in the history, not that the change is
+  live; for that, read the deployed version. A pull request with unresolved review discussion keeps
+  the discussion open even when its code landed: close the code claim, not the conversation.
 
 ## Before removing a worktree, check what is still running from it
 
@@ -1468,6 +1559,19 @@ response — **including the structure a flattening view hides: nesting, field o
 parser that splits records on a delimiter passes a flat stub and then fails on a nested object sitting
 between two fields it needs. Tell: the fixture's field names match your tooling's output, not the
 vendor's schema.
+
+⚠️ **AND REPRODUCE THE EDGE, not only the origin.** Where production reaches a service through a CDN,
+web firewall or reverse proxy and the tests reach it through nothing, the two are different systems:
+the edge refuses on properties the origin never sees (client address, TLS fingerprint, request rate,
+the User-Agent), and every such refusal is invisible to the suite. Measured: an edge returned 403 to a
+language runtime's default User-Agent, so a service could never fetch its identity provider's signing
+keys and refused every signed-in call, while sign-in worked and the provider logged nothing; the tests
+used a local provider with no edge, and the deploy's checks probed only paths that need no key fetch.
+**So a double for a network collaborator can produce that collaborator's real refusals, captured from
+the real thing, and one committed check crosses the real edge from inside the deployed unit.** **Scope:**
+not every test: a parsing unit is better off without an edge, and reproducing a CDN in CI has costs of
+its own. Where production has no edge, that is a fact to re-check, not assume: an edge is often added
+later by someone else, and no test changes when it is.
 
 **Tells**, cheapest first:
 - a spec that passes over a branch you cannot trigger by hand;
@@ -1915,6 +2019,16 @@ accident — so the defect cannot appear in them. Two properties that do it:
   asserts that it REACHED the decision point**, with one positive marker, before any negative
   assertion is believed. *Scope:* when the precondition's failure is itself the case under test, that
   stub fails, and the marker is the early exit.
+- **Filtered out — the control lacks what the subject SELECTS on, so it is never judged.** Most
+  checkers filter their input before judging it: by type, status, extension, a frontmatter key. A
+  known-bad record built without the fields that filter admits is skipped, and a skipped control
+  returns the clean result, **identical to a real pass**. Measured: a conformance checker read 0
+  findings over 107 records; the three broken records written to test that zero lacked the two keys
+  it filters on, all three were skipped, and the run stayed 0. With the keys present it named both
+  offenders and exited 1. **So the control must fail as designed AND be seen to enter**: counted
+  among the records examined, named in the output, or absent from an explicit "skipped" list.
+  *Scope:* a subject that selects its input before judging it. A linter that judges every file it is
+  handed has no admission step, and there failing as designed is the whole assertion.
 - **Perturbed unlike the real mechanism — same visible result, different MECHANICS.** A fixture that
   stands in for something that mutates the system under test (replacing a file, restarting a process,
   rotating a credential, swapping a link) must reproduce how the mutation happens, not only what it
@@ -2023,9 +2137,16 @@ instructions, which run under whatever shell the reader has.
 **A second zsh trap on the same path: `$var:<letter>` is a MODIFIER, even inside double quotes.**
 `:r`, `:h`, `:t`, `:e` and others edit the value (root, head, tail, extension), so in zsh
 `"$sha:refs/heads/x"` becomes `abc123efs/heads/x`: the `:r` is consumed. bash prints it as written.
-As a `git push origin $sha:refs/heads/x`, that silently targets a mangled ref. `$h:$port` is safe,
-because a colon followed by `$` is not a modifier. **Brace any variable followed by a colon:
+A `git push` of that fails loudly (`src refspec … does not match any`); the silent case is a value
+that still resolves after the edit, such as `:h` or `:t` on a path. `$h:$port` is safe, because a
+colon followed by `$` is not a modifier. **Brace any variable followed by a colon:
 `${sha}:refs/…`, `${host}:${port}`.** It costs nothing and removes the letter-by-letter question.
+
+**Both traps are refused by the floor gate under a zsh harness shell** (`hooks/bash-safety-gate.sh`):
+an unbraced `$name:<letter>`, and an unquoted expansion of a variable the same command assigned a
+literal holding whitespace. The prose alone did not stop either from recurring. The gate sees only the
+command text, so a list built by command substitution (`files=$(git ls-files)`) is still yours to
+expand as an array.
 
 **A third: a word that BEGINS with `=` is a command lookup.** zsh replaces `=name` with the path of the
 command `name` (`echo =ls` prints `/bin/ls`), and when no such command exists it is a **fatal error
@@ -2189,6 +2310,27 @@ not there.
 
 **The one-minute test for any self-updating tool:** what does its self-check compare, and could the
 two sides ever be the same file?
+
+## A command inside an instruction file is code no test runs
+
+**Skills, routines and runbooks embed runnable commands in prose, and no suite executes them, so a
+change aimed at something else breaks them silently.** A change that touches such a command, or the
+tool it calls, runs it or at least checks it in the same change.
+
+- **A redaction pass rewrites names in prose, never inside a command or a path.** A name replaced by a
+  phrase with spaces turns a path into a word-split command, and the failure can read as a legitimate
+  empty result. Move command-bearing text to the private layer rather than redacting it.
+- **An interface change greps every caller in every layer**: instruction files and scheduled routines,
+  not only scripts. `bin/prose-command-check` checks the cheapest part mechanically: every
+  `bin/<tool> --flag` named in a fenced shell block or in inline code must still appear in that tool's
+  source.
+- Measured: a tool dropped a flag, its own tests were updated, and two nightly routines still called the
+  old flag in their text; separately, a redaction pass broke a skill's lookup command for weeks, and the
+  failure read as "nothing found".
+- **Scope:** commands a reader or an agent runs from the text. A command quoted as an example of what
+  not to do, or as a historical exhibit, is prose: put it in a non-shell fence, so a checker does not
+  hold it to the tool's current interface. **The mirror:** the checker sees a flag that is gone, not a
+  newly required flag the text omits. A change that adds one still greps its callers.
 
 ### Committed is not running
 
@@ -2712,6 +2854,26 @@ wrong:** a seasonal or traffic-driven series, where the absolute number means no
 floor pages every quiet weekend. The deciding question is whether **zero is a legitimate value** for
 the series. If it is not, zero must trip an absolute rule.
 
+## A ticket looked up by an alert's NAME is the last incident of that name, not this one
+
+**An alert is not an incident, and a map from alert name to ticket is a map to the most recent
+incident under that name.** When a recurring alert has a known benign cause, the lookup succeeds and
+returns that cause, so a new and different cause firing under the same name is triaged as the old
+one. The successful lookup is what hides it. Measured: a disk-space alert had fired many times from
+one developer machine's read-only disk image, a known false positive with a ticket; it then fired for
+a production host filling at 1.79 GiB a day with 2.69 GiB left, and the ledger returned the
+disk-image ticket.
+
+- **A stored ticket is a hypothesis, tested against this firing's own labels** (host, filesystem,
+  rate) before it is reused. A row earns reuse only when its identifying labels match, and a row
+  keyed on the name alone says so.
+- **A closed ticket is never the answer to a new firing.** A ledger that appends and returns its
+  first match keeps handing back the closed predecessor; it must return the newest open match, or
+  nothing.
+- **Scope:** any alert-to-ticket or alert-to-runbook mapping used for deduplication or triage. An
+  alert whose name already identifies one resource (one host, one job) is keyed narrowly enough; the
+  rule binds alerts that span many resources under one name.
+
 ## A test of an UNATTENDED job, run from an interactive session, borrows that session's credentials
 
 **Reproducing a scheduled or unattended job by hand proves the job works only if the hand run has
@@ -2833,6 +2995,29 @@ privacy-respecting default. **Where it is wrong:** a scan the person asked for, 
 named; one prompt is then the expected cost, and the rule is only not to re-run it. **The mirror:** a
 tool already granted full-disk access raises no prompt and reads everything, the same overreach
 without the warning. It does not license the wide scan; it removes the only signal that one happened.
+
+## A local run that needs no credential must not be able to reach one
+
+**Container CLIs, package managers and cloud SDKs load the user's own config, and when that config
+names a credential store (an OS keychain helper) the tool may ask it for every saved login, including
+ones the run never uses.** On a store gated by the person's presence, each ask is a dialog on their
+screen: once per container, per run, per agent. Measured: a machine's local CI raised repeated keychain
+dialogs for a registry no step ever contacted; with a credential-free config, the same 6 jobs made 0
+helper calls.
+
+- **Point the tool at an empty, credential-free config for that run** (for Docker,
+  `DOCKER_CONFIG=<an empty directory>`), and pin the daemon endpoint from the user's current context
+  first, because the empty config has none. Put it in a **committed wrapper**, so no invocation can
+  forget it, and have the wrapper refuse a config that names a credential helper.
+- **Never fix it with "Always Allow".** That turns a per-use presence gate into a standing read.
+- **Prove it with a positive control:** put a logging stand-in for the helper first on `PATH` (it records
+  the call and answers "not found" without touching the store). A lookup under the normal config must
+  reach it, and the real run must then log zero calls. Without the control, a zero means nothing.
+- **Scope:** runs that pull or push nothing private: local CI with pulls disabled, offline actions,
+  builds from cached images. **The mirror:** a step that truly needs a registry login is named on its
+  ticket and gets one approved prompt in its own invocation, never the wrapper. And an *unattended* job
+  that needs a credential must not depend on a presence-gated store at all (*A test of an UNATTENDED
+  job, run from an interactive session, borrows that session's credentials*).
 
 ## A fleet audit measures against the FORGE, never against `refs/remotes/*` as found
 

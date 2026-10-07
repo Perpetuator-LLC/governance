@@ -134,6 +134,19 @@ backslashes. Measured: a credential mint handed over as a `/tmp` `&&` chain — 
 to the secret store out of band, then re-run; the second `ssh-keygen` overwrote the deploy key
 (`Overwrite (y/n)?`), so the public key already pasted into the forge no longer matched the store.
 
+**Where a one-click job runner serves the host, the step is a job on it, not text to copy.** When the
+organisation runs a runner a person approves in one click (it executes a committed script on that host
+and posts the output back), a human command step is filed there: what it does, what it unlocks, the
+prompts the person will see, and the undo. Text to copy is the fallback for a host no runner serves.
+Measured: two store commands embedded as a stringified list in a dashboard card sat unrun; the same
+step filed as a runner job was run within a minute, and its receipt posted itself.
+- **Scope:** non-interactive commands, and interactive ones the runner supports (a browser sign-in, a
+  TTY). Secrets go through the runner's hidden prompt, never the command text.
+- **Not a job:** a click in a web interface (merging a pull request, approving a thread), which stays a
+  live link; a step the runner refuses by design (network control); a host with no runner.
+- **The mirror:** a step where the person must type a decision mid-run needs the runner's interactive
+  mode, or it stays a manual step. Output read after the fact is fine either way.
+
 **The script file itself must be idempotent** — not just "some future automation." Re-running from
 any partial state converges on the same secret material / the same end-state, and **does not mint a
 second key, password, or token.** `ssh-keygen`/`openssl`/store writes that clobber on rerun are
@@ -296,6 +309,41 @@ one-word answer with a recommendation.
 **miss**. Log it, and send it to whoever owns the lane's routines. A miss that recurs is a defect in
 the routine. The fix is a change to the routine, not more effort in the next pass.
 
+## Shine a light on a near miss: name the adjustment that would make it work
+
+**Scope:** any analysis, test or build that turns up something *almost* valuable. That means a
+strategy, signal, design or result that fails by a margin one specific adjustment might close, or an
+adjacent opportunity the request did not ask about but the evidence points at. The sibling rule above
+is about people waiting on us. This one is about what the work lets us see.
+
+**Rule: say so in the same report, unasked.** State four things:
+1. **What** is close.
+2. **How close:** the measured gap, in the work's own units.
+3. **The adjustment** that might close it.
+4. **The cheapest test** that would show whether it does.
+
+Offer it as a one-word decision ("test it?"). A pass/fail verdict hides a near miss: "no" reads the
+same whether a result missed by a mile or by a hair. The person cannot ask for what they do not know
+exists.
+
+**Limits: where shining the light goes wrong.**
+- **Surface, do not pursue.** Beyond a cheap, reversible probe, the follow-up is the person's call.
+  The light is a pointer, not a project you started on their behalf.
+- **Evidence, not hunches.** A light names a measured gap and a concrete adjustment. "This might be
+  interesting" is noise. Too many lights and none of them gets read.
+- **A pre-registered test stays honest.** An adjustment found after seeing the result is a NEW
+  hypothesis. It must be tested on data it has not seen (held out, out of sample, or forward), never
+  used to rescue the old verdict. Re-running until something passes is how false edges are made.
+- **The adjustment changes the subject, never the yardstick.** Loosening a threshold, a tolerance, a
+  timeout, a test's expected value or a gate until the result passes is not a near miss. It is a
+  different verdict, and it belongs to whoever owns that bar, asked as that question. Name the gap and
+  leave the bar where it is; "missed by 2 ms, so raise the timeout" is how a gate stops gating.
+- **In a decision-support role it proposes a test, never an action.** It names what to examine next;
+  the decision to act stays with the principal.
+- **The mirrors count.** A risk, falsifier or failure mode close to firing is also a near miss. So is
+  a pass by a hair: a result that cleared its bar narrowly reads "yes" exactly as a wide pass does, and
+  fails as quietly. Each gets the same four lines, with the margin as the gap.
+
 ## Git refs in human-facing text
 
 - ⚠️ **The test is ACTIONABILITY, not FORMAT: not "is this ref a link?" but "can the reader reach
@@ -311,6 +359,12 @@ the routine. The fix is a change to the routine, not more effort in the next pas
 - **A ref is a LINK — a forge URL — never bare.** A branch or tag written as plain text renders as
   a dead file path; issues, PRs and commits are the same. The reader cannot click an identifier,
   and cannot tell a live object from one that was never created.
+- **A LIST of refs into ANOTHER repository qualifies every element.** `<other-repo>#413 #415 #417` reads to a person as three
+  refs in that repository, and to the forge as one: the rest link in the repository the text lives in.
+  That is worse than a bare ref, because those numbers usually exist locally too, so the reader is
+  sent to a real, unrelated object, and the cross-reference notice lands on it. The writer qualifies
+  the first and lets the rest ride, which is why this is the shape that recurs. Refs into the
+  repository the text lives in need no qualifier, alone or listed.
 - ⚠️ **Never fabricate a ref.** Quote a number or SHA only after the tool that mints it answered in
   THIS turn. A plausible-looking issue number or short SHA is worse than a bare one: correct in shape,
   rendered as a link, and therefore trusted — resolving either to nothing or to a real and
