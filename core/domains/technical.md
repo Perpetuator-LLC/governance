@@ -866,6 +866,17 @@ providers: none"* reads as *"nothing here to protect"*.
   rollback path after a compose upgrade, `docker image ls` the ACTUAL names on the box and reconcile
   both spellings (retag the survivors, or pin `image:`/`container_name:` explicitly so the name stops
   depending on the compose version).
+- **A Docker network added for one narrow purpose (a database side link) is created `--internal`
+  (compose: `internal: true`), or it can take over the container's default route.** Docker takes a
+  multi-network container's default gateway from the highest-priority non-internal network, then in
+  name order, so a new network that sorts first silently moves all of the container's outbound
+  traffic. Measured on Docker 29: adding `aaa-side` beside `zzz-main` moved the default route to
+  `aaa-side`'s gateway; the same network created `--internal` left it on `zzz-main`. Create it
+  internal before the first attach (changing it later means detaching and recreating every member),
+  and assert `docker network inspect -f '{{.Internal}}'` reads `true`. **Scope:** a host-local network
+  that should not carry the container's outbound traffic. When the side network must reach outside
+  itself, keep it non-internal and pin the main one instead (`--gw-priority`, Engine 28 and later);
+  measured, that also kept the route.
 
 ## A deployable repo stands alone — the stack-repo properties
 
