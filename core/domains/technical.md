@@ -1212,6 +1212,17 @@ that smaller than the job's roster.**
   the control, its job is unconditional. **Scope:** a condition above a step whose job is to refuse.
   Skipping *work* with a job-level `if` is cheap and correct, and a deliberately skipped publish step on
   a pull request is the intent.
+- **A run whose target pattern matches nothing skips its work and exits 0.** Measured with Ansible: a
+  play whose host pattern matches no host prints a warning, runs nothing, and exits 0. `--limit` makes
+  it routine: a guard written as its own play (`hosts: localhost` plus `fail`) falls outside the limit
+  and is skipped while the work play runs. Put the guard in the working play's `pre_tasks`, with
+  `any_errors_fatal: true` when it guards the whole run (otherwise a guard failing on one host lets
+  the rest proceed). That does not cover the mirror: when the working play itself matches nothing, its
+  guard never runs either. So a wrapper that chains plays and reports "done" preflights each with
+  `--list-hosts`, under the same inventory and arguments, and refuses a count of 0; `--list-hosts`
+  also exits 0 on an empty match, so read the count, not the exit code. **Scope:** any runner that
+  treats exit 0 as "it ran" (a host pattern, a selector, a file glob, a test filter). A step meant to
+  do nothing on an empty set, such as a cleanup with nothing to clean, is not a finding.
 
 ## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
 
