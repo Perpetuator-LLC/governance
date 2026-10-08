@@ -1234,6 +1234,18 @@ that smaller than the job's roster.**
   also exits 0 on an empty match, so read the count, not the exit code. **Scope:** any runner that
   treats exit 0 as "it ran" (a host pattern, a selector, a file glob, a test filter). A step meant to
   do nothing on an empty set, such as a cleanup with nothing to clean, is not a finding.
+- **A check of a change that a handler applies runs after `meta: flush_handlers`, or it checks the old
+  process.** Ansible runs notified handlers (a restart, a recreate) at the end of the play, so a
+  verify task placed after the notifying task still sees the old state and passes. Measured: without
+  the flush, the verify read the old value and the handler changed it only afterwards; with it, the
+  verify read the new one. The same play once passed its checks in 0 s, and the handler's recreate
+  then locked a service out with nothing checking. **The neighbour:** a task that fails between the
+  notify and the play's end means the handler never runs (measured: the change on disk, the process
+  never restarted), and a re-run does not notify again because nothing changes. Flush right after
+  the change, or set `force_handlers`. **The mirror:** content delivered through a bind mount changes
+  nothing that `compose up -d` acts on (same container), so the handler's recreate is the only
+  restart, and the check must follow it. **Scope:** any play whose verification shares a play with a
+  notify.
 
 ## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
 
