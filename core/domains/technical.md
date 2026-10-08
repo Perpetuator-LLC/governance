@@ -2938,6 +2938,15 @@ reproducible.
   a silent no-op on the target's older one: an environment variable the older release does not read
   is ignored, not refused. Calibrate the fix on the target's release (a container of its OS release is
   enough). This does not apply when the job and the test run the same pinned image.
+- **And the privilege of the identity that will run it.** A provisioning recipe proved on a throwaway
+  server under its root token proves nothing about the role that runs it live: root holds every
+  grant, so a missing one cannot show. Run the proof under a token holding **only the policy the real
+  role will hold**, rendered from the repo; when the same change edits that policy, prove it under the
+  edited policy and apply the policy before the recipe runs. As a control, run it again with the grant
+  you added removed: it must refuse, and refuse before it changes anything. **Scope:** a recipe that a
+  named, limited role will run. Where the real runner is root (a first bootstrap), root is the right
+  identity to test. It catches a role with **too little**, not one with too much: an over-broad policy
+  still passes, and least privilege needs its own negative test.
 - **Scope:** any credential, session cache or handed-down identity that survives between an interactive login and a later
   call. The mechanism names differ by tool; the question does not: *what did this call authenticate
   with, and will the unattended run have it?*
