@@ -11,8 +11,10 @@
 # Reading the commit message back does not catch it either: `git log -1` prints the old commit.
 #
 # What this does, in order, stopping at the first failure:
-#   1. refuses with no paths (never `git add -A`), a detached HEAD, or a missing message file;
-#   2. stages exactly the named paths and commits them by pathspec;
+#   1. refuses with no paths (never `git add -A`), a detached HEAD, a missing message file, or a path
+#      that is neither in the tree nor in HEAD;
+#   2. stages exactly the named paths (a path gone from the tree but tracked in HEAD is a deletion,
+#      e.g. the old name of a `git mv`) and commits them by pathspec;
 #   3. asserts HEAD MOVED, to a commit whose parent is the old HEAD; otherwise nothing is pushed,
 #      and it says so, naming the files a hook may have left modified or staged;
 #   4. pushes the current branch to `origin`, and reads the remote back (`ls-remote`): the remote tip
@@ -39,7 +41,17 @@ done
 branch="$(git symbolic-ref --quiet --short HEAD)" || { echo "commit-push: HEAD is detached; check out a branch" >&2; exit 2; }
 before="$(git rev-parse --verify HEAD)" || exit 1
 
-git add -- "$@" || { echo "❌ commit-push: git add failed; nothing committed, nothing pushed" >&2; exit 1; }
+# Stage each path: a file or directory that exists is added; one that is gone but tracked in HEAD is a
+# deletion (it may already be staged, as by `git mv`); anything else is a typo, refused before a commit.
+for p in "$@"; do
+  if [ -e "$p" ] || [ -L "$p" ]; then
+    git add -- "$p" || { echo "❌ commit-push: git add $p failed; nothing committed, nothing pushed" >&2; exit 1; }
+  elif git cat-file -e "HEAD:./$p" 2>/dev/null; then
+    git rm --cached --quiet --ignore-unmatch -- "$p" >/dev/null
+  else
+    echo "commit-push: '$p' is neither in the tree nor in HEAD; nothing committed" >&2; exit 2
+  fi
+done
 git commit -F "$msg" -- "$@"
 rc=$?
 after="$(git rev-parse --verify HEAD)"
