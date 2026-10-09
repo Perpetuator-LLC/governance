@@ -866,6 +866,26 @@ providers: none"* reads as *"nothing here to protect"*.
   rollback path after a compose upgrade, `docker image ls` the ACTUAL names on the box and reconcile
   both spellings (retag the survivors, or pin `image:`/`container_name:` explicitly so the name stops
   depending on the compose version).
+- **A Docker network added for one narrow purpose (a database side link) is created `--internal`
+  (compose: `internal: true`), or it can take over the container's default route.** Docker takes a
+  multi-network container's default gateway from the highest-priority non-internal network, then in
+  name order, so a new network that sorts first silently moves all of the container's outbound
+  traffic. Measured on Docker 29: adding `aaa-side` beside `zzz-main` moved the default route to
+  `aaa-side`'s gateway; the same network created `--internal` left it on `zzz-main`. Create it
+  internal before the first attach (changing it later means detaching and recreating every member),
+  and assert `docker network inspect -f '{{.Internal}}'` reads `true`. **Scope:** a host-local network
+  that should not carry the container's outbound traffic. When the side network must reach outside
+  itself, keep it non-internal and pin the main one instead (`--gw-priority`, Engine 28 and later);
+  measured, that also kept the route.
+- **A change that stops a host's services fetches everything it needs first: packages, images, and
+  the rollback's too.** The host may serve its own DNS, registry mirror or proxy, so once its services
+  stop, the network the upgrade expected is gone, and a rollback that needs the network fails the
+  same way. Then prove the stop-to-start window runs offline, with downloads refused
+  (`apt-get install --no-download`, `docker compose up --pull never`): a step that quietly reaches
+  out, such as an `always` pull policy or a package script that downloads, defeats the cache. Check
+  that the cache fits on the disk before you start. **Scope:** an in-place engine, runtime or
+  OS-package upgrade on a host that runs its own infrastructure services. An immutable rebuild with
+  its artifacts baked in is outside it.
 
 ## A deployable repo stands alone — the stack-repo properties
 
@@ -1223,6 +1243,18 @@ that smaller than the job's roster.**
   also exits 0 on an empty match, so read the count, not the exit code. **Scope:** any runner that
   treats exit 0 as "it ran" (a host pattern, a selector, a file glob, a test filter). A step meant to
   do nothing on an empty set, such as a cleanup with nothing to clean, is not a finding.
+- **A check of a change that a handler applies runs after `meta: flush_handlers`, or it checks the old
+  process.** Ansible runs notified handlers (a restart, a recreate) at the end of the play, so a
+  verify task placed after the notifying task still sees the old state and passes. Measured: without
+  the flush, the verify read the old value and the handler changed it only afterwards; with it, the
+  verify read the new one. The same play once passed its checks in 0 s, and the handler's recreate
+  then locked a service out with nothing checking. **The neighbour:** a task that fails between the
+  notify and the play's end means the handler never runs (measured: the change on disk, the process
+  never restarted), and a re-run does not notify again because nothing changes. Flush right after
+  the change, or set `force_handlers`. **The mirror:** content delivered through a bind mount changes
+  nothing that `compose up -d` acts on (same container), so the handler's recreate is the only
+  restart, and the check must follow it. **Scope:** any play whose verification shares a play with a
+  notify.
 
 ## To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question
 
@@ -1433,6 +1465,16 @@ detached worktree at that SHA, or an export when the suite reads no git history)
 alone until it finishes. Measured: a merge into a worktree while its full suite ran swapped the gate
 under test halfway through, and the run had to be stopped and repeated on a snapshot. **Where it is
 wrong:** a snapshot tests the commit; when the change under test is uncommitted, it is the wrong tree.
+
+**On a machine several agents share, also check who HOLDS it.** A worktree under a common folder may
+be another agent's, and "I created a worktree for this task" is answered from memory. Before removing
+one, read every agent's declared holdings (the fleet's seat or claim records) for its path, and
+remove only a path you hold. A path another agent holds is a message to that agent, never a removal.
+Measured: a hand-off cleanup removed two worktrees that another agent's state record listed as held;
+they were restored and nothing was lost. **The mirror:** a path that no record claims is not free to
+remove, because a human or an unregistered process may own it; it is a question to whoever
+coordinates the machine. **Scope:** shared machines with a record of holdings. On a single-agent
+machine, your own list is the whole record.
 
 ## Agents that share a scratch directory write unique paths, and a publish step proves the file is its own
 
