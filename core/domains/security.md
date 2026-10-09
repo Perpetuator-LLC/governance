@@ -414,6 +414,10 @@ classes of credential, and record the class in the inventory above:
   that as an exception with its compensating control, never as the design. And a window that only
   one possibly unreachable person can open needs a sealed break-glass path, not a standing
   credential.
+- **Scope: changes applied on demand.** Where a pipeline applies the infrastructure on every reviewed
+  merge, the change is frequent and the review is the window. Park nothing there: the change
+  credential lives only in that pipeline's protected environment, usable by the apply job on the
+  default branch and never by a job a pull request can run.
 
 **A deliberately disabled credential cannot authenticate to re-enable itself.** Re-enabling it needs an
 identity with write access to the credential system, which is exactly what parking it keeps away from
