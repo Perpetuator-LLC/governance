@@ -306,6 +306,38 @@ mkdir -p "$G/core/.claude" && echo x > "$G/core/.claude/state.json"
 rc="$(gov reconcile --home "$H3")"
 check "a vault note edited, a notes-only commit ahead, and an untracked dir in the core: none of them refuse" \
   "[ '$rc' = '0' ] && [ \"\$(grep -c '^ok *source .*at merged canon' '$TMP/stdout')\" = '2' ]"
+
+echo "governance reconcile — the desktop app's save of a routine is not unmerged canon (#204)"
+# The app rewrites a routine's SKILL.md in place (through the scheduled-tasks link) and runs that file:
+# it strips the frontmatter to name + description and keeps the body. That change is live the moment
+# it is saved, so refusing the whole render over it protects nothing and blocks every other rule.
+SK="$G/vault/.governance/scheduled-tasks/sweep/SKILL.md"; mkdir -p "$(dirname "$SK")"
+BODY=$'\nSweep every due item.\n\n## Steps\n1. Read the table.\n'
+printf -- '---\nname: sweep\ndescription: Monthly sweep of due items\nregistration: armed\ntaskId: sweep\ncron: "0 9 1 * *"\nenabled: true\n---\n%s' "$BODY" > "$SK"
+( cd "$G/vault" && git add -A && git commit -qm "routine" --no-gpg-sign && git push -q origin main ) >/dev/null 2>&1
+printf -- '---\nname: sweep\ndescription: Monthly sweep of due items\n---\n%s' "$BODY" > "$SK"
+rc="$(gov reconcile --home "$H3")"
+check "the app's exact rewrite (frontmatter cut to name + description, body unchanged): exit 0, rendered, reported by name" \
+  "[ '$rc' = '0' ] && grep -q '^ok *source .*vault/.governance.*tool-managed rewrite of sweep' '$TMP/stdout' && ! grep -q '^refused' '$TMP/stdout'"
+printf -- '---\nname: sweep\ndescription: Monthly sweep of due items\n---\n%s\nA new step.\n' "$BODY" > "$SK"
+rc="$(gov reconcile --home "$H3")"
+check "…the control: the same strip plus a body edit is refused as uncommitted" \
+  "[ '$rc' = '1' ] && grep -q '^refused *source .*vault/.governance.* 1 uncommitted change(s) in it' '$TMP/stdout'"
+printf -- '---\nname: sweep\ndescription: Monthly sweep of due items\nregistration: armed\ntaskId: sweep\ncron: "0 9 2 * *"\nenabled: true\n---\n%s' "$BODY" > "$SK"
+rc="$(gov reconcile --home "$H3")"
+check "…the mirror: a canon key edited, not stripped (cron changed), is refused" \
+  "[ '$rc' = '1' ] && grep -q '^refused *source .*vault/.governance.* 1 uncommitted change(s) in it' '$TMP/stdout'"
+printf -- '---\nname: sweep\ndescription: Monthly sweep: every due item\n---\n%s' "$BODY" > "$SK"
+rc="$(gov reconcile --home "$H3")"
+check "…a strip whose description holds an unquoted ': ' does not parse: refused, naming the routine and the fix" \
+  "[ '$rc' = '1' ] && grep -q '^refused *source .*scheduled task sweep: .*description does not parse as YAML.*quote the value' '$TMP/stdout'"
+printf -- '---\nname: sweep\ndescription: "Monthly sweep: every due item"\n---\n%s' "$BODY" > "$SK"
+echo "# half-written" > "$G/vault/.governance/new-rule.md"
+rc="$(gov reconcile --home "$H3")"
+check "…a quoted strip beside another uncommitted file: refused for the other file only, the rewrite still named" \
+  "[ '$rc' = '1' ] && grep -q '^refused *source .*vault/.governance.* 1 uncommitted change(s) in it.*tool-managed rewrite of sweep' '$TMP/stdout'"
+rm "$G/vault/.governance/new-rule.md"; git -C "$G/vault" checkout -q -- "$SK"
+
 # Outside git entirely: never refused, and says it was not checked (the fixture above already shows it).
 
 echo

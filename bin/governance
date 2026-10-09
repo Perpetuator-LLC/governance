@@ -86,6 +86,9 @@ nothing written) / `fixed` (changed) / `refused` (cannot be fixed safely):
                         publish unmerged canon or omit merged canon. Compared against the remote ref as of
                         the last fetch, so fetch first. A source outside git, or with no origin default, is
                         `ok — merged state not checked`. --allow-unmerged renders anyway, for a scratch home.
+                        One uncommitted change is not refused: the desktop app's own save of a routine
+                        (scheduled-tasks/<task>/SKILL.md cut to name + description, body unchanged) is
+                        already live, so it is named and rendered as is; one that does not parse is refused.
   b. home               the install for the manifest's harnesses, adapter and local — a noop when in state
   c. GOVERNANCE.md      in every vault: frontmatter keys type/canonical_home/adapter/role and a pointer
                         block between <!-- governance:begin --> and <!-- governance:end -->; nothing else
@@ -1040,11 +1043,70 @@ def merged_canon(path):
             problems.append(f"its content differs from {base}")
     untracked = "--untracked-files=no" if rel == "." else "--untracked-files=normal"
     dirty = [l for l in _git(top, "status", "--porcelain", untracked, *spec).stdout.splitlines() if l.strip()]
-    if dirty:
-        problems.append(f"{len(dirty)} uncommitted change(s) in it: a render would publish them")
+    rewrites, rest = [], []
+    for line in dirty:
+        r = tool_rewrite(top, line)
+        if r is None:
+            rest.append(line)
+        elif r[1]:
+            problems.append(f"scheduled task {r[0]}: the app's rewrite of its SKILL.md {r[1]}")
+        else:
+            rewrites.append(r[0])
+    if rest:
+        problems.insert(0, f"{len(rest)} uncommitted change(s) in it: a render would publish them")
+    note = (f"; tool-managed rewrite of {', '.join(rewrites)} (the app's own save, already live): rendered as "
+            f"is, commit it in the next roll" if rewrites else "")
     if problems:
-        return "unmerged", "; ".join(problems) + f" (compared with {base} @ {at}, as fresh as the last fetch)"
-    return "merged", f"at merged canon ({base} @ {at})"
+        return "unmerged", "; ".join(problems) + f" (compared with {base} @ {at}, as fresh as the last fetch)" + note
+    return "merged", f"at merged canon ({base} @ {at})" + note
+
+
+TASK_FILE = re.compile(r"(?:\A|/)scheduled-tasks/([^/]+)/SKILL\.md\Z")
+TOOL_KEYS = ("name", "description")
+
+
+def _yaml_scalar_ok(v):
+    """Does a one-line frontmatter value parse as a YAML scalar? Fail-closed: a double-quoted value must
+    also be valid JSON, so a YAML-only escape reads as not parsing."""
+    if v[:1] == '"':
+        try:
+            return isinstance(json.loads(v), str)
+        except ValueError:
+            return False
+    if v[:1] == "'":
+        return len(v) >= 2 and v.endswith("'") and "'" not in v[1:-1].replace("''", "")
+    return not (": " in v or v.endswith(":") or " #" in v or v[:1] in "[]{},&*!|>%@`#")
+
+
+def tool_rewrite(top, line):
+    """For one `git status --porcelain` line (#204): None unless it is the desktop app's save of a routine,
+    i.e. a modified `scheduled-tasks/<task>/SKILL.md` whose frontmatter is now only name/description lines
+    and whose body is unchanged from HEAD. Then (task, None) when the frontmatter parses, or (task, why)
+    when it does not: the app writes values unquoted, so a description holding ': ' breaks every parser."""
+    st, path = line[:2], line[3:]
+    m = TASK_FILE.search(path)
+    if not m or st.strip() not in ("M", "MM"):
+        return None
+    head = _git(top, "show", f"HEAD:{path}")
+    try:
+        with open(os.path.join(top, path), encoding="utf-8") as fh:
+            work = fh.read()
+    except OSError:
+        return None
+    if head.returncode != 0:
+        return None
+    hfm, hbody = split_frontmatter(head.stdout)
+    wfm, wbody = split_frontmatter(work)
+    if hfm is None or wfm is None or wbody.rstrip("\n") != hbody.rstrip("\n"):
+        return None
+    pairs = [l.split(":", 1) for l in wfm.split("\n") if l.strip()]
+    if not pairs or any(len(p) != 2 or p[0] not in TOOL_KEYS for p in pairs):
+        return None
+    bad = [k for k, v in pairs if not _yaml_scalar_ok(v.strip())]
+    if bad:
+        return m.group(1), (f"leaves frontmatter that does not parse: its {', '.join(bad)} does not parse as YAML "
+                            f"(an unquoted value holding ': ' or ' #'). quote the value; do not restore the file")
+    return m.group(1), None
 
 
 def load_manifest(path):
