@@ -86,6 +86,20 @@ out=$(cd "$d/work" && "$CP" -F "$d/msg" -- a 2>&1); rc=$?
 check "a rejected push: exit 1, 'committed locally only', origin keeps the other tip" \
   '[ $rc = 1 ] && grep -q "committed locally only" <<<"$out" && [ "$(remote_tip "$d" feature)" = "$(git -C "$d/other" rev-parse HEAD)" ]'
 
+# 7b. A rename: the old name is gone from the tree (git mv staged it); naming both commits the rename.
+d=$(mkrepo rename); git -C "$d/work" mv a a2
+(cd "$d/work" && "$CP" -F "$d/msg" -- a a2 >/dev/null 2>&1); rc=$?
+check "a git mv: naming the old and the new path commits the rename and pushes it" \
+  '[ $rc = 0 ] && ! git -C "$d/work" cat-file -e HEAD:a 2>/dev/null && git -C "$d/work" cat-file -e HEAD:a2 && [ "$(remote_tip "$d" feature)" = "$(git -C "$d/work" rev-parse HEAD)" ]'
+
+# 7c. A plain deletion (rm, not staged) of a tracked file is committed; a path that never existed is refused.
+d=$(mkrepo deleted); base=$(git -C "$d/work" rev-parse HEAD); rm "$d/work/b"
+(cd "$d/work" && "$CP" -F "$d/msg" --no-push -- b >/dev/null 2>&1); r1=$?
+gone=$(git -C "$d/work" cat-file -e HEAD:b 2>/dev/null && echo kept || echo gone)
+(cd "$d/work" && "$CP" -F "$d/msg" -- no-such-file >/dev/null 2>&1); r2=$?
+check "a deleted tracked file is committed as a deletion; an unknown path exits 2 with nothing committed" \
+  '[ $r1 = 0 ] && [ "$gone" = gone ] && [ $r2 = 2 ] && [ "$(git -C "$d/work" rev-list --count HEAD)" = 2 ]'
+
 # 8. The test can see the failure: commit-push WITHOUT the HEAD-moved check publishes the base in case 2.
 M="$TMP/commit-push.mutant"; sed 's/if \[ "\$rc" -ne 0 \] || \[ "\$after" = "\$before" \] || .*; then/if false; then/' "$CP" > "$M"; chmod +x "$M"
 d=$(mkrepo mutant); echo change >> "$d/work/a"; hook "$d" 'exit 1'
