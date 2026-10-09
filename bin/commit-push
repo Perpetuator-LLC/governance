@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# commit-push — commit exactly the named paths, and push ONLY if the commit landed.
+#
+#   commit-push -F MSGFILE -- PATH [PATH ...]      commit by pathspec, then push the current branch
+#   commit-push -F MSGFILE --no-push -- PATH ...   commit and verify, no push
+#
+# The failure it exists for: `git commit … ; git push` (or `| tail; git push`) in one command. When a
+# pre-commit hook refuses the commit (a formatter rewrote a file, a secret scanner found something,
+# a signing key was not unlocked), HEAD does not move, the push still runs, and the branch is
+# published at its BASE commit, or an unrelated tip, while the author reads "pushed" and moves on.
+# Reading the commit message back does not catch it either: `git log -1` prints the old commit.
+#
+# What this does, in order, stopping at the first failure:
+#   1. refuses with no paths (never `git add -A`), a detached HEAD, or a missing message file;
+#   2. stages exactly the named paths and commits them by pathspec;
+#   3. asserts HEAD MOVED, to a commit whose parent is the old HEAD; otherwise nothing is pushed,
+#      and it says so, naming the files a hook may have left modified or staged;
+#   4. pushes the current branch to `origin`, and reads the remote back (`ls-remote`): the remote tip
+#      must equal the new HEAD.
+#
+# Exit: 0 committed (and pushed, and the remote verified) · 1 the commit or the push did not land
+#       (the message says which, and what is left behind) · 2 usage.
+set -uo pipefail
+
+usage() { sed -n '3,5p' "$0" | sed 's/^# //' >&2; exit 2; }
+msg="" push=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -F) [ $# -ge 2 ] || usage; msg="$2"; shift 2 ;;
+    --no-push) push=0; shift ;;
+    --) shift; break ;;
+    -h|--help) usage ;;
+    *) echo "commit-push: unexpected argument '$1' (paths go after --)" >&2; exit 2 ;;
+  esac
+done
+[ -n "$msg" ] && [ -f "$msg" ] || { echo "commit-push: -F MSGFILE is required and must exist" >&2; exit 2; }
+[ $# -gt 0 ] || { echo "commit-push: name the paths to commit after -- (never all of them)" >&2; exit 2; }
+
+branch="$(git symbolic-ref --quiet --short HEAD)" || { echo "commit-push: HEAD is detached; check out a branch" >&2; exit 2; }
+before="$(git rev-parse --verify HEAD)" || exit 1
+
+git add -- "$@" || { echo "❌ commit-push: git add failed; nothing committed, nothing pushed" >&2; exit 1; }
+git commit -F "$msg" -- "$@"
+rc=$?
+after="$(git rev-parse --verify HEAD)"
+if [ "$rc" -ne 0 ] || [ "$after" = "$before" ] || [ "$(git rev-parse --verify HEAD^ 2>/dev/null)" != "$before" ]; then
+  echo "❌ commit-push: the commit did NOT land (git commit exit $rc; HEAD still ${before:0:8}). Nothing was pushed." >&2
+  left="$(git status --porcelain -- "$@")"
+  [ -n "$left" ] && { echo "   Left behind (a hook may have rewritten or staged these):" >&2; printf '     %s\n' "$left" >&2; }
+  exit 1
+fi
+echo "✅ committed ${after:0:8} on $branch"
+[ "$push" -eq 1 ] || exit 0
+
+git push origin "$branch" || { echo "❌ commit-push: the push failed; ${after:0:8} is committed locally only" >&2; exit 1; }
+remote="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
+if [ "$remote" != "$after" ]; then
+  echo "❌ commit-push: origin's $branch is '${remote:-absent}', not ${after:0:8}" >&2
+  exit 1
+fi
+echo "✅ pushed: origin/$branch = ${after:0:8}"

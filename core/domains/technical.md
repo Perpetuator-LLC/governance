@@ -2394,6 +2394,24 @@ change lifts per environment, and only once that environment serves the change: 
 *deployed to staging* say nothing about production. **Where it is wrong:** an observer shipped
 disarmed on purpose, with its arming condition written beside it, is a plan, not a defect.
 
+## A push follows a commit only when HEAD MOVED
+
+**`git commit …; git push` in one command publishes the wrong thing whenever the commit is refused.**
+A pre-commit hook that rewrites a file (a formatter), finds a secret or cannot reach a signing key
+leaves HEAD where it was; the push still runs and publishes the branch at its base, or at an old tip,
+and the author reads "pushed". Reading the message back does not catch it: `git log -1` prints the old
+commit, which looks like a commit. A `| tail` between the two hides the exit code as well.
+
+**So the push is conditional on a measured fact, not on the command having run:** HEAD after the
+commit differs from HEAD before it and is its child, and after the push the remote's tip reads back as
+that commit. `bin/commit-push -F MSG -- PATHS` does all three, commits by pathspec only, and names
+what a refusing hook left modified or staged. A refused commit leaves its files STAGED: stage the
+fixed file again before re-running, or the hook re-scans the old copy.
+
+**Where it does not apply:** pushing a commit that already exists (no commit step, nothing to
+assert), and an amend or a rebase, whose new HEAD is not a child of the old one; push those
+deliberately, by hand.
+
 ## Cite a STABLE identifier — a branch tip is not one
 
 **A pointer to a moving reference is stale the moment the thing it points at improves.** A branch tip
