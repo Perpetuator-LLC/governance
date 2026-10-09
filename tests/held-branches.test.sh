@@ -56,6 +56,13 @@ g switch -q merge/lane; g cherry-pick "partial~1" >/dev/null; g push -q origin m
 for b in landed landed-newhash folded-merge folded-newhash dropped-collide dropped-plain partial; do g push -q origin "$b"; done
 g switch -q main
 
+# Pull-request heads, as forges publish them: a PR into the rolling branch whose head is dropped-plain's
+# tip (Gitea/GitHub shape), a GitLab MR at partial's tip, and a PR whose head is an OLDER commit than
+# any finding's tip (main's), which must name nothing.
+git -C "$O" update-ref refs/pull/7/head "$(g rev-parse dropped-plain)"
+git -C "$O" update-ref refs/merge-requests/3/head "$(g rev-parse partial)"
+git -C "$O" update-ref refs/pull/9/head "$(g rev-parse main)"
+
 echo "held-branches"
 rc=0; "$HB" "$C" >"$TMP/out" 2>"$TMP/err" || rc=$?
 check "exit 1 when anything is unfolded" "[ '$rc' = '1' ]"
@@ -74,6 +81,15 @@ check "work that reached main under a new hash is not reported" "! grep -q 'orig
 check "the rolling branch itself is never listed (orphan-check's job)" "! grep -q 'origin/merge/' '$TMP/out'"
 check "exactly three findings" "[ \"\$(grep -c 'not upstream' '$TMP/out')\" = 3 ]"
 check "the finding says to adjudicate by content, on stderr" "grep -q 'Adjudicate by CONTENT' '$TMP/err'"
+check "a finding whose TIP is a PR's head names the PR (a proposal into a rolling branch reads like a dropped hold)" \
+  "grep 'origin/dropped-plain ' '$TMP/out' | grep -q 'tip is PR #7: read it'"
+check "…and a GitLab merge request the same way" "grep 'origin/partial ' '$TMP/out' | grep -q 'tip is MR !3'"
+check "a PR whose head is an OLDER commit names nothing (the header's stated limit)" "! grep -q 'PR #9' '$TMP/out'"
+check "a finding with no PR at its tip carries no annotation" "! grep 'origin/dropped-collide ' '$TMP/out' | grep -q 'tip is'"
+check "stderr says to read a row's PR before calling it dropped" "grep -q 'read the PR before calling it dropped' '$TMP/err'"
+rc=0; "$HB" --no-fetch "$C" >"$TMP/out-nofetch" 2>/dev/null || rc=$?
+check "--no-fetch reads no PR refs: the same finding carries no annotation, and still exits 1" \
+  "[ '$rc' = '1' ] && grep -q 'origin/dropped-plain ' '$TMP/out-nofetch' && ! grep -q 'tip is' '$TMP/out-nofetch'"
 
 # a clean repo: exit 0
 for b in dropped-collide dropped-plain partial; do g push -q origin --delete "$b"; g branch -qD "$b"; done

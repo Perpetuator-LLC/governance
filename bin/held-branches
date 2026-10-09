@@ -25,6 +25,16 @@
 # direction — adjudicate each finding by reading the code before acting on it, and never delete on
 # this report alone.
 #
+# A PULL REQUEST is the other adjudication question. A peer that cannot push your rolling branch
+# proposes into it with a PR whose BASE is that branch, and until someone merges that PR its branch is
+# NOT UPSTREAM here, reading exactly like a dropped hold. Measured: two reviewed fixes sat unmerged for
+# three days in PRs based on a lane's rolling branch, and that lane's boot called them dropped. Forges
+# publish each PR's head as a plain ref (refs/pull/<n>/head on Gitea, Forgejo and GitHub;
+# refs/merge-requests/<n>/head on GitLab), so a row whose TIP is one says "tip is PR #<n>". That PR may
+# be open, closed or merged: read it. NO annotation proves nothing: a forge that publishes no such
+# refs, a --no-fetch run, and a PR whose head is an OLDER commit of the branch (commits pushed after a
+# merged PR) all print none.
+#
 # Usage
 #   bin/held-branches                 # the current repo
 #   bin/held-branches <repo> [repo…]  # these repos
@@ -48,7 +58,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-fetch) FETCH=0; shift ;;
     --local) LOCAL=1; shift ;;
-    -h|--help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "unknown flag: $1" >&2; exit 2 ;;
     *) REPOS+=("$1"); shift ;;
   esac
@@ -74,6 +84,13 @@ for R in "${REPOS[@]}"; do
   while IFS= read -r m; do [ -n "$m" ] && ROLL+=("$m"); done \
     < <(git -C "$R" for-each-ref --format='%(refname:short)' 'refs/remotes/origin/merge/*')
 
+  # Each PR's head, as "<sha> <ref>" lines (see the header). Read with the fetch, never without it.
+  PRS=""
+  if [ "$FETCH" = 1 ]; then
+    PRS="$(git -C "$R" ls-remote origin 'refs/pull/*/head' 'refs/merge-requests/*/head' 2>/dev/null)" ||
+      echo "held-branches: could not list $R's pull-request refs; no row names a PR" >&2
+  fi
+
   folded_branches=0
   while IFS= read -r b; do
     case "$b" in origin|origin/HEAD|origin/merge/*|"") continue ;; esac
@@ -95,10 +112,14 @@ for R in "${REPOS[@]}"; do
       # The tip's AUTHOR is printed because it is the first adjudication question: the first live run
       # found 7 candidates and 5 were a human contributor's work in progress, not dropped agent holds —
       # the reviewer had to work out whose each branch was by hand.
-      printf '%s  %s  %d not upstream%s · last %s by %s · "%s"\n' "$R" "$b" "$up" \
+      # A PR whose head IS this tip (the header says why, and what no annotation does not prove).
+      pr="$(printf '%s\n' "$PRS" | awk -v t="$(git -C "$R" rev-parse "$b")" \
+        '$1 == t { n = split($2, p, "/"); printf "%s%s%s", (k++ ? ", " : ""), (p[2] == "pull" ? "PR #" : "MR !"), p[3] }')"
+      printf '%s  %s  %d not upstream%s · last %s by %s · "%s"%s\n' "$R" "$b" "$up" \
         "$([ "$folded" -gt 0 ] && printf ' · %d folded' "$folded")" \
         "$(git -C "$R" log -1 --format=%cr "$b")" "$(git -C "$R" log -1 --format=%an "$b")" \
-        "$(git -C "$R" log -1 --format=%s "$b")"
+        "$(git -C "$R" log -1 --format=%s "$b")" \
+        "$([ -n "$pr" ] && printf ' · tip is %s: read it (open, closed or merged)' "$pr")"
     elif [ "$folded" -gt 0 ]; then
       folded_branches=$((folded_branches + 1))
     fi
@@ -136,6 +157,7 @@ done
 if [ "$findings" -gt 0 ]; then
   echo "held-branches: $findings branch(es) with work on neither the default branch nor a rolling branch." >&2
   echo "  Each is a DROPPED HOLD or someone's work in progress. Adjudicate by CONTENT before acting — a squash merge also appears here." >&2
+  echo "  A row whose tip is a PR may be a proposal awaiting its merge: read the PR before calling it dropped." >&2
   [ "$LOCAL" = 1 ] && echo "  A (local) row is the ONLY copy: push it or hand it over before this seat or machine goes." >&2
   exit 1
 fi
