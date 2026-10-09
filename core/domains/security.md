@@ -392,6 +392,33 @@ every exposure becomes a severity debate and a backlog item.
   *rotate nothing until "is this a credential?" has an answer* above: that question decides what is
   a credential, and this rule decides what happens once one may be exposed.
 
+**A credential that can CHANGE the infrastructure is parked between changes; the one that RUNS it
+stays on, scoped to its job.** Changes are rare and operations are daily, so give each platform two
+classes of credential, and record the class in the inventory above:
+
+- **Change credential.** It can create, destroy or reconfigure the infrastructure: a provider token
+  with write scopes, a storage admin key, a cluster-admin login. It is on only for a change: enabled
+  for the window, used by the infrastructure-as-code apply, then disabled again. **Where the platform
+  cannot disable a credential, park it with the shortest expiry the platform offers, or delete it
+  after the apply and mint a fresh one for the next change.** Alert on a change credential that is
+  enabled outside a change: one left on "for next time" is a finding, not a convenience.
+- **Runtime credential.** It does the day-to-day work: write the backup, rotate a key, prune within
+  policy. It stays on, scoped to exactly that job (one bucket, one path, one action), and it cannot
+  alter the infrastructure. Where the platform can enforce a retention or expiry rule itself, use
+  that rather than giving the job a delete permission it would otherwise not need.
+- **Agents hold neither value.** They author the infrastructure code and the jobs. The change
+  credential reaches the apply blind, from the store into the tool's environment (*The BLIND
+  PIPELINE* above). Opening the window is one human step per change, never one per action.
+- **Where it is wrong:** never park a runtime credential; the work it does stops silently. A platform
+  that offers nothing narrower than admin forces the runtime job to hold a change credential: record
+  that as an exception with its compensating control, never as the design. And a window that only
+  one possibly unreachable person can open needs a sealed break-glass path, not a standing
+  credential.
+- **Scope: changes applied on demand.** Where a pipeline applies the infrastructure on every reviewed
+  merge, the change is frequent and the review is the window. Park nothing there: the change
+  credential lives only in that pipeline's protected environment, usable by the apply job on the
+  default branch and never by a job a pull request can run.
+
 **A deliberately disabled credential cannot authenticate to re-enable itself.** Re-enabling it needs an
 identity with write access to the credential system, which is exactly what parking it keeps away from
 the workload. So decide, when you park it, whether re-enabling is an operator step or a separate,
