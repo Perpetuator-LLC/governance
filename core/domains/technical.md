@@ -1466,6 +1466,16 @@ alone until it finishes. Measured: a merge into a worktree while its full suite 
 under test halfway through, and the run had to be stopped and repeated on a snapshot. **Where it is
 wrong:** a snapshot tests the commit; when the change under test is uncommitted, it is the wrong tree.
 
+**On a machine several agents share, also check who HOLDS it.** A worktree under a common folder may
+be another agent's, and "I created a worktree for this task" is answered from memory. Before removing
+one, read every agent's declared holdings (the fleet's seat or claim records) for its path, and
+remove only a path you hold. A path another agent holds is a message to that agent, never a removal.
+Measured: a hand-off cleanup removed two worktrees that another agent's state record listed as held;
+they were restored and nothing was lost. **The mirror:** a path that no record claims is not free to
+remove, because a human or an unregistered process may own it; it is a question to whoever
+coordinates the machine. **Scope:** shared machines with a record of holdings. On a single-agent
+machine, your own list is the whole record.
+
 ## Agents that share a scratch directory write unique paths, and a publish step proves the file is its own
 
 **Some harnesses give every background agent launched from a session that session's scratch
