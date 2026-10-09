@@ -877,6 +877,15 @@ providers: none"* reads as *"nothing here to protect"*.
   that should not carry the container's outbound traffic. When the side network must reach outside
   itself, keep it non-internal and pin the main one instead (`--gw-priority`, Engine 28 and later);
   measured, that also kept the route.
+- **A change that stops a host's services fetches everything it needs first: packages, images, and
+  the rollback's too.** The host may serve its own DNS, registry mirror or proxy, so once its services
+  stop, the network the upgrade expected is gone, and a rollback that needs the network fails the
+  same way. Then prove the stop-to-start window runs offline, with downloads refused
+  (`apt-get install --no-download`, `docker compose up --pull never`): a step that quietly reaches
+  out, such as an `always` pull policy or a package script that downloads, defeats the cache. Check
+  that the cache fits on the disk before you start. **Scope:** an in-place engine, runtime or
+  OS-package upgrade on a host that runs its own infrastructure services. An immutable rebuild with
+  its artifacts baked in is outside it.
 
 ## A deployable repo stands alone — the stack-repo properties
 
