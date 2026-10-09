@@ -233,6 +233,22 @@ the same rule: bullets, unless one says it waits on another.
 terminal, run the key block". The second never needed the first, so the reader waited on a prompt
 that was never in the way.
 
+**A step that asks the human to JUDGE (check, confirm, keep or remove) carries what the judgment
+needs.** Give the screen's path, name only fields you have seen exist there, and lay the expected
+items out as a table: each item, its identifying value, and the action for it. End with the stop
+condition. Measured: a hand-off said "revoke every other client secret; check last-used", naming a
+column the agent had never seen; the human could not tell the secrets apart, and an irreversible
+revoke rested on a field that might not exist.
+
+- **If you have not seen the screen, say so,** and describe what to look for instead of inventing
+  field names.
+- **When an API can read the screen's data, read it yourself** and hand over the filled table, so the
+  human confirms rather than investigates.
+- **The mirror: an item on the screen that the table does not list is a stop, not a guess.** The
+  table is your expectation; anything outside it is a question back.
+- **Scope:** required when the action is irreversible (revoke, delete, rotate) or the items must be
+  told apart. A judgment with nothing at stake ("does the page look right?") needs only the path.
+
 ## An ask parked on a human names its GATE and what the answer CAUSES
 
 **An ask an agent parks on a human through an asynchronous queue** — a ticket label, a dashboard row,
