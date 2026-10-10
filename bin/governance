@@ -88,7 +88,7 @@ nothing written) / `fixed` (changed) / `refused` (cannot be fixed safely):
                         `ok — merged state not checked`. --allow-unmerged renders anyway, for a scratch home.
                         One uncommitted change is not refused: the desktop app's own save of a routine
                         (scheduled-tasks/<task>/SKILL.md cut to name + description, body unchanged) is
-                        already live, so it is named and rendered as is; one that does not parse is refused.
+                        already live, so it is named and rendered as is (one that does not parse is named with its fix).
   b. home               the install for the manifest's harnesses, adapter and local — a noop when in state
   c. GOVERNANCE.md      in every vault: frontmatter keys type/canonical_home/adapter/role and a pointer
                         block between <!-- governance:begin --> and <!-- governance:end -->; nothing else
@@ -1048,10 +1048,10 @@ def merged_canon(path):
         r = tool_rewrite(top, line)
         if r is None:
             rest.append(line)
-        elif r[1]:
-            problems.append(f"scheduled task {r[0]}: the app's rewrite of its SKILL.md {r[1]}")
         else:
-            rewrites.append(r[0])
+            # A rewrite that does not parse is still the app's own live save, and the app recreates it on
+            # every save: it is named with its fix, never a reason to refuse the whole render.
+            rewrites.append(r[0] + (f" (its SKILL.md {r[1]})" if r[1] else ""))
     if rest:
         problems.insert(0, f"{len(rest)} uncommitted change(s) in it: a render would publish them")
     note = (f"; tool-managed rewrite of {', '.join(rewrites)} (the app's own save, already live): rendered as "
