@@ -329,8 +329,10 @@ check "…the mirror: a canon key edited, not stripped (cron changed), is refuse
   "[ '$rc' = '1' ] && grep -q '^refused *source .*vault/.governance.* 1 uncommitted change(s) in it' '$TMP/stdout'"
 printf -- '---\nname: sweep\ndescription: Monthly sweep: every due item\n---\n%s' "$BODY" > "$SK"
 rc="$(gov reconcile --home "$H3")"
-check "…a strip whose description holds an unquoted ': ' does not parse: refused, naming the routine and the fix" \
-  "[ '$rc' = '1' ] && grep -q '^refused *source .*scheduled task sweep: .*description does not parse as YAML.*quote the value' '$TMP/stdout'"
+# The app writes values unquoted, so it recreates this on every save. Refusing the whole render over it
+# protected nothing (the routine file is linked, not rendered) and blocked every rule each time.
+check "…a strip whose description holds an unquoted ': ' does not parse: rendered anyway, naming the routine and the fix" \
+  "[ '$rc' = '0' ] && grep -q '^ok *source .*tool-managed rewrite of sweep.*description does not parse as YAML.*quote the value' '$TMP/stdout'"
 printf -- '---\nname: sweep\ndescription: "Monthly sweep: every due item"\n---\n%s' "$BODY" > "$SK"
 echo "# half-written" > "$G/vault/.governance/new-rule.md"
 rc="$(gov reconcile --home "$H3")"
