@@ -295,6 +295,25 @@ record: a record that has been re-parked twice is evidence about the record. **W
 when the precondition is itself gated (a secret, production), the ask is ripe as it stands; name both
 gates.
 
+## A blocked outward send goes to the surface's owning seat, never to the human as a paste
+
+**Each outward messaging surface has one owning seat**: the one that holds the harness permission to
+operate it, such as a bridge to a chat network, a mail account or a posting tool. When another seat's
+send is refused by the harness, or is accepted but does not appear in the destination store within a
+minute, that seat sends the owner the identifiers it needs to act (the room or thread, the message id,
+the target) and keeps working. The owner resolves it and replies with what the destination store
+shows, because a bridge's "accepted" is not delivery. **The human is never handed a messaging command
+to paste.** A pasted send has no retry and no receipt, and it goes out under the human's identity.
+
+**When the owner is absent, or is itself refused,** a harness denial is cleared by the human's one-word
+go in the session, and the seat that was refused retries the call itself. The human approves; the
+human does not type the send.
+
+**Where it does not apply:** a surface with no owning seat, where the human is the owner and the ask is
+legitimate; and a send that must go out under the human's own identity, such as a legal or contractual
+notice. It assumes a harness that gates tool calls per seat. Where every seat holds the same
+permission, there is no owner to route to, and the refused seat simply retries.
+
 ## A lane that serves people runs AHEAD of them, not behind them
 
 **Scope:** any agent lane whose people (a team, or clients) need its approvals, reviews, answers,
