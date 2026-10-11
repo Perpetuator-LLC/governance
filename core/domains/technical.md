@@ -1186,6 +1186,11 @@ the absence of an objection.
 - **Verify once that the forge enforces it.** Prefix support is configurable and the token varies.
   Read the pull request's own state back (its draft/mergeable field should flip); a prefix the server
   does not recognise is just a comment in the title.
+- **So a held PR's `mergeable` says nothing about its content.** It reads false because of the hold.
+  Prove the content merges another way while it is held (`git merge-tree` against the default
+  branch), then clear the hold, then read `mergeable` back. Only then may the claim cite it. Reading
+  it while held either blocks the claim forever or tempts you to clear the hold before anything is
+  verified.
 - **It does not replace the merge-ready claim.** The hold answers *"may this be merged at all?"*;
   the claim answers *"is THIS head green, by which gate?"*. A cleared hold with no claim invites a
   merge of an unverified head.
@@ -1476,6 +1481,23 @@ remove, because a human or an unregistered process may own it; it is a question 
 coordinates the machine. **Scope:** shared machines with a record of holdings. On a single-agent
 machine, your own list is the whole record.
 
+## In a loop over worktrees, resolve each one's HEAD inside that worktree
+
+**`git -C <repo> rev-parse HEAD` names the HEAD of `<repo>`'s own checkout, not of the worktree the
+loop is visiting.** So a per-worktree verdict computed that way (merged? landed? safe to remove?) is
+one verdict repeated N times, and every row agrees because they are all asking about the same commit.
+Measured: a uniform "already merged" verdict across a set of worktrees nearly deleted the only copy
+of a fix.
+- **Take each HEAD from inside that worktree** (`git -C <worktree> rev-parse HEAD`), or read all of
+  them at once from `git worktree list --porcelain`. Pass the SHA explicitly to every check after
+  that.
+- **A bare repository fails the same way:** its `HEAD` names its default branch, never any of its
+  linked worktrees.
+- **Uniform output is the tell.** When every row of a per-worktree check gives the same answer,
+  confirm that the rows really saw different commits before you act on any of them.
+- **Scope:** any loop over linked worktrees or several checkouts of one repository. A command run in
+  a single checkout, about that checkout, is not affected.
+
 ## Agents that share a scratch directory write unique paths, and a publish step proves the file is its own
 
 **Some harnesses give every background agent launched from a session that session's scratch
@@ -1703,6 +1725,24 @@ your mistakes.
 
 Same principle as *a probe that cannot distinguish the thing from a REFERENCE to it, or its own
 FAILURE from a negative, is not evidence* — one layer down, in the suite rather than the probe.
+
+## Prove a job you just kicked RAN by the output's IDENTITY, not by its timestamp
+
+**Scope:** you start a job and then poll a status or output file it writes, to decide whether this
+run happened. *"The file's timestamp is at or after the kick"* fails here. A write from an earlier run
+in the same second passes a seconds-resolution check, and a faster machine makes that collision
+likely, not rare. Measured: an installer's self-test passed on a laptop and failed only in a faster
+CI image.
+
+- **Capture the identity BEFORE the kick, and compare after it.** A value read afterwards has nothing
+  to differ from.
+- **Output replaced by rename** (write a temp file, then `mv`): compare the inode. Pair it with the
+  nanosecond mtime, because a filesystem may reuse a freed inode number.
+- **Output overwritten or appended in place** (the inode never changes): the inode proves nothing.
+  Pass the job a nonce and look for it in the output, or read a run counter the job increments.
+- **Keep three outcomes, not two:** *new*, *not new* and *could not read*. A failed `stat` or read is
+  *unknown*. Folding it into *not run* reports a probe failure as a job failure, and folding it into
+  *ran* is worse.
 
 ## A single red is a HYPOTHESIS, not a baseline
 
