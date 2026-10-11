@@ -1704,6 +1704,24 @@ your mistakes.
 Same principle as *a probe that cannot distinguish the thing from a REFERENCE to it, or its own
 FAILURE from a negative, is not evidence* — one layer down, in the suite rather than the probe.
 
+## Prove a job you just kicked RAN by the output's IDENTITY, not by its timestamp
+
+**Scope:** you start a job and then poll a status or output file it writes, to decide whether this
+run happened. *"The file's timestamp is at or after the kick"* fails here. A write from an earlier run
+in the same second passes a seconds-resolution check, and a faster machine makes that collision
+likely, not rare. Measured: an installer's self-test passed on a laptop and failed only in a faster
+CI image.
+
+- **Capture the identity BEFORE the kick, and compare after it.** A value read afterwards has nothing
+  to differ from.
+- **Output replaced by rename** (write a temp file, then `mv`): compare the inode. Pair it with the
+  nanosecond mtime, because a filesystem may reuse a freed inode number.
+- **Output overwritten or appended in place** (the inode never changes): the inode proves nothing.
+  Pass the job a nonce and look for it in the output, or read a run counter the job increments.
+- **Keep three outcomes, not two:** *new*, *not new* and *could not read*. A failed `stat` or read is
+  *unknown*. Folding it into *not run* reports a probe failure as a job failure, and folding it into
+  *ran* is worse.
+
 ## A single red is a HYPOTHESIS, not a baseline
 
 **Re-run before publishing any failure as the expected state.** A published wrong baseline tells the
