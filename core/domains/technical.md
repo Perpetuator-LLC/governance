@@ -1481,6 +1481,23 @@ remove, because a human or an unregistered process may own it; it is a question 
 coordinates the machine. **Scope:** shared machines with a record of holdings. On a single-agent
 machine, your own list is the whole record.
 
+## In a loop over worktrees, resolve each one's HEAD inside that worktree
+
+**`git -C <repo> rev-parse HEAD` names the HEAD of `<repo>`'s own checkout, not of the worktree the
+loop is visiting.** So a per-worktree verdict computed that way (merged? landed? safe to remove?) is
+one verdict repeated N times, and every row agrees because they are all asking about the same commit.
+Measured: a uniform "already merged" verdict across a set of worktrees nearly deleted the only copy
+of a fix.
+- **Take each HEAD from inside that worktree** (`git -C <worktree> rev-parse HEAD`), or read all of
+  them at once from `git worktree list --porcelain`. Pass the SHA explicitly to every check after
+  that.
+- **A bare repository fails the same way:** its `HEAD` names its default branch, never any of its
+  linked worktrees.
+- **Uniform output is the tell.** When every row of a per-worktree check gives the same answer,
+  confirm that the rows really saw different commits before you act on any of them.
+- **Scope:** any loop over linked worktrees or several checkouts of one repository. A command run in
+  a single checkout, about that checkout, is not affected.
+
 ## Agents that share a scratch directory write unique paths, and a publish step proves the file is its own
 
 **Some harnesses give every background agent launched from a session that session's scratch
