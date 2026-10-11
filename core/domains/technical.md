@@ -1186,6 +1186,11 @@ the absence of an objection.
 - **Verify once that the forge enforces it.** Prefix support is configurable and the token varies.
   Read the pull request's own state back (its draft/mergeable field should flip); a prefix the server
   does not recognise is just a comment in the title.
+- **So a held PR's `mergeable` says nothing about its content.** It reads false because of the hold.
+  Prove the content merges another way while it is held (`git merge-tree` against the default
+  branch), then clear the hold, then read `mergeable` back. Only then may the claim cite it. Reading
+  it while held either blocks the claim forever or tempts you to clear the hold before anything is
+  verified.
 - **It does not replace the merge-ready claim.** The hold answers *"may this be merged at all?"*;
   the claim answers *"is THIS head green, by which gate?"*. A cleared hold with no claim invites a
   merge of an unverified head.
