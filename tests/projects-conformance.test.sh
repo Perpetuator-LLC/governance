@@ -8,7 +8,8 @@
 #   non-conforming:  scratch (plain-dir) · notes.txt (file) · .tmp-build (hidden) · .wt (extra-worktree-root)
 #                    · app-feature (top-level-worktree) · local-only (no-remote) · app-copy (duplicate-clone)
 #                    · vendored (third-party) · forked (third-party) · broken (unreadable)
-# .DS_Store is ignored.
+# .DS_Store is ignored. Worktrees inside a clone are a separate count: app/.wts/y (nested, 1) and
+# app/.claude/worktrees/h (harness-made, listed, 0); .wt/app-x is already .wt's row, not counted again.
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,6 +35,9 @@ repo "$P/vendored"   "https://github.example/someone/vendored.git"
 repo "$P/forked"     "git@forge.example:org/forked.git"         # our own account, still declared third-party
 q git -C "$P/app" worktree add -q "$P/app-feature" -b feature
 mkdir -p "$P/.wt"; q git -C "$P/app" worktree add -q "$P/.wt/app-x" -b x
+mkdir -p "$P/app/.wts"; q git -C "$P/app" worktree add -q "$P/app/.wts/y" -b y              # nested in a clone
+mkdir -p "$P/app/.claude/worktrees"; q git -C "$P/app" worktree add -q "$P/app/.claude/worktrees/h" -b h   # harness-made
+q git -C "$P/app" worktree add -q "$P/worktrees/app-ok" -b ok                                  # the allowed place
 mkdir -p "$P/scratch" "$P/.tmp-build"; echo n > "$P/notes.txt"; : > "$P/.DS_Store"
 mkdir -p "$P/broken/.git"   # a .git dir git cannot read: fails for root too (CI runs as root; chmod would not)
 printf '# declared third-party\nvendored\nforked   # a fork we only read\n' > "$TMP/ref.txt"
@@ -49,6 +53,13 @@ for want in "plain-dir *scratch" "file *notes.txt" "hidden *.tmp-build" "extra-w
             "third-party *vendored" "third-party *forked" "unreadable *broken"; do
   printf '%s\n' "$out" | grep -qE "^$want" && ok "reports: $want" || bad "missing: $want"
 done
+echo "worktrees inside clones:"
+printf '%s\n' "$out" | grep -qE "^nested-worktree +app/.wts/y" && ok "a worktree nested in a clone is reported" || bad "nested missing"
+printf '%s\n' "$out" | grep -qE "^harness-worktree +app/.claude/worktrees/h" && ok "a harness-made worktree is listed" || bad "harness missing"
+printf '%s\n' "$out" | grep -q "nested worktrees outside worktrees/: 1 · harness-managed (listed, not counted): 1" \
+  && ok "nested 1, harness 1, both kept out of the top-level count" || bad "nested/harness line"
+printf '%s\n' "$out" | grep -q "app-ok" && bad "a worktree under worktrees/ was reported" || ok "control: worktrees/app-ok is silent"
+[ "$(printf '%s\n' "$out" | grep -c '\.wt/app-x')" -eq 0 ] && ok "control: .wt's worktree is not counted again as nested" || bad ".wt double-counted"
 echo "controls (conforming entries are silent):"
 for name in app acme-tools worktrees _ref _soak .DS_Store; do
   printf '%s\n' "$out" | grep -qE "^[a-z-]+ +$name( |$)" && bad "$name reported" || ok "$name not reported"

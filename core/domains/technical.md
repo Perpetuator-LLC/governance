@@ -821,7 +821,10 @@ four kinds of entry and no others:
 - `<root>/<repo>`: exactly one clone of each repository you work in, named as the forge names it
   (organisation-prefixed only when names collide, as above).
 - `<root>/worktrees/<repo>-<branch>`: the only place for a second checkout of any repository. No
-  other directory holds linked worktrees.
+  other directory holds linked worktrees, **including one inside a clone** (`<repo>/.worktrees/`):
+  a scan of the top level cannot see it, so it is checked by asking each clone for its worktrees.
+  **Scope:** a coding harness that creates and removes worktrees in its own directory owns their
+  lifecycle; they are listed, not counted, and a leftover is that harness's cleanup to run.
 - `<root>/_ref/<name>`: third-party clones you only read. A fork you commit to and propose from is a
   repository you work in, so it belongs at the top level, not here.
 - `<root>/_soak/<date>/`: entries archived with a recorded backup, waiting out their retention. A
