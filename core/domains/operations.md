@@ -194,9 +194,13 @@ Four tests, applied to every line in the human's section **in the first message*
    asks for a credential which does not exist yet names where to create it and with which
    permissions. Measured: a script prompted for an admin token (hidden input) while the hand-off
    never said which token, where it is minted, or with what scope.
-3. **A credential created only for this run is removed by the same hand-off.** Its last step
-   revokes it: where, and how. The mirror: a credential meant to persist, such as a service token
-   stored for later use, gets no revoke step. It gets a recorded expiry instead.
+3. **A credential created only for this piece of work is removed when the WORK ends, not after one
+   run.** Until then it is staged in the secret store with an expiry, and every retry and every later
+   step reads it from there (`security.md` → *Ask-once provisioning*). The work's last step deletes
+   the staged copy and revokes the credential: where, and how. A script that asks for it on every run
+   and says to revoke it after each run turns every failed attempt into a re-mint. The mirror: a
+   credential meant to persist, such as a service token stored for later use, gets no revoke step. It
+   gets a recorded expiry instead.
 4. **Is every command where the reader's surface copies it in one action?** In chat that is a
    bare, top-level code block. Never put it inside a quotation, which renders without a copy control
    and drags its markers into a selection. On a surface that gives a copy control to only one block
@@ -204,6 +208,13 @@ Four tests, applied to every line in the human's section **in the first message*
 
 Sending the citation form is not concision. It moves the synthesis the rule exists to do back onto
 the human, and it looks compliant while doing it.
+
+**A link to another agent's prepared command is a relayed block.** A dashboard card, a ticket
+comment or a peer's message that holds a command is handed to the human only after you have read
+that command and checked it against the list above. A defect found there goes back to its author
+before the human sees it. Passing on the link without reading it relays every defect in it under
+your name. **Scope:** a command the human will run. A link to read, such as a design or a report,
+needs no check.
 
 **A precondition written in prose gates nothing.** A sentence above a command (*"only if the key
 exists"*) is read after the command has run. Chain the check into the command, `check && change`, so a
@@ -225,7 +236,7 @@ credential states:
 - **what kind** of credential it is (a token, not a password);
 - **the exact scopes**;
 - **a name that dates it**;
-- **the step that deletes it** afterwards.
+- **the step that deletes it** once the work it serves is done, not after each run (item 3 above).
 
 **Take the recipe from the last successful run of the same prompt** (earlier hand-offs, tickets, the
 script's history) and reuse its scopes. Derive a fresh one only when no such run exists, and say so. A
