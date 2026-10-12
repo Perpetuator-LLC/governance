@@ -40,6 +40,11 @@ check those too, pass your own list, kept outside this repository:
 
     python3 bin/redaction-check --enforce --private-patterns <your-list> $(git ls-files)
 
+If you changed a rule's heading or its first paragraph, rebuild the topic packs (`packs/`, served to
+tools that load guidance on demand) and commit the result. CI fails when they drift from the core:
+
+    python3 bin/topic-packs
+
 ## Where to send it
 
 Open a pull request on GitHub, or an issue first if you would like to discuss the idea. The GitHub
