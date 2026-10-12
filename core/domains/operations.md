@@ -886,6 +886,18 @@ predecessor's activity after the record's newest stamp**, sorted by time.
   the record is all there is, and writing it last stops being a courtesy and becomes the only
   control.
 
+**A successor to an operational role also inherits what is FIRING.** A role that answers alerts
+(an orchestrator, an on-call seat) hands over its live alerts along with its records, and no record
+lists them, because they fire after it was written. So the successor queries the alerting system
+directly, in the same pass as it reads the record:
+- **Each critical firing now** is dispatched to its owner, or recorded as known, with its ticket.
+- **Criticals that fired and cleared during the gap** go in the hand-over report, because nobody
+  read them.
+- **An empty result counts only beside a control** read in the same pass, such as the number of
+  targets the alerting system is scraping. A dead alerting system also returns no alerts.
+
+**Scope:** roles that own alert response. A lane that never answers alerts has nothing to inherit.
+
 **Distil, do not dump.** The record a successor reads holds the reduced fact (what is true, what to
 do) with a one-way link to the raw source, never the raw source pasted in. The raw material is for
 finding things; the record is what gets acted on. Never edit the source to link back to the record.
