@@ -194,9 +194,13 @@ Four tests, applied to every line in the human's section **in the first message*
    asks for a credential which does not exist yet names where to create it and with which
    permissions. Measured: a script prompted for an admin token (hidden input) while the hand-off
    never said which token, where it is minted, or with what scope.
-3. **A credential created only for this run is removed by the same hand-off.** Its last step
-   revokes it: where, and how. The mirror: a credential meant to persist, such as a service token
-   stored for later use, gets no revoke step. It gets a recorded expiry instead.
+3. **A credential created only for this piece of work is removed when the WORK ends, not after one
+   run.** Until then it is staged in the secret store with an expiry, and every retry and every later
+   step reads it from there (`security.md` → *Ask-once provisioning*). The work's last step deletes
+   the staged copy and revokes the credential: where, and how. A script that asks for it on every run
+   and says to revoke it after each run turns every failed attempt into a re-mint. The mirror: a
+   credential meant to persist, such as a service token stored for later use, gets no revoke step. It
+   gets a recorded expiry instead.
 4. **Is every command where the reader's surface copies it in one action?** In chat that is a
    bare, top-level code block. Never put it inside a quotation, which renders without a copy control
    and drags its markers into a selection. On a surface that gives a copy control to only one block
@@ -204,6 +208,13 @@ Four tests, applied to every line in the human's section **in the first message*
 
 Sending the citation form is not concision. It moves the synthesis the rule exists to do back onto
 the human, and it looks compliant while doing it.
+
+**A link to another agent's prepared command is a relayed block.** A dashboard card, a ticket
+comment or a peer's message that holds a command is handed to the human only after you have read
+that command and checked it against the list above. A defect found there goes back to its author
+before the human sees it. Passing on the link without reading it relays every defect in it under
+your name. **Scope:** a command the human will run. A link to read, such as a design or a report,
+needs no check.
 
 **A precondition written in prose gates nothing.** A sentence above a command (*"only if the key
 exists"*) is read after the command has run. Chain the check into the command, `check && change`, so a
@@ -225,7 +236,7 @@ credential states:
 - **what kind** of credential it is (a token, not a password);
 - **the exact scopes**;
 - **a name that dates it**;
-- **the step that deletes it** afterwards.
+- **the step that deletes it** once the work it serves is done, not after each run (item 3 above).
 
 **Take the recipe from the last successful run of the same prompt** (earlier hand-offs, tickets, the
 script's history) and reuse its scopes. Derive a fresh one only when no such run exists, and say so. A
@@ -337,6 +348,27 @@ human does not type the send.
 legitimate; and a send that must go out under the human's own identity, such as a legal or contractual
 notice. It assumes a harness that gates tool calls per seat. Where every seat holds the same
 permission, there is no owner to route to, and the refused seat simply retries.
+
+## An ask about a system another lane owns is ROUTED, not worked
+
+**Applies when** agents work in lanes with declared owners, and a lane can message another. The
+sibling rule above covers sending. This one covers investigating.
+
+When the human asks you about work that has an owning lane, send the owner one message: the ask
+verbatim, plus only the facts you already hold, each marked *measured* or *not checked*. Then tell
+the human in one line where it went. Do not investigate further, build, or answer in the owner's
+place. The owner holds the context, the tickets and the decisions, and a second lane working the same
+question splits the record: two partial answers, neither one the system of record.
+
+**Scope:**
+- You still answer from your own lane's data and probes.
+- If the owner is absent, route to the coordinator. A P0 goes to the coordinator the same turn.
+- A human who tells you to work it yourself has decided. Do it, and copy the owner on what you find.
+- Without declared owners, or with no way to reach them, there is no one to route to, and the ask is
+  yours.
+
+**The mirror:** an ask about your OWN system that touches another lane's data is still yours. Do your
+part and route only the other lane's part.
 
 ## A lane that serves people runs AHEAD of them, not behind them
 
