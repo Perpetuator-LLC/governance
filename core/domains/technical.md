@@ -811,6 +811,37 @@ there. **Keep the plain name in the forge; prefix the local directory with the o
 (`org-a-secrets`, `org-b-secrets`). Never infer which organisation a checkout belongs to from its
 directory name: read its remote.
 
+## A projects root holds one clone per repository, and nothing else
+
+**On a machine where agents work across many repositories, the directory they share is an index:
+every entry in it reads as "a repository someone works in".** A restore, a parked copy, a second
+checkout or a vendored clone left beside the real ones is read the same way, and an agent sent to
+"the repo" may work in whichever entry it finds first. So the top level of the projects root has
+four kinds of entry and no others:
+- `<root>/<repo>`: exactly one clone of each repository you work in, named as the forge names it
+  (organisation-prefixed only when names collide, as above).
+- `<root>/worktrees/<repo>-<branch>`: the only place for a second checkout of any repository. No
+  other directory holds linked worktrees.
+- `<root>/_ref/<name>`: third-party clones you only read. A fork you commit to and propose from is a
+  repository you work in, so it belongs at the top level, not here.
+- `<root>/_soak/<date>/`: entries archived with a recorded backup, waiting out their retention. A
+  purge is a dated, scheduled step, never a hand removal.
+
+Restores, backups, scratch and build output go in a scratch area or a state directory, never here.
+A repository with no remote is reported, because it is the only copy and nothing else will notice
+if it is lost.
+
+**Check it, report only:** `bin/projects-conformance --root <dir> --ref-list <file>` lists every
+non-conforming entry by class and moves nothing. Which clones are third-party is **declared** in
+the list, never inferred: a fork in your own account has a remote shaped exactly like a repository
+you develop. Without a list, the tool reports that class as not checked, never as zero.
+
+**Scope:** a shared projects root on a multi-repository machine. A machine that holds one
+repository has nothing to index. **The mirror:** moving an entry is not free either. Some entry is
+some agent's working directory, and a move it did not make leaves that agent working in a path that
+no longer exists. So a move is that agent's own step, recorded where its working directory is
+declared, never a bulk tidy-up.
+
 ## Environment facts are STATED in a registry, never inferred
 
 **Which systems exist, which hosts are production, and which merges deploy are facts to look up,

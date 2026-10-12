@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""projects-conformance — list the top-level entries of a projects root that break the layout rule.
+REPORT ONLY: it never moves, renames or deletes anything.
+
+  projects-conformance [--root DIR] [--ref-list FILE] [--json]
+
+The rule (core technical.md → "A projects root holds one clone per repository, and nothing else"):
+  <root>/<repo>                one clone per repository you work in
+  <root>/worktrees/<repo>-<x>  the only place for a second checkout
+  <root>/_ref/<name>           third-party clones you only read
+  <root>/_soak/<date>/         archived entries waiting out their retention
+Anything else at the top level is non-conforming.
+
+Classes reported (each one counts):
+  plain-dir             a directory that is not a git repository
+  file                  a file
+  hidden                a hidden directory that is neither a repository nor a worktree root
+  extra-worktree-root   a directory holding linked worktrees (only worktrees/ may)
+  top-level-worktree    a linked worktree sitting at the top level
+  no-remote             a repository with no remote: no copy exists anywhere else
+  duplicate-clone       a second clone of a repository already cloned here
+  third-party           a name the --ref-list declares third-party, outside _ref/
+  unreadable            git could not be asked about it; never assumed conforming
+
+Third-party cannot be inferred: a fork in your own account has a remote shaped exactly like a
+repository you develop. So it is DECLARED, one name per line in --ref-list ('#' starts a comment).
+Without a list, that class is reported as not checked, never as zero.
+
+Exit: 0 report printed (whatever it found) · 2 the root cannot be read.
+"""
+import argparse, json, os, re, subprocess, sys
+
+ALLOWED_DIRS = {"worktrees", "_ref", "_soak"}
+IGNORED = {".DS_Store"}  # written by the OS, not by anyone working here
+
+
+def git(path, *args):
+    try:
+        p = subprocess.run(["git", "-C", path, "--no-optional-locks", *args],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 1, str(e)
+    return p.returncode, p.stdout.strip()
+
+
+def is_linked_worktree(path):
+    """A linked worktree's .git is a FILE pointing into <repo>/.git/worktrees/<name>."""
+    g = os.path.join(path, ".git")
+    if not os.path.isfile(g):
+        return False
+    try:
+        with open(g, encoding="utf-8", errors="replace") as fh:
+            return "/worktrees/" in fh.read()
+    except OSError:
+        return False
+
+
+def is_repo(path):
+    if os.path.isdir(os.path.join(path, ".git")):
+        return True
+    rc, out = git(path, "rev-parse", "--is-bare-repository")
+    return rc == 0 and out == "true"
+
+
+def norm_remote(url):
+    """git@host:org/repo.git, ssh://git@host/org/repo, https://user@host/org/repo.git → host/org/repo"""
+    u = url.strip()
+    u = re.sub(r"^[a-z+]+://", "", u)
+    u = re.sub(r"^[^@/]+@", "", u)
+    u = u.replace(":", "/", 1) if re.match(r"^[^/]+:[^/]", u) else u
+    u = re.sub(r"\.git/?$", "", u.rstrip("/"))
+    return u.lower()
+
+
+def read_ref_list(path):
+    names = set()
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.split("#", 1)[0].strip()
+            if line:
+                names.add(line)
+    return names
+
+
+def classify(root, ref_names):
+    rows, clones = [], {}
+    for name in sorted(os.listdir(root)):
+        if name in IGNORED:
+            continue
+        path = os.path.join(root, name)
+        if os.path.isdir(path) and name in ALLOWED_DIRS:
+            continue
+        if not os.path.isdir(path):
+            rows.append(("file", name, "a file at the top level"))
+            continue
+        if is_linked_worktree(path):
+            rows.append(("top-level-worktree", name, "a linked worktree; move it under worktrees/"))
+            continue
+        try:
+            children = [os.path.join(path, c) for c in os.listdir(path)]
+        except OSError as e:
+            rows.append(("unreadable", name, str(e)))
+            continue
+        if not is_repo(path):
+            if any(os.path.isdir(c) and is_linked_worktree(c) for c in children):
+                rows.append(("extra-worktree-root", name, "holds linked worktrees; only worktrees/ may"))
+            elif name.startswith("."):
+                rows.append(("hidden", name, "a hidden directory that is not a repository"))
+            else:
+                rows.append(("plain-dir", name, "not a git repository"))
+            continue
+        if name in ref_names:
+            rows.append(("third-party", name, "declared third-party; move it under _ref/"))
+            continue
+        rc, remotes = git(path, "remote")
+        if rc != 0:
+            rows.append(("unreadable", name, f"git remote failed: {remotes[:120]}"))
+            continue
+        remotes = remotes.split()
+        if not remotes:
+            rows.append(("no-remote", name, "no remote: this is the only copy"))
+            continue
+        r = "origin" if "origin" in remotes else remotes[0]
+        rc, url = git(path, "remote", "get-url", r)
+        if rc != 0 or not url:
+            rows.append(("unreadable", name, f"git remote get-url {r} failed"))
+            continue
+        clones.setdefault(norm_remote(url), []).append(name)
+    for key, names in sorted(clones.items()):
+        if len(names) < 2:
+            continue
+        forge = key.rsplit("/", 1)[-1]
+        org = key.split("/")[-2] if key.count("/") >= 2 else ""
+        canonical = [n for n in names if n in (forge, f"{org}-{forge}")]
+        keep = canonical[0] if canonical else sorted(names)[0]
+        for n in sorted(names):
+            if n != keep:
+                rows.append(("duplicate-clone", n, f"second clone of {key} (kept: {keep})"))
+    return sorted(rows, key=lambda r: (r[0], r[1]))
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--root", default=os.path.expanduser("~/projects"))
+    ap.add_argument("--ref-list", help="file naming the third-party clones, one per line")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    try:
+        entries = [n for n in os.listdir(a.root) if n not in IGNORED]
+    except OSError as e:
+        print(f"projects-conformance: cannot read {a.root}: {e}", file=sys.stderr)
+        return 2
+    ref_names, ref_checked = set(), False
+    if a.ref_list:
+        try:
+            ref_names, ref_checked = read_ref_list(a.ref_list), True
+        except OSError as e:
+            print(f"projects-conformance: cannot read --ref-list {a.ref_list}: {e}", file=sys.stderr)
+            return 2
+    rows = classify(a.root, ref_names)
+    total = len([n for n in entries if not (n in ALLOWED_DIRS and os.path.isdir(os.path.join(a.root, n)))])
+    by = {}
+    for c, _, _ in rows:
+        by[c] = by.get(c, 0) + 1
+    if a.json:
+        print(json.dumps({"root": a.root, "nonconforming": len(rows), "top_level": total, "by_class": by,
+                          "third_party_checked": ref_checked,
+                          "rows": [{"class": c, "entry": n, "why": w} for c, n, w in rows]}))
+        return 0
+    for c, n, w in rows:
+        print(f"{c:20} {n} — {w}")
+    print(f"projects-conformance: {len(rows)} non-conforming of {total} top-level entries in {a.root}"
+          + ("" if not by else " (" + ", ".join(f"{k} {v}" for k, v in sorted(by.items())) + ")"))
+    if not ref_checked:
+        print("  third-party: NOT CHECKED (no --ref-list); it cannot be inferred from remotes")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
