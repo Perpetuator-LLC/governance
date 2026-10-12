@@ -216,6 +216,30 @@ is wrong:** a check that cannot be scripted becomes two sittings with its result
 a read-only block needs no gate; and a rule that was read and misapplied because it is ambiguous is a
 wording defect, where rewording is the fix.
 
+### A credential the human must create is handed over with its mint recipe, from the last run that worked
+
+A prompt such as `ADMIN token (hidden)` names what to paste, not how to get it, and a reader told
+"admin token" may reasonably type the admin password. So a hand-over that needs a newly minted
+credential states:
+- **where** it is minted (the exact settings page);
+- **what kind** of credential it is (a token, not a password);
+- **the exact scopes**;
+- **a name that dates it**;
+- **the step that deletes it** afterwards.
+
+**Take the recipe from the last successful run of the same prompt** (earlier hand-offs, tickets, the
+script's history) and reuse its scopes. Derive a fresh one only when no such run exists, and say so. A
+recipe re-derived under time pressure tends to drop the one scope a past run learned it needed, and
+the run then fails at the step that needed it.
+
+**Then make the recipe permanent where the human meets it:** in the script's prompt text and in the
+card that asks. A recipe kept only in one session's hand-off cannot be found by the next session.
+
+**Scope:** credentials a person creates by hand for an agent-run step. A credential the pipeline
+mints itself needs no recipe. **The mirror:** the last-good scopes are what worked, not a
+measure of what is needed. When they are broader than the step requires (an admin scope kept "because
+it worked"), trim them and record why. A recipe never carries the credential's value.
+
 ### In a recipe, a number means ORDER and a bullet means INDEPENDENT
 
 Number a step only when it needs the one before it to have finished. Steps a person can do in any
