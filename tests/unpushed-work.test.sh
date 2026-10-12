@@ -42,6 +42,9 @@ q git -C "$A" worktree add -q --detach "$P/worktrees/wt-det" main; echo d > "$P/
 q git -C "$P/worktrees/wt-det" add d; q git -C "$P/worktrees/wt-det" commit -qm det
 q git init -q -b main "$P/solo"; echo s > "$P/solo/s"; q git -C "$P/solo" add s; q git -C "$P/solo" commit -qm s
 mkdir -p "$P/plain"; echo x > "$P/plain/x"
+q git clone -q --bare "$O" "$P/aaa-bare.git"                   # bare: no stash, no worktree to read
+q git -C "$P/aaa-bare.git" fetch -q "$A" local-only:refs/heads/bare-only   # a commit only this bare clone has
+q git -C "$A" worktree add -q "$P/aa-early" pushed              # sorts before app: must not stand in for it
 
 snap() { for r in "$A" "$P/solo"; do git -C "$r" for-each-ref --format='%(refname) %(objectname)' refs/heads refs/stash; git -C "$r" status --porcelain; done; }
 before="$(snap)"
@@ -64,6 +67,10 @@ has  "^REPO .*/solo \(NO REMOTE\) — unpushed: main\+1" "a repo with no remote:
 has  "^NOT-GIT .*/plain" "a plain dir is listed as not-git"
 hasnt "pushed\+|gone-merged" "control: pushed and merged-then-deleted branches are silent"
 hasnt "wt-clean" "control: a clean worktree on a pushed branch is silent"
+hasnt "^ERROR" "a bare repository is read without error"
+has  "^REPO .*/aaa-bare.git — unpushed: bare-only\+1 · " "a bare clone: only its own branch is unpushed (judged by ls-remote)"
+has  "^REPO .*/projects/app — " "the repo row names the main checkout, not a worktree that sorts first"
+hasnt "^(Please|fatal|error:)" "git's multi-line errors do not leak onto their own lines"
 [ "$before" = "$after" ] && ok "read-only: refs, stash and status unchanged" || bad "work changed"
 
 echo "fails closed:"

@@ -34,6 +34,10 @@ def git(path, *args, timeout=120):
     return p.returncode, p.stdout, p.stderr.strip()
 
 
+def one_line(text, n=160):
+    return " ".join(text.split())[:n]
+
+
 def common_dir(path):
     rc, out, _ = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
     return os.path.realpath(out.strip()) if rc == 0 and out.strip() else None
@@ -54,7 +58,10 @@ def targets(root, explicit):
         if cd is None:
             (notgit if not os.path.exists(os.path.join(p, ".git")) else bad).append(p)
             continue
-        repos.setdefault(cd, p)
+        if cd not in repos:
+            rc, out, _ = git(p, "worktree", "list", "--porcelain")
+            first = out.splitlines()[0][9:] if rc == 0 and out.startswith("worktree ") else p
+            repos[cd] = first if os.path.isdir(first) else p   # the main checkout, not a linked worktree
         wts.append(os.path.realpath(p))
     for cd, p in list(repos.items()):
         rc, out, err = git(p, "worktree", "list", "--porcelain")
@@ -73,29 +80,49 @@ def repo_report(path, fetch):
     r = {"repo": path, "fetched": None, "branches": {}, "stashes": 0, "error": None}
     rc, remotes, err = git(path, "remote")
     if rc != 0:
-        r["error"] = f"git remote: {err[:160]}"
+        r["error"] = f"git remote: {one_line(err)}"
         return r
     remotes = remotes.split()
-    if fetch and remotes:
+    if fetch and remotes and git(path, "rev-parse", "--is-bare-repository")[1].strip() != "true":
         rc, _, err = git(path, "fetch", "--all", "--prune", "--quiet", timeout=600)
         r["fetched"] = rc == 0
         if rc != 0:
-            r["error"] = f"fetch failed: {err[:160]}"
+            r["error"] = f"fetch failed: {one_line(err)}"
             return r
+    rc, bare, _ = git(path, "rev-parse", "--is-bare-repository")
+    bare = bare.strip() == "true"
+    against = ["--remotes"]
+    if bare and remotes:
+        # A bare clone keeps no remote-tracking refs: judge against what the remote reports now.
+        shas = set()
+        for rem in remotes:
+            rc, out, err = git(path, "ls-remote", "--heads", rem, timeout=300)
+            if rc != 0:
+                r["error"] = f"ls-remote {rem}: {one_line(err)}"
+                return r
+            shas |= {l.split()[0] for l in out.splitlines() if l.strip()}
+        missing = [x for x in shas if git(path, "cat-file", "-e", f"{x}^{{commit}}")[0] != 0]
+        if missing:
+            r["error"] = f"bare clone is behind its remote ({len(missing)} remote heads not local): fetch it to judge"
+            return r
+        against = sorted(shas)
     rc, out, err = git(path, "for-each-ref", "--format=%(refname:short)", "refs/heads")
     if rc != 0:
-        r["error"] = f"for-each-ref: {err[:160]}"
+        r["error"] = f"for-each-ref: {one_line(err)}"
         return r
     for b in out.split():
-        rc, n, err = git(path, "rev-list", "--count", f"refs/heads/{b}", "--not", "--remotes")
+        rc, n, err = git(path, "rev-list", "--count", f"refs/heads/{b}", "--not", *against)
         if rc != 0:
-            r["error"] = f"rev-list {b}: {err[:160]}"
+            r["error"] = f"rev-list {b}: {one_line(err)}"
             return r
         if int(n.strip() or 0):
             r["branches"][b] = int(n)
+    r["no_remote"] = not remotes
+    if bare:
+        return r   # a bare repository has no stash and no working tree
     rc, out, err = git(path, "stash", "list")
     if rc != 0:
-        r["error"] = f"stash list: {err[:160]}"
+        r["error"] = f"stash list: {one_line(err)}"
         return r
     r["stashes"] = len([l for l in out.splitlines() if l.strip()])
     r["no_remote"] = not remotes
@@ -104,9 +131,12 @@ def repo_report(path, fetch):
 
 def worktree_report(path):
     w = {"worktree": path, "detached_unpushed": 0, "modified": 0, "untracked": 0, "error": None}
+    rc, bare, _ = git(path, "rev-parse", "--is-bare-repository")
+    if bare.strip() == "true":
+        return w
     rc, out, err = git(path, "status", "--porcelain", "--untracked-files=normal")
     if rc != 0:
-        w["error"] = f"status: {err[:160]}"
+        w["error"] = f"status: {one_line(err)}"
         return w
     for l in out.splitlines():
         if l.startswith("??"):
@@ -117,7 +147,7 @@ def worktree_report(path):
     if rc != 0:  # detached: its commits belong to no branch, so check them here
         rc, n, err = git(path, "rev-list", "--count", "HEAD", "--not", "--remotes")
         if rc != 0:
-            w["error"] = f"rev-list HEAD: {err[:160]}"
+            w["error"] = f"rev-list HEAD: {one_line(err)}"
             return w
         w["detached_unpushed"] = int(n.strip() or 0)
     return w
