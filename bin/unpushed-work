@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""unpushed-work — list work that exists only on this machine, before anything is moved or archived.
+READ-ONLY for work: it never commits, stashes, pushes, moves or deletes. (By default it runs
+`git fetch --prune` per repository, which updates remote-tracking refs and nothing else.)
+
+  unpushed-work [--root DIR] [--no-fetch] [--json] [PATH ...]
+
+PATHs are repositories or worktrees, named explicitly. Without PATHs it takes every top-level entry
+of --root (default ~/projects) plus every linked worktree those repositories report under --root.
+It never walks anything else (no home-directory or Library scan).
+
+Per repository: commits on any local branch that no remote-tracking ref contains, and stashes.
+Per worktree (the main checkout included): a detached HEAD's commits that no remote contains, and
+modified, staged and untracked files (`git status --porcelain`, untracked=normal).
+A commit counts as pushed when ANY remote branch contains it, so a branch merged and deleted on the
+forge is not reported. With --no-fetch that is judged against the last fetch, and says so.
+
+Not judged: a directory that is not a git repository (listed as not-git; it has no forge copy to
+compare with, so it is backed up as files, never "pushed"), and gitignored files (move keeps them;
+an archive must include them).
+
+Exit: 0 nothing unpushed · 1 something is only here · 2 a repository could not be read or fetched
+(never reported as clean).
+"""
+import argparse, json, os, subprocess, sys
+
+
+def git(path, *args, timeout=120):
+    try:
+        p = subprocess.run(["git", "-C", path, "--no-optional-locks", *args],
+                           capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 1, "", str(e)
+    return p.returncode, p.stdout, p.stderr.strip()
+
+
+def one_line(text, n=160):
+    return " ".join(text.split())[:n]
+
+
+def common_dir(path):
+    rc, out, _ = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    return os.path.realpath(out.strip()) if rc == 0 and out.strip() else None
+
+
+def targets(root, explicit):
+    """(main checkouts by common dir, worktree paths, not-git dirs, unreadable)."""
+    paths = [os.path.abspath(p) for p in explicit] if explicit else \
+        [os.path.join(root, n) for n in sorted(os.listdir(root)) if n != ".DS_Store"]
+    repos, wts, notgit, bad = {}, [], [], []
+    rootr = os.path.realpath(root)
+    for p in paths:
+        if not os.path.isdir(p):
+            continue
+        if os.path.basename(p) in ("worktrees", "_ref", "_soak") and not explicit:
+            continue  # their contents are reached through their repositories
+        cd = common_dir(p)
+        if cd is None:
+            (notgit if not os.path.exists(os.path.join(p, ".git")) else bad).append(p)
+            continue
+        if cd not in repos:
+            rc, out, _ = git(p, "worktree", "list", "--porcelain")
+            first = out.splitlines()[0][9:] if rc == 0 and out.startswith("worktree ") else p
+            repos[cd] = first if os.path.isdir(first) else p   # the main checkout, not a linked worktree
+        wts.append(os.path.realpath(p))
+    for cd, p in list(repos.items()):
+        rc, out, err = git(p, "worktree", "list", "--porcelain")
+        if rc != 0:
+            bad.append(p)
+            continue
+        for line in out.splitlines():
+            if line.startswith("worktree "):
+                w = os.path.realpath(line[9:])
+                if (explicit or w.startswith(rootr + os.sep)) and os.path.isdir(w) and w not in wts:
+                    wts.append(w)
+    return repos, wts, notgit, bad
+
+
+def repo_report(path, fetch):
+    r = {"repo": path, "fetched": None, "branches": {}, "stashes": 0, "error": None}
+    rc, remotes, err = git(path, "remote")
+    if rc != 0:
+        r["error"] = f"git remote: {one_line(err)}"
+        return r
+    remotes = remotes.split()
+    if fetch and remotes and git(path, "rev-parse", "--is-bare-repository")[1].strip() != "true":
+        rc, _, err = git(path, "fetch", "--all", "--prune", "--quiet", timeout=600)
+        r["fetched"] = rc == 0
+        if rc != 0:
+            r["error"] = f"fetch failed: {one_line(err)}"
+            return r
+    rc, bare, _ = git(path, "rev-parse", "--is-bare-repository")
+    bare = bare.strip() == "true"
+    against = ["--remotes"]
+    if bare and remotes:
+        # A bare clone keeps no remote-tracking refs: judge against what the remote reports now.
+        shas = set()
+        for rem in remotes:
+            rc, out, err = git(path, "ls-remote", "--heads", rem, timeout=300)
+            if rc != 0:
+                r["error"] = f"ls-remote {rem}: {one_line(err)}"
+                return r
+            shas |= {l.split()[0] for l in out.splitlines() if l.strip()}
+        missing = [x for x in shas if git(path, "cat-file", "-e", f"{x}^{{commit}}")[0] != 0]
+        if missing:
+            r["error"] = f"bare clone is behind its remote ({len(missing)} remote heads not local): fetch it to judge"
+            return r
+        against = sorted(shas)
+    rc, out, err = git(path, "for-each-ref", "--format=%(refname:short)", "refs/heads")
+    if rc != 0:
+        r["error"] = f"for-each-ref: {one_line(err)}"
+        return r
+    for b in out.split():
+        rc, n, err = git(path, "rev-list", "--count", f"refs/heads/{b}", "--not", *against)
+        if rc != 0:
+            r["error"] = f"rev-list {b}: {one_line(err)}"
+            return r
+        if int(n.strip() or 0):
+            r["branches"][b] = int(n)
+    r["no_remote"] = not remotes
+    if bare:
+        return r   # a bare repository has no stash and no working tree
+    rc, out, err = git(path, "stash", "list")
+    if rc != 0:
+        r["error"] = f"stash list: {one_line(err)}"
+        return r
+    r["stashes"] = len([l for l in out.splitlines() if l.strip()])
+    r["no_remote"] = not remotes
+    return r
+
+
+def worktree_report(path):
+    w = {"worktree": path, "detached_unpushed": 0, "modified": 0, "untracked": 0, "error": None}
+    rc, bare, _ = git(path, "rev-parse", "--is-bare-repository")
+    if bare.strip() == "true":
+        return w
+    rc, out, err = git(path, "status", "--porcelain", "--untracked-files=normal")
+    if rc != 0:
+        w["error"] = f"status: {one_line(err)}"
+        return w
+    for l in out.splitlines():
+        if l.startswith("??"):
+            w["untracked"] += 1
+        elif l.strip():
+            w["modified"] += 1
+    rc, out, _ = git(path, "symbolic-ref", "-q", "HEAD")
+    if rc != 0:  # detached: its commits belong to no branch, so check them here
+        rc, n, err = git(path, "rev-list", "--count", "HEAD", "--not", "--remotes")
+        if rc != 0:
+            w["error"] = f"rev-list HEAD: {one_line(err)}"
+            return w
+        w["detached_unpushed"] = int(n.strip() or 0)
+    return w
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", default=os.path.expanduser("~/projects"))
+    ap.add_argument("--no-fetch", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("paths", nargs="*")
+    a = ap.parse_args()
+    if not a.paths and not os.path.isdir(a.root):
+        print(f"unpushed-work: cannot read {a.root}", file=sys.stderr)
+        return 2
+    repos, wts, notgit, bad = targets(a.root, a.paths)
+    rrep = [repo_report(p, not a.no_fetch) for p in repos.values()]
+    wrep = [worktree_report(p) for p in wts]
+    errors = [r for r in rrep + wrep if r["error"]] + [{"path": p, "error": "unreadable"} for p in bad]
+    hits_r = [r for r in rrep if not r["error"] and (r["branches"] or r["stashes"])]
+    hits_w = [w for w in wrep if not w["error"] and (w["detached_unpushed"] or w["modified"] or w["untracked"])]
+    if a.json:
+        print(json.dumps({"root": a.root, "fetched": not a.no_fetch, "repos": rrep, "worktrees": wrep,
+                          "not_git": notgit, "errors": errors}))
+    else:
+        home = os.path.expanduser("~")
+        sh = lambda p: p.replace(home, "~", 1)
+        for r in hits_r:
+            br = ", ".join(f"{b}+{n}" for b, n in sorted(r["branches"].items()))
+            tag = " (NO REMOTE)" if r.get("no_remote") else ""
+            print(f"REPO      {sh(r['repo'])}{tag} — unpushed: {br or '-'} · stashes: {r['stashes']}")
+        for w in hits_w:
+            print(f"WORKTREE  {sh(w['worktree'])} — modified {w['modified']} · untracked {w['untracked']}"
+                  + (f" · detached HEAD +{w['detached_unpushed']}" if w["detached_unpushed"] else ""))
+        for e in errors:
+            print(f"ERROR     {sh(e.get('repo') or e.get('worktree') or e.get('path'))} — {e['error']}")
+        for p in notgit:
+            print(f"NOT-GIT   {sh(p)} — no forge copy; back it up as files")
+        print(f"unpushed-work: {len(rrep)} repos, {len(wrep)} worktrees — {len(hits_r)} repos with unpushed "
+              f"commits or stashes, {len(hits_w)} worktrees dirty or detached-ahead, {len(errors)} unreadable, "
+              f"{len(notgit)} not-git" + ("" if not a.no_fetch else " (NOT fetched: judged against the last fetch)"))
+    if errors:
+        return 2
+    return 1 if (hits_r or hits_w) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
