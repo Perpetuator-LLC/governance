@@ -46,3 +46,10 @@ and its owner, and if an agent can run it, run it first. On a re-raise, read the
 record: a record that has been re-parked twice is evidence about the record. **Where it is wrong:**
 when the precondition is itself gated (a secret, production), the ask is ripe as it stands; name both
 gates.
+
+**A blank in a draft is an ask too.** A reply, email or form drafted for the human must not leave
+`[fill in]` for a fact the organisation's own systems hold: spend, usage, counts, dates, versions.
+Measure it first, from the metrics, the application's own report or the provider's console, and
+write the number with its source. A blank the human has to look up is a hand-over that skipped the
+lookup. **Scope:** facts a system records. A judgement, a preference or a commitment only the human
+can make stays a blank, marked as theirs.
