@@ -145,6 +145,12 @@ doing it twice for the same service is a violation.** Before any token prompt:
    write) and is then consumed from the store, so that service never prompts again. New tokens always
    land in the store at mint time — a token that only lives in a shell/history/CI var is a bug.
 
+**A fix to the storing step does not recover a value collected before it shipped.** Before telling
+the human a credential "is kept", check that the store holds it (its metadata, never its value). If
+it is empty, say so plainly: they will paste once more, and because most services show a token only
+at creation, one they did not save is revoked and minted again. Never write that an earlier token
+"still works": that is true only if the human still holds it, which is the store's job.
+
 ## A first-run setup endpoint is claimed by the deploy, before anyone else can reach it
 
 **A service whose first run serves an unauthenticated setup endpoint (claim the owner or admin,

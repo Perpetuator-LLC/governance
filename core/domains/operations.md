@@ -330,6 +330,13 @@ record: a record that has been re-parked twice is evidence about the record. **W
 when the precondition is itself gated (a secret, production), the ask is ripe as it stands; name both
 gates.
 
+**A blank in a draft is an ask too.** A reply, email or form drafted for the human must not leave
+`[fill in]` for a fact the organisation's own systems hold: spend, usage, counts, dates, versions.
+Measure it first, from the metrics, the application's own report or the provider's console, and
+write the number with its source. A blank the human has to look up is a hand-over that skipped the
+lookup. **Scope:** facts a system records. A judgement, a preference or a commitment only the human
+can make stays a blank, marked as theirs.
+
 ## A blocked outward send goes to the surface's owning seat, never to the human as a paste
 
 **Each outward messaging surface has one owning seat**: the one that holds the harness permission to
@@ -447,6 +454,9 @@ exists.
   **Name the artifact, then link it.** This binds hardest in a human-action row, where the line
   IS the work order — and note the asymmetry that keeps it invisible: the writer, who has the
   object in mind, cannot feel the gap, because to them the demonstrative resolves instantly.
+- **The same test covers every identifier the reader acts on, not only git refs:** a dashboard card,
+  a CI run, a ticket, a document. A bare short id costs the reader a search for each mention, so it
+  carries its full link.
 - **A ref is a LINK — a forge URL — never bare.** A branch or tag written as plain text renders as
   a dead file path; issues, PRs and commits are the same. The reader cannot click an identifier,
   and cannot tell a live object from one that was never created.

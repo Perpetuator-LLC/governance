@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "topics": [
+    {
+      "name": "commit",
+      "title": "Committing and pushing",
+      "when": "Before you commit or push.",
+      "rules": [
+        "core/domains/technical.md § Agent attribution lives in the BODY — the author field is one shared identity",
+        "core/domains/technical.md § A push follows a commit only when HEAD MOVED",
+        "core/domains/technical.md § Cite a STABLE identifier — a branch tip is not one",
+        "core/domains/technical.md § Never write a closing keyword next to an issue reference, even to deny it"
+      ]
+    },
+    {
+      "name": "branching",
+      "title": "Branches, pull requests and merging",
+      "when": "Opening, holding, claiming or merging a pull request.",
+      "rules": [
+        "core/domains/technical.md § \"Read the integration branch, never compute it\" — the read returns a LIST, and selecting from it is the hard half",
+        "core/domains/technical.md § A hold on a pull request lives in the forge's own WIP / draft gate — never only in a comment",
+        "core/domains/technical.md § A merge-ready claim covers EVERY CI run for the head, queried by the full id",
+        "core/domains/technical.md § To see what a merge brings, use THREE-dot or test-merge it — two-dot answers a different question",
+        "core/domains/technical.md § In a checkout several seats share, delete only the branches you own — containment never proves abandonment",
+        "core/domains/technical.md § A branch is archived only with proof its content landed, or a ticket that will land it"
+      ]
+    },
+    {
+      "name": "testing",
+      "title": "Writing and trusting tests and CI",
+      "when": "Writing a test, or trusting a CI result.",
+      "rules": [
+        "core/domains/technical.md § A green run proves only the steps that EXECUTED in it",
+        "core/domains/technical.md § A single red is a HYPOTHESIS, not a baseline",
+        "core/domains/technical.md § A test double must FAIL the way the real collaborator fails",
+        "core/domains/technical.md § An expected value copied from the OUTPUT pins the defect",
+        "core/domains/technical.md § A fixture that cannot EXPRESS the failure certifies it clean",
+        "core/domains/technical.md § Prove a job you just kicked RAN by the output's IDENTITY, not by its timestamp"
+      ]
+    },
+    {
+      "name": "secrets",
+      "title": "Secrets and credentials",
+      "when": "Anything that creates, stores, moves or uses a credential.",
+      "rules": [
+        "core/domains/security.md § Secrets in code (mandatory)",
+        "core/domains/security.md § The BLIND PIPELINE — and it binds the hand-off blocks you author",
+        "core/domains/security.md § Ask-once provisioning",
+        "core/domains/security.md § Rotation is a routine, not a ceremony",
+        "core/domains/security.md § Found a hardcoded secret — rotation order matters"
+      ]
+    },
+    {
+      "name": "hand-off",
+      "title": "Asking a human to run something",
+      "when": "Before you hand a person a command, a script or a question.",
+      "rules": [
+        "core/domains/security.md § A step handed to a human must be READABLE by the human who runs it",
+        "core/domains/operations.md § Hand the human a SCRIPT, not steps — self-logging by design",
+        "core/domains/operations.md § An ask parked on a human names its GATE and what the answer CAUSES"
+      ]
+    },
+    {
+      "name": "deploy",
+      "title": "Infrastructure and deploys",
+      "when": "Changing infrastructure, releasing, or claiming something is deployed.",
+      "rules": [
+        "core/domains/technical.md § IaC-first — production & infra changes",
+        "core/domains/technical.md § Tofu plan/apply split — agent plans, human applies the planfile",
+        "core/domains/technical.md § Deploys & health — pull-based",
+        "core/domains/technical.md § The promotion gate is a walked STAGE, and a deploy is fully automated",
+        "core/domains/technical.md § A deploy trigger's exit code is not the deploy's outcome — observe the served version, then record",
+        "core/domains/technical.md § Definition of done: a service isn't deployed until its backups are PROVEN"
+      ]
+    },
+    {
+      "name": "security-review",
+      "title": "Reviewing a design or change for security",
+      "when": "Reviewing access, identity, or anything exposed to a network.",
+      "rules": [
+        "core/domains/security.md § Security review: identify → ticket → hand off",
+        "core/domains/security.md § A ceiling is only as good as its WIDEST path — and the widest one carries METADATA",
+        "core/domains/security.md § A control is not designed until you have asked what its DEPLOYMENT exposes",
+        "core/domains/security.md § A gate keyed on a NAMED object refuses to build when that object does not exist",
+        "core/domains/security.md § A redirect URI's wildcard must never be able to reach the authority"
+      ]
+    },
+    {
+      "name": "decisions",
+      "title": "Recording decisions and claims",
+      "when": "Recording a decision, rationale or status.",
+      "rules": [
+        "core/domains/operations.md § A decision record LEADS with what the decision does NOT satisfy",
+        "core/domains/operations.md § A decision is made only when it lands in the field its consumers read",
+        "core/domains/operations.md § Refuse to write a RATIONALE you have not measured, even when the CONCLUSION is right",
+        "core/domains/operations.md § A record's coverage ends at its LAST CITED EVENT, not at when it was WRITTEN"
+      ]
+    },
+    {
+      "name": "planning",
+      "title": "Before starting work",
+      "when": "Planning a change, or deciding what done means.",
+      "rules": [
+        "core/domains/operations.md § SIMULATE THE SEQUENCE (plan as state transitions)",
+        "core/domains/technical.md § Simplest thing that works — last responsible moment",
+        "core/domains/technical.md § A done-when names the COMMITTED SURFACE that takes its receipt",
+        "core/domains/operations.md § Reproduce a bug before fixing it, on the current code, and record it on the ticket",
+        "core/domains/operations.md § \"Verified\" for a user-visible outcome means OBSERVED on the user's surface"
+      ]
+    },
+    {
+      "name": "sessions",
+      "title": "Agent sessions on shared machines",
+      "when": "Starting, ending or handing over an agent session.",
+      "rules": [
+        "core/domains/operations.md § A context reset releases nothing — walk what the session holds before it",
+        "core/domains/operations.md § An ask about a system another lane owns is ROUTED, not worked",
+        "core/domains/operations.md § Routines are infrastructure — they migrate, or they silently die",
+        "core/domains/technical.md § Agents that share a scratch directory write unique paths, and a publish step proves the file is its own"
+      ]
+    }
+  ]
+}
