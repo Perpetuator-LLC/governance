@@ -377,6 +377,54 @@ question splits the record: two partial answers, neither one the system of recor
 **The mirror:** an ask about your OWN system that touches another lane's data is still yours. Do your
 part and route only the other lane's part.
 
+## An agent team is organised like an executive team, not around a router
+
+**Scope.** This applies when one human principal directs **several concurrent agents** that own
+different repositories or functions. It does not apply to a single agent working alone. And it
+gives no reason to create roles before there is work for them (see *A role earns a seat*).
+
+**The shape.** The human is the CEO: they set direction, make decisions and publish (G4). Around
+them:
+
+| Role | Owns | Measured by (baseline set) |
+|---|---|---|
+| **Chief of staff** | the human's queue: triage, batch, draft the answer, present a short daily list of decisions in plain words; who owes whom; research on request | size of the human's queue; decisions turned per day; human round-trips per verified item |
+| **Operations assistant** | intake priority across lanes (the final word on order); the measurement discipline; cross-cutting KPIs; waste; **arbitration when two assistants' KPIs conflict** | verified throughput; rework rate; lesson recurrence; human-attention cost |
+| **Executive assistants**, one per function the organisation actually has (for example security & internal operations, legal & compliance, finance, product technology, marketing) | that function's KPI set and its standing queue; a verdict on every item in its domain | per function, e.g. secret-shaped files on disk → 0 · unreviewed terms changes → 0 · cash runway · CI queue wait · cost per acquisition |
+| **Knowledge-vault agent**, one per organisation | the organisation's context; requirements; registries; the lanes under it | — |
+| **Worker lanes**, one per repository | the code and its work items | the repository's own gates |
+
+**Why this shape.** Businesses converge on these roles because each one is a chunk of delegated
+work that stays manageable. A **router** is not one of them. It holds no context and owns no
+outcome. The seat that routes ends up acting as the human's assistant, the dispatcher and the
+verifier at once, and it overloads. Routing is mechanical. Make it a scheduled routine over the
+ownership table and a message bus, not a thinking seat. An item the table cannot place (no owner,
+or two) goes to the chief of staff, and its answer becomes a new row in the table, so the same item
+never needs judgement twice.
+
+**Who may hand a lane work:** the human, the lane's knowledge-vault agent, the chief of staff, and
+the executive assistant accountable for that artifact type. Everyone else proposes through one of
+them. Exception: a P0 goes straight to the lane and is reviewed afterwards.
+
+**Measure before you fix (every role).** Each inefficiency becomes a KPI with a baseline snapshot
+before the change. If the trend then goes the wrong way, hold every other change on that KPI,
+reverse, and watch until the baseline returns.
+
+**Competing optimisers are intended.** Finance's cost and technology's speed are supposed to pull
+against each other. The operations assistant prices the trade-off against the current release.
+When they still disagree, it becomes one decision row for the human. Never merge two functions to
+avoid the argument: that hides the trade-off it exists to expose.
+
+**A role earns a seat.** An executive assistant starts as a **persona** that the chief of staff
+applies to an item, and becomes a standing seat only when its queue is standing. Make it a seat
+only once a new seat costs the human no extra sign-in: each seat has its own scoped credential.
+*Mirror case:* a seat with no standing queue wastes its own runs and dilutes ownership as surely as
+a standing queue with no owner stalls. The test runs in both directions.
+
+**Measure the restructure itself.** Adopting this shape is a change like any other. Within an
+agreed window it must move the human's queue size and the human round-trips per verified item, or
+it is reversed.
+
 ## A lane that serves people runs AHEAD of them, not behind them
 
 **Scope:** any agent lane whose people (a team, or clients) need its approvals, reviews, answers,
