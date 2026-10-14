@@ -84,14 +84,6 @@ def rule_id(rule):
     return f"{head}#{hashlib.sha256(rule.encode()).hexdigest()[:8]}"
 
 
-def read_json(path):
-    try:
-        with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
-    except Exception:
-        return None
-
-
 def head_permissions():
     """permissions{} as committed at HEAD — the reference the live file drifts from.
 
