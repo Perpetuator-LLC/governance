@@ -100,6 +100,20 @@ gone=$(git -C "$d/work" cat-file -e HEAD:b 2>/dev/null && echo kept || echo gone
 check "a deleted tracked file is committed as a deletion; an unknown path exits 2 with nothing committed" \
   '[ $r1 = 0 ] && [ "$gone" = gone ] && [ $r2 = 2 ] && [ "$(git -C "$d/work" rev-list --count HEAD)" = 2 ]'
 
+# 7d. `git push` can report success against a DIFFERENT target than `ls-remote` reads back (a
+# diverged push-url/fetch-url — `git remote set-url --push`, or any url.*.pushInsteadOf rewrite):
+# exit 1, and it says origin's branch does not read back as the new commit. Found by mutation
+# (quality sweep, 2026-10-14): removing the ls-remote re-verification entirely passed every other
+# case in this file, because none of them can make `git push` itself exit 0 while the remote the
+# NAME "origin" reads back from still lacks the commit — this is the one realistic way to.
+d=$(mkrepo diverged-push)
+git init -q --bare "$d/push-only.git"
+git -C "$d/work" remote set-url --push origin "$d/push-only.git"
+echo change >> "$d/work/a"
+out=$(cd "$d/work" && "$CP" -F "$d/msg" -- a 2>&1); rc=$?
+check "diverged push/fetch url: exit 1, says origin's branch does not read back as the new commit" \
+  '[ $rc = 1 ] && grep -q "origin'"'"'s feature is" <<<"$out" && [ -z "$(remote_tip "$d" feature)" ]'
+
 # 8. The test can see the failure: commit-push WITHOUT the HEAD-moved check publishes the base in case 2.
 M="$TMP/commit-push.mutant"; sed 's/if \[ "\$rc" -ne 0 \] || \[ "\$after" = "\$before" \] || .*; then/if false; then/' "$CP" > "$M"; chmod +x "$M"
 d=$(mkrepo mutant); echo change >> "$d/work/a"; hook "$d" 'exit 1'
