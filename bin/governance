@@ -124,7 +124,8 @@ ADAPTER_DIR = ".governance"          # the organisation layer, inside its vault
 ADAPTER_PARTS = ("skills", "hooks", "agents", "bin", "domains", "settings", "scheduled-tasks")
 GOV_MD, CLAUDE_MD, IMPORT_LINE = "GOVERNANCE.md", "CLAUDE.md", "@GOVERNANCE.md"
 MARK_BEGIN, MARK_END = "<!-- governance:begin -->", "<!-- governance:end -->"
-HARNESSES = ("claude", "codex", "grok")
+# HARNESS (the per-harness registry) and HARNESSES (its name order) are defined below, just above
+# build_plan() — after the per-harness plan/hook_configs functions they reference.
 LINKED_PARTS = ("skills", "hooks", "agents", "bin")
 # Grok's names for the tools a Claude matcher names: its documented alias table, checked against a captured
 # payload (governance#119). Grok aliases `Bash` itself, but its file-CREATE tool is `write`, lowercase and
@@ -401,6 +402,91 @@ def grok_floor(settings, hooks, tools=GROK_TOOLS):
     return {"hooks": {"PreToolUse": groups}} if groups else None
 
 
+def _plan_claude(plan, layers, links, settings, providers, instruction):
+    plan.dir(".claude")
+    plan.file(".claude/CLAUDE.md", instruction)
+    plan.dir(".claude/governance")
+    for d in sorted({d for _, _, ir in layers for d in md_names(os.path.join(ir, "domains"))}):
+        plan.file(f".claude/governance/{d}", plan.render(
+            [(n, os.path.join(ir, "domains", d)) for n, _, ir in layers
+             if os.path.isfile(os.path.join(ir, "domains", d))]))
+    for part in LINKED_PARTS:
+        plan.dir(f".claude/{part}")
+        for entry, src in links[part].items():
+            plan.link(f".claude/{part}/{entry}", src)
+    if providers:
+        plan.link(".claude/scheduled-tasks", providers[0][1])
+    plan.file(".claude/settings.json", dump_json(settings))
+
+
+def _plan_codex(plan, layers, links, settings, providers, instruction):
+    plan.dir(".codex")
+    plan.file(".codex/AGENTS.md", instruction)
+
+
+def _plan_grok(plan, layers, links, settings, providers, instruction):
+    plan.dir(".grok")
+    plan.dir(".grok/rules")
+    plan.file(".grok/rules/00-governance.md", instruction)
+    plan.dir(".grok/skills")
+    for entry, src in links["skills"].items():
+        plan.link(f".grok/skills/{entry}", src)
+    # Agents are shared across harnesses, but a harness may override one or add its own
+    # under harness/<h>/agents/. Without this the entries are simply never installed —
+    # and a path the installer does not own is a path the archive census finds still
+    # pointing at the old repo.
+    grok_agents = dict(links["agents"])
+    for name, parts_root, _ in layers:
+        d = os.path.join(parts_root, "harness", "grok", "agents")
+        if not os.path.isdir(d):
+            continue
+        for entry in sorted(os.listdir(d)):
+            src = os.path.join(d, entry)
+            if entry.startswith(".") or not os.path.isfile(src):
+                continue
+            if entry in grok_agents:
+                plan.notes.append(f"COLLISION  agents/{entry}: shared overridden by {name} grok ({src})")
+            grok_agents[entry] = src
+    if grok_agents:
+        plan.dir(".grok/agents")
+        for entry, src in sorted(grok_agents.items()):
+            plan.link(f".grok/agents/{entry}", src)
+    floor = grok_floor(settings, links["hooks"], grok_tool_names(plan, layers))
+    if floor:
+        plan.dir(".grok/hooks")
+        plan.file(GROK_FLOOR, dump_json(floor))
+
+
+def _hook_configs_claude(home):
+    return [".claude/settings.json"]
+
+
+def _hook_configs_codex(home):
+    return [".codex/hooks.json"]
+
+
+def _hook_configs_grok(home):
+    grok = os.path.join(home, ".grok", "hooks")
+    return sorted(f".grok/hooks/{f}" for f in os.listdir(grok) if f.endswith(".json")) if os.path.isdir(grok) else []
+
+
+# The per-harness registry (governance#228): adding a render target is one entry here, not an edit
+# at every site that used to spell the harness's name out. Each entry names: the parts (of
+# skills/hooks/agents/bin) this harness links in; whether it gets a merged settings.json; how its
+# own layer is planned (plan); and which hook config(s) under a home are its own (hook_configs, for
+# dead_hooks). HARNESSES is this registry's name order — every other site that iterates "the
+# harnesses" reads it from here instead of holding its own list.
+HARNESS = {
+    "claude": {"parts": LINKED_PARTS, "needs_settings": True, "plan": _plan_claude,
+               "hook_configs": _hook_configs_claude},
+    "codex": {"parts": (), "needs_settings": False, "plan": _plan_codex,
+              "hook_configs": _hook_configs_codex},
+    "grok": {"parts": ("skills", "agents", "hooks"), "needs_settings": True, "plan": _plan_grok,
+             "hook_configs": _hook_configs_grok},
+}
+HARNESSES = tuple(HARNESS)
+
+
 def build_plan(repo, adapters, local, harnesses):
     if not os.path.isdir(repo):
         raise Refusal(f"core repository not found: {repo}")
@@ -443,61 +529,12 @@ def build_plan(repo, adapters, local, harnesses):
     if len(providers) > 1:
         raise Refusal("scheduled-tasks is provided by more than one adapter ("
                       + ", ".join(f"{n}: {p}" for n, p in providers) + ") — at most one may provide it")
-    grok_parts = ("skills", "agents", "hooks")
-    parts = LINKED_PARTS if "claude" in harnesses else grok_parts if "grok" in harnesses else ()
-    links = {part: link_sources(layers, part, plan.notes) for part in parts}
-    settings = merged_settings(plan, layers) if {"claude", "grok"} & set(harnesses) else {}
+    needed_parts = set().union(*(HARNESS[h]["parts"] for h in harnesses))
+    links = {part: link_sources(layers, part, plan.notes) for part in needed_parts}
+    settings = merged_settings(plan, layers) if any(HARNESS[h]["needs_settings"] for h in harnesses) else {}
 
     for h in harnesses:
-        if h == "claude":
-            plan.dir(".claude")
-            plan.file(".claude/CLAUDE.md", instruction)
-            plan.dir(".claude/governance")
-            for d in sorted({d for _, _, ir in layers for d in md_names(os.path.join(ir, "domains"))}):
-                plan.file(f".claude/governance/{d}", plan.render(
-                    [(n, os.path.join(ir, "domains", d)) for n, _, ir in layers
-                     if os.path.isfile(os.path.join(ir, "domains", d))]))
-            for part in LINKED_PARTS:
-                plan.dir(f".claude/{part}")
-                for entry, src in links[part].items():
-                    plan.link(f".claude/{part}/{entry}", src)
-            if providers:
-                plan.link(".claude/scheduled-tasks", providers[0][1])
-            plan.file(".claude/settings.json", dump_json(settings))
-        elif h == "codex":
-            plan.dir(".codex")
-            plan.file(".codex/AGENTS.md", instruction)
-        elif h == "grok":
-            plan.dir(".grok")
-            plan.dir(".grok/rules")
-            plan.file(".grok/rules/00-governance.md", instruction)
-            plan.dir(".grok/skills")
-            for entry, src in links["skills"].items():
-                plan.link(f".grok/skills/{entry}", src)
-            # Agents are shared across harnesses, but a harness may override one or add its own
-            # under harness/<h>/agents/. Without this the entries are simply never installed —
-            # and a path the installer does not own is a path the archive census finds still
-            # pointing at the old repo.
-            grok_agents = dict(links["agents"])
-            for name, parts_root, _ in layers:
-                d = os.path.join(parts_root, "harness", "grok", "agents")
-                if not os.path.isdir(d):
-                    continue
-                for entry in sorted(os.listdir(d)):
-                    src = os.path.join(d, entry)
-                    if entry.startswith(".") or not os.path.isfile(src):
-                        continue
-                    if entry in grok_agents:
-                        plan.notes.append(f"COLLISION  agents/{entry}: shared overridden by {name} grok ({src})")
-                    grok_agents[entry] = src
-            if grok_agents:
-                plan.dir(".grok/agents")
-                for entry, src in sorted(grok_agents.items()):
-                    plan.link(f".grok/agents/{entry}", src)
-            floor = grok_floor(settings, links["hooks"], grok_tool_names(plan, layers))
-            if floor:
-                plan.dir(".grok/hooks")
-                plan.file(GROK_FLOOR, dump_json(floor))
+        HARNESS[h]["plan"](plan, layers, links, settings, providers, instruction)
     return plan
 
 
@@ -881,9 +918,7 @@ def dead_hooks(home):
     Every harness fails OPEN on a hook it cannot run, so a floor gate naming a missing file is no gate,
     and nothing else says so: the config parses, the harness starts, every call is allowed. Checked for
     configs this install does not own too (codex's hooks.json), because that is where it was found."""
-    grok = os.path.join(home, ".grok", "hooks")
-    configs = [".claude/settings.json", ".codex/hooks.json"] + (
-        sorted(f".grok/hooks/{f}" for f in os.listdir(grok) if f.endswith(".json")) if os.path.isdir(grok) else [])
+    configs = [c for h in HARNESSES for c in HARNESS[h]["hook_configs"](home)]
     out = []
     for rel in configs:
         p = os.path.join(home, rel)
