@@ -224,7 +224,12 @@ def cmd_status():
         for line in fh:
             n += 1
             try:
-                if json.loads(line).get("after", {}).get("missing_vs_head"):
+                rec = json.loads(line)
+                # describe()'s own output nests under "target" for a baseline event (--oneshot emits
+                # only this) and under "after" for target_write/target_touched (watch-mode only) — a
+                # count reading only "after" silently excludes every --oneshot run's own finding, which
+                # is the one place a single scheduled check would ever see it.
+                if rec.get("after", {}).get("missing_vs_head") or rec.get("target", {}).get("missing_vs_head"):
                     strips += 1
             except Exception:
                 pass
