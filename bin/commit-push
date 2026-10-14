@@ -39,17 +39,27 @@ done
 [ $# -gt 0 ] || { echo "commit-push: name the paths to commit after -- (never all of them)" >&2; exit 2; }
 
 branch="$(git symbolic-ref --quiet --short HEAD)" || { echo "commit-push: HEAD is detached; check out a branch" >&2; exit 2; }
-before="$(git rev-parse --verify HEAD)" || exit 1
+before="$(git rev-parse --verify HEAD 2>/dev/null)" || { echo "commit-push: HEAD has no commit yet (an unborn branch); make an initial commit the normal way first" >&2; exit 2; }
 
-# Stage each path: a file or directory that exists is added; one that is gone but tracked in HEAD is a
-# deletion (it may already be staged, as by `git mv`); anything else is a typo, refused before a commit.
+# Validate every path FIRST, in its own pass: a file or directory that exists is addable, one that is
+# gone but tracked in HEAD is a deletion, anything else is a typo. Checked before any `git add`, or a
+# valid path named earlier in the list is left staged in the index when a later one turns out to be
+# bad — the usage refusal says "nothing committed", which is true, but not "nothing changed": the
+# index is dirty and nothing told the caller.
+for p in "$@"; do
+  if [ -e "$p" ] || [ -L "$p" ]; then
+    continue
+  elif git cat-file -e "HEAD:./$p" 2>/dev/null; then
+    continue
+  else
+    echo "commit-push: '$p' is neither in the tree nor in HEAD; nothing committed" >&2; exit 2
+  fi
+done
 for p in "$@"; do
   if [ -e "$p" ] || [ -L "$p" ]; then
     git add -- "$p" || { echo "❌ commit-push: git add $p failed; nothing committed, nothing pushed" >&2; exit 1; }
-  elif git cat-file -e "HEAD:./$p" 2>/dev/null; then
-    git rm --cached --quiet --ignore-unmatch -- "$p" >/dev/null
   else
-    echo "commit-push: '$p' is neither in the tree nor in HEAD; nothing committed" >&2; exit 2
+    git rm --cached --quiet --ignore-unmatch -- "$p" >/dev/null
   fi
 done
 git commit -F "$msg" -- "$@"
