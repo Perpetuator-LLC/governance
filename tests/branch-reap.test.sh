@@ -214,6 +214,57 @@ git -C "$R5" rev-parse --verify --quiet feat/noforge >/dev/null && pass "unreach
 grep -q 'the forge could not be asked' <<<"$out" && pass "and the report says the forge could not be asked" \
   || fail "the report does not say the forge could not be asked: $(printf '%s' "$out" | tr '\n' '|')"
 
+# --- 6e (strengthened). THE MIRROR's own message, pinned literally -----------------------------------
+# 6e above only asserted the branch SURVIVES; pin the literal diagnosis too, so 6g below has a real
+# mirror to be told apart from, not just an existence check.
+out4=$("$BR" --apply --repo "$R4" --log "$TMP/r4b.log" 2>&1)
+grep -q 'REFUSED feat/rewound' <<<"$out4" \
+  && pass "a REAL rewind case (branch still exists, forge genuinely behind) reaches REFUSED" \
+  || fail "the real rewind case did not reach REFUSED: $(grep 'feat/rewound' <<<"$out4" | tr '\n' '|')"
+grep -q 'the cached origin/main holds it and the forge.s main does NOT (rewound?); kept' <<<"$out4" \
+  && pass "...and prints the rewind guess, because here it is actually true" \
+  || fail "the real rewind case lost its own diagnosis: $(grep 'feat/rewound' <<<"$out4" | tr '\n' '|')"
+
+# --- 6g. A branch that VANISHES between listing and delete gets "not a branch", never the rewind guess ---
+# Reproduced for real, not asserted from a fabricated message: a `git` shim on PATH deletes the ref out
+# from under the script the first time `branch -d` is called for it, so git's own real "not found" error
+# is what the script actually parses. Built on the SAME shape as 6e (forge REACHABLE but rewound, so
+# `forge` is non-empty) — that is the one condition under which the OLD code reached for the rewind
+# guess at all; an unreachable-forge fixture would never have exercised the misdiagnosis this fixes.
+R6=$(mkrepo r6)
+git -C "$R6" checkout -q -b feat/vanish
+echo v > "$R6/v"; git -C "$R6" add v; git -C "$R6" commit -qm vanish
+git -C "$R6" push -q origin feat/vanish:main 2>/dev/null                  # forge's main holds it (for now)
+git -C "$R6" checkout -q main; git -C "$R6" fetch -q origin               # cache: origin/main contains it
+other6="$TMP/r6-other"; git clone -q "$TMP/r6/origin.git" "$other6" 2>/dev/null
+git -C "$other6" reset -q --hard HEAD~1; git -C "$other6" push -q --force origin HEAD:main 2>/dev/null
+# ...the forge is now rewound BEHIND the cache (same as 6e): `forge` resolves and is non-empty, but
+# on_forge fails, so -d is reached with the misdiagnosis condition live.
+REAL_GIT=$(command -v git)
+FAKEBIN="$TMP/fakebin-vanish"; mkdir -p "$FAKEBIN"
+cat > "$FAKEBIN/git" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "-C" ] && [ "\$3" = "branch" ] && [ "\$4" = "-d" ] && [ "\$5" = "feat/vanish" ] && [ ! -e "$TMP/vanish-marker" ]; then
+  : > "$TMP/vanish-marker"
+  "$REAL_GIT" -C "\$2" update-ref -d refs/heads/feat/vanish >/dev/null 2>&1
+fi
+exec "$REAL_GIT" "\$@"
+SH
+chmod +x "$FAKEBIN/git"
+out=$(PATH="$FAKEBIN:$PATH" "$BR" --apply --repo "$R6" --log "$TMP/r6.log" 2>&1)
+grep -q 'SKIPPED feat/vanish — not a branch' <<<"$out" \
+  && pass "a branch that vanished between listing and delete: SKIPPED, not REFUSED" \
+  || fail "vanished branch did not get the SKIPPED/not-a-branch row: $(grep -A1 'feat/vanish' <<<"$out" | tr '\n' '|')"
+grep -q 'REFUSED feat/vanish' <<<"$out" && fail "a vanished branch was reported as REFUSED: $(grep -A1 'REFUSED feat/vanish' <<<"$out" | tr '\n' '|')" \
+  || pass "no REFUSED row for the vanished branch"
+# R6 has exactly one candidate branch, so ANY "rewound" text anywhere in the output is this one's
+# diagnosis — unlike filtering first for lines naming the branch, which would miss the diagnosis line
+# entirely (it never repeats the branch name).
+grep -qi 'rewound' <<<"$out" && fail "the rewind guess was printed for a branch that never existed: $(grep -A1 'feat/vanish' <<<"$out" | tr '\n' '|')" \
+  || pass "no rewound-forge guess attached to the vanished branch — even though forge is reachable, same as 6e"
+grep -q '1 vanished since listing' <<<"$out" && pass "the summary line counts it separately from refused" \
+  || fail "the summary did not count the vanished branch: $(grep 'branch-reap: deleted' <<<"$out")"
+
 # --- 7. a repo roster is honoured, and an EMPTY or unreadable one aborts ---
 printf '%s\n' "$R" > "$TMP/roster"
 git -C "$R" branch merged/viaroster
