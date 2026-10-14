@@ -1192,3 +1192,51 @@ So write it so the expiry is detectable:
 - **Prefer pointing at the artefact over restating its state.** A pointer stays true as the artefact
   moves; a restatement is a copy that has to be maintained, and copies are what go stale.
 
+
+
+## An inefficiency becomes a KPI, with a baseline, before a fix — and a regressing trend holds and reverses
+
+**An agent that identifies an inefficiency defines the measure and takes a baseline snapshot before
+changing anything; after the change it snapshots on cadence, and a trend in the wrong direction holds
+every other change on that measure, reverses this one, and monitors until the baseline returns.**
+Changing first and measuring later leaves no way to tell the fix from noise, and no way to tell a
+regression from the fix apart from a feeling.
+
+**Scope:** changes to process, tooling, cost or token use made by agents; an emergency fix ships
+first and is measured after.
+
+**Where it is wrong:** a measure that improves because the thing measured stopped being counted is a
+regression of the measure, not progress — the snapshot states its denominator, so a shrinking
+denominator cannot pass as a shrinking numerator.
+
+## Knowledge agents direct code lanes; the router routes by an owner table, holding no product context
+
+**A lane that owns a code repository takes work from the human and from the knowledge agent that
+owns the organisation's vault; a router seat sends each request to the accountable owner by a
+published RACI and verifies, holding no product context of its own.** A router that accumulates
+product knowledge becomes a second, competing source of truth about what a lane should do; its job is
+to route and verify, not to decide.
+
+**Scope:** fleets with at least one knowledge vault and at least two code lanes; a single-lane setup
+needs none of it.
+
+**Where it is wrong:** an emergency (prod down, data loss, security) goes straight to the lane,
+reviewed after — routing it through the owner table first spends the one resource an emergency
+cannot afford.
+
+## A registry row at creation — the moment anything durable exists, it has a row
+
+**The moment anything durable is created — an account, a credential, a host, a subscription, a
+repository, a purchased or built thing — it gets a registry row (`building` → `active` → `retired`),**
+and where the thing is a credential, it is stored through the blind pipeline at that moment, not
+after. A thing later found unused keeps its row, marked as such, rather than being deleted from the
+record along with its no-longer-needed existence.
+
+**Scope:** anything a human or agent creates on any surface; scratch files and throwaway environments
+are exempt.
+
+**This generalizes the credential-specific case already in canon** (*Rotation is a routine, not a
+ceremony*'s inventory, "the row written BEFORE the credential is minted") from credentials to any
+durable thing. Where the created thing is a credential, that section's inventory column requirements
+(one row per credential, who consumes it, the rotation script) apply in full; this rule is the reason
+the same discipline extends to the account, host or subscription the credential often lives beside.
