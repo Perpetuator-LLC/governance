@@ -37,6 +37,7 @@
 #   bin/branch-reap --log <path>         # where to append the undo log
 
 set -uo pipefail
+source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")/lib/forge-tip.sh"
 first_line() {  # first_line <prefix> <text> -> the first line of <text> that starts with <prefix>
   local l
   while IFS= read -r l; do case "$l" in "$1"*) printf '%s' "$l"; return 0 ;; esac; done <<<"$2"
@@ -84,9 +85,7 @@ for repo in "${REPOS[@]}"; do
   name=$(basename "$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null || echo "$repo")")
 
   # The default branch is READ from the remote, never assumed to be "main".
-  def=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
-  def=${def#origin/}
-  [ -z "$def" ] && def=$(git -C "$repo" remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p' | head -1)
+  def=$(forge_default_branch "$repo")
   if [ -z "$def" ]; then
     echo "  $name: cannot determine origin's default branch — skipping (a guess here deletes real work)" >&2
     rc=1; continue
@@ -97,7 +96,7 @@ for repo in "${REPOS[@]}"; do
 
   # The forge's own answer, never the cached ref: a cache can be behind (keeps too much) or AHEAD of a
   # rewound forge (would delete what the forge no longer holds). A failed ask is no answer, never "no".
-  forge=$(git -C "$repo" ls-remote --exit-code origin "refs/heads/$def" 2>/dev/null | cut -f1)
+  forge=$(forge_tip "$repo" "$def")
   if [ -n "$forge" ] && ! git -C "$repo" cat-file -e "$forge^{commit}" 2>/dev/null; then
     echo "  $name: the forge's $def is at ${forge:0:9}, which this clone has not fetched; only git's -d may delete here" >&2
     forge=""
