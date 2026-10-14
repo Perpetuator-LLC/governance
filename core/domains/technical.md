@@ -3332,3 +3332,87 @@ not that the references are identical.
 above code that reads `refs/remotes/origin/<default>`. The comment and the code contradict each
 other, and the comment is the one that gets believed, because it is the one written in the language
 of the thing the reader wanted to be true.
+
+
+## A measurement is void unless you assert WHICH PAGE was served
+
+**Before recording a performance or behaviour measurement against a named address, assert that the
+response was the resource you meant to measure.** A 404 body, a redirect to a generic page and an
+empty-state render all produce stable, plausible, repeatable numbers — they just describe something
+else. The number is not suspicious-looking, which is the whole problem: it looks like a baseline.
+
+**Scope:** measurements taken against an address in an environment you did not populate yourself — a
+staging or preview deployment, another team's host, a freshly seeded environment where only some
+content exists.
+
+**Where it would be wrong:** when the error path *is* the subject — timing a 404, or asserting that a
+missing resource degrades gracefully — the requirement inverts, and you must assert the error page
+*was* served. So the rule is **"assert which page you got,"** never "require a 200."
+
+## A guard in a separate unit of execution is not a guard
+
+**A precondition check must run inside the same unit of work it protects, and must abort that unit.**
+Orchestrators that select units by a target filter will silently skip a check living in its own unit,
+and the protected work still runs and still exits 0. Two siblings, measured in the same pass: a
+per-target failure does not stop the other targets unless the runner is told that any error is fatal;
+and a unit matching no targets does nothing and exits 0, which is indistinguishable from success.
+
+**Scope:** configuration-management and orchestration runners that both select units of work by a
+filter and report results per target — play-based config management, matrix CI jobs, fan-out task
+runners.
+
+**Where it would be wrong:** a guard that must run exactly once for a whole fan-out — a global lease,
+a one-time migration gate — is wrong inside the per-target unit, where it runs N times and may itself
+become the race. There it belongs in a preceding unit, and the correct fix is to make the orchestrator
+**fail when that unit is skipped**, not to move the guard.
+
+## `git add` fails under an ignored ancestor even for a TRACKED file, so a chained add-then-commit never commits
+
+**Do not chain `git add <path> && git commit`.** If any ancestor directory of that path is ignored,
+`git add` exits non-zero even though the file itself is tracked, the `&&` short-circuits, and no
+commit is made. The working tree still shows the edit, so a later read looks like the change was
+simply never written — the failure presents as an absent edit rather than as a failed commit. For an
+already-tracked file, commit by pathspec directly (`git commit -- <path>`), which takes the
+working-tree state and needs no add.
+
+**Scope:** tracked files living inside an ignored directory — a generated or vendored tree carrying a
+few deliberately tracked files.
+
+**Where it would be wrong:** a new file genuinely requires `git add`, and a pathspec commit silently
+omits it; an index-only change cannot ride a pathspec at all. So the rule is not "never add" — it is
+**"never let an add's exit status gate the commit of an already-tracked file,"** and after any commit,
+assert HEAD moved rather than reading the command's own message.
+
+## A fingerprint taken from a RUNNING PROCESS includes values no file carries, so it reports drift no change caused
+
+**If a drift detector hashes the effective configuration of a running service, values injected at
+start time enter the hash: environment, command-line flags, runtime defaults, an operator's one-off
+override.** A restart with a different invocation then registers as drift with no file changed — and
+it fires across every host that was restarted, so the alert arrives as a fleet-wide event, which reads
+as serious rather than as spurious. A drift detector must compare the same kind of artifact on both
+sides: declared against declared, or effective against a recorded effective baseline captured the same
+way.
+
+**Scope:** detectors comparing a desired-state source against a running system's introspected
+configuration.
+
+**Where it would be wrong:** when the question genuinely is *"does this process's live config match
+what we declared,"* those start-time-only values are exactly the finding — someone passed a flag no
+file records. Suppressing them hides the real drift. So the fix is to **attribute** each difference
+(declared-but-absent vs present-but-undeclared), never to narrow the hash.
+
+## A value read from a DECLARATION is not the state of the system
+
+**A claim that something is enabled, disabled, present or removed must be read back from the
+component that enforces it, not from the file, manifest or ticket that declares it.** The declaration
+records an intention at some past moment; drift, partial application, a manual change, and an apply
+that never ran each leave the declaration correct and the system different.
+
+**Scope:** binds any assertion used to close work or to authorize a next step — retiring a credential
+or client, confirming a flag is off, reporting a resource gone. It does not bind ordinary
+reading-to-understand.
+
+**Where it would be wrong:** when the declaration *is* the enforcement point — policy-as-code that the
+deciding engine reads at every decision — "check the live system" adds nothing and may read a cache.
+There the right check is which revision the engine actually loaded. Both halves reduce to one rule:
+**ask whatever decides.**
