@@ -72,7 +72,9 @@ case "$ext" in
     ;;
   go)
     if command -v gofmt &>/dev/null; then
-      gofmt -e "$path" >/dev/null 2>&1 | head -10
+      # Same fix as the json branch below: discard only stdout (gofmt's reformatted echo on a VALID
+      # file), never stderr, where `-e`'s syntax error actually lands.
+      gofmt -e "$path" 2>&1 >/dev/null | head -10
     fi
     ;;
   rs)
@@ -83,7 +85,11 @@ case "$ext" in
     if command -v jq &>/dev/null; then
       jq empty "$path" 2>&1 | head -5
     elif command -v python3 &>/dev/null; then
-      python3 -m json.tool "$path" >/dev/null 2>&1 | head -5
+      # `>/dev/null 2>&1` BEFORE the pipe would redirect stdout AND stderr to /dev/null first, so
+      # `head` receives nothing — the error message this branch exists to report, discarded before it
+      # could be seen. Discard only stdout (json.tool's pretty-printed echo on a VALID file, which
+      # nobody asked for); stderr, where the actual parse error lands, still reaches head.
+      python3 -m json.tool "$path" 2>&1 >/dev/null | head -5
     fi
     ;;
   yaml|yml)
