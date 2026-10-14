@@ -1289,7 +1289,15 @@ def cmd_reconcile(a):
         ref = os.path.relpath(adapter, vp)
         keys = [("type", "governance"), ("canonical_home", "governance"), ("adapter", ref), ("role", role)]
         gp = os.path.join(vp, GOV_MD)
-        ensure_text(f"vault {gp}", gp, governance_md_text(read_text(gp), keys, pointer_block(m["core"], ref, role)))
+        gov_old = read_text(gp)
+        if gov_old is not None and MARK_BEGIN in gov_old and MARK_END not in gov_old.split(MARK_BEGIN, 1)[1]:
+            # A begin marker with no matching end: with_block() can't find the span to replace and
+            # would fall through to its APPEND branch, leaving a second begin marker beside the
+            # orphaned first one — a human's own truncation or a merge conflict left in the file would
+            # read as "fixed" while the file grew a second, confusing block instead of being refused.
+            report(f"vault {gp}", "refused", f"`{MARK_BEGIN}` has no matching `{MARK_END}` — fix or remove it by hand")
+        else:
+            ensure_text(f"vault {gp}", gp, governance_md_text(gov_old, keys, pointer_block(m["core"], ref, role)))
         cp = os.path.join(vp, CLAUDE_MD)
         old = read_text(cp)
         n = sum(1 for line in (old or "").split("\n") if line.strip() == IMPORT_LINE)
