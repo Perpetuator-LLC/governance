@@ -38,10 +38,6 @@ for k in sys.argv[1:]:
 ' "$@"
   fi
 }
-is_json() {
-  if command -v jq >/dev/null 2>&1; then printf '%s' "$1" | jq -e . >/dev/null 2>&1
-  else printf '%s' "$1" | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null 2>&1; fi
-}
 path=$(tool_field "$input" .tool_input.file_path .tool_input.path)
 [[ -z "$path" && -n "${CLAUDE_TOOL_INPUT:-}" ]] && path=$(tool_field "$CLAUDE_TOOL_INPUT" .file_path .path)
 
