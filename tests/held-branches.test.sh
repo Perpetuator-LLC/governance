@@ -44,6 +44,14 @@ g switch -qc folded-newhash main; commit h h "folded under a new hash"
 g switch -q merge/lane; g cherry-pick folded-newhash >/dev/null
 g push -q origin merge/lane
 
+# a SECOND rolling branch: folded-only-elsewhere must be checked against EVERY merge/*, not just the
+# first one found. Found by mutation (quality sweep, 2026-10-14): limiting the ROLL loop to its first
+# element passed the entire existing suite, because every fixture here only ever has one merge/* branch.
+g switch -qc merge/lane2 main; g push -q origin merge/lane2; g switch -q main
+g switch -qc folded-only-in-lane2 main; commit z z "folded only in the second rolling branch"
+g switch -q merge/lane2; g merge -q --no-ff folded-only-in-lane2 -m "fold into lane2"; g push -q origin merge/lane2
+g switch -q main
+
 # dropped: never folded, subject collides with main's "fix tests"
 g switch -qc dropped-collide main; commit d d "fix tests"
 # dropped: plain — authored by someone else, so the report must say WHOSE it is
@@ -53,7 +61,7 @@ printf 'p\n' > "$C/p"; g add p; GIT_AUTHOR_NAME="Other Person" g commit -qm "a d
 g switch -qc partial main; commit q1 q1 "partial one"; commit q2 q2 "partial two"
 g switch -q merge/lane; g cherry-pick "partial~1" >/dev/null; g push -q origin merge/lane
 
-for b in landed landed-newhash folded-merge folded-newhash dropped-collide dropped-plain partial; do g push -q origin "$b"; done
+for b in landed landed-newhash folded-merge folded-newhash dropped-collide dropped-plain partial folded-only-in-lane2; do g push -q origin "$b"; done
 g switch -q main
 
 # Pull-request heads, as forges publish them: a PR into the rolling branch whose head is dropped-plain's
@@ -75,7 +83,9 @@ check "a partly folded branch is reported, with its split" "grep -q 'origin/part
 check "a branch MERGED into the rolling branch is folded, not dropped (cherry prints nothing for an ancestor)" \
   "! grep -q 'origin/folded-merge ' '$TMP/out'"
 check "a branch folded under a NEW hash is folded, not dropped" "! grep -q 'origin/folded-newhash ' '$TMP/out'"
-check "…and the folded branches are counted, not silently dropped from view" "grep -q '2 branch(es) fully folded' '$TMP/out'"
+check "a branch folded into the SECOND rolling branch only is folded, not dropped (every merge/* is checked, not just the first)" \
+  "! grep -q 'origin/folded-only-in-lane2 ' '$TMP/out'"
+check "…and the folded branches are counted, not silently dropped from view" "grep -q '3 branch(es) fully folded' '$TMP/out'"
 check "work merged into main is not reported" "! grep -q 'origin/landed ' '$TMP/out'"
 check "work that reached main under a new hash is not reported" "! grep -q 'origin/landed-newhash ' '$TMP/out'"
 check "the rolling branch itself is never listed (orphan-check's job)" "! grep -q 'origin/merge/' '$TMP/out'"
