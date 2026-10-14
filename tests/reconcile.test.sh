@@ -181,6 +181,25 @@ rc="$(gov reconcile --home "$H")"
 check "an edit INSIDE the block is overwritten (the block is managed)" \
   "[ '$rc' = '0' ] && status_of fixed 'org-vault/GOVERNANCE.md' && ! grep -q 'hand edit inside' '$ORG/GOVERNANCE.md'"
 
+# Found by mutation (quality sweep, 2026-10-14): a begin marker with no matching end (a human's own
+# truncation, or a merge conflict left in the file) makes with_block() fall through to its APPEND
+# branch — the file silently grows a SECOND begin marker beside the orphaned first one, reported as
+# "fixed" rather than refused. None of the above constructs this: every one of them starts from a
+# complete block.
+cp "$ORG/GOVERNANCE.md" "$TMP/org-gov.before-truncate"
+python3 - "$ORG/GOVERNANCE.md" <<'PY'
+import sys
+p = sys.argv[1]; t = open(p).read()
+b = t.index("<!-- governance:begin -->")
+open(p, "w").write(t[:b] + "<!-- governance:begin -->\ntruncated mid-block, the end marker never arrived\n")
+PY
+rc="$(gov reconcile --home "$H")"
+check "a begin marker with no matching end is refused, not silently doubled" \
+  "[ '$rc' = '1' ] && status_of refused 'org-vault/GOVERNANCE.md' && [ \"\$(grep -c '<!-- governance:begin -->' '$ORG/GOVERNANCE.md')\" = '1' ]"
+cp "$TMP/org-gov.before-truncate" "$ORG/GOVERNANCE.md"
+rc="$(gov reconcile --home "$H")"
+check "…restored by hand, reconcile is ok again" "[ '$rc' = '0' ] && status_of ok 'org-vault/GOVERNANCE.md'"
+
 echo "governance reconcile — home drift"
 printf '\nan edit made directly in the rendered file\n' >> "$H/.claude/CLAUDE.md"
 rc="$(gov check --home "$H")"
