@@ -116,17 +116,17 @@ the platform the user chose to connect, which has its own practices the product 
 the policy doesn't cover. Clearing the deny list and skipping this is solving half the problem while
 reading as having solved all of it.
 
-**Exhibit** (Capital Copilot / Flow Engine, this engagement, 2026-10-13–14): the worked policy covered
-— a per-connection, per-scope consent screen naming the org/tenant boundary explicitly (not just "full
-access"); a deny list (payment/checkout, account deletion, consent/privacy changes, cross-user data
-export, auth/recovery-credential changes, modifying *another* connection's own grant, and a standing
-entry denying automated trade execution pending the product's own investment-adviser registration
-question, filed before any brokerage integration existed to deny); grant and usage logs attributed to
-the connection, retained past revocation for a bounded audit window; and, for a write-capable scope
-specifically (portfolio positions), a disclosure that the risk there is data integrity, not money
-movement — no brokerage link exists, so the exposure is a corrupted record feeding the product's own
-downstream analysis, not a real trade. The directory-listing half of the same exhibit: a third-party
-MCP connector directory requiring a public privacy-policy URL found the existing policy lacked exactly
-the four items above, because it predated the connector entirely — confirming the scope note: this
-isn't a document you retrofit from the general privacy policy, it's one the agent-connection feature
-creates a dependency on the day it ships.
+**Exhibit** (measured, a consumer financial product adding an MCP-style connector): the worked policy
+covered — a per-connection, per-scope consent screen naming the tenant boundary explicitly (not just
+"full access"); a deny list (payment/checkout, account deletion, consent/privacy changes, cross-user
+data export, auth/recovery-credential changes, modifying *another* connection's own grant, and a
+standing entry denying automated trade execution pending the product's own investment-adviser
+registration question, filed before any brokerage integration existed to deny); grant and usage logs
+attributed to the connection, retained past revocation for a bounded audit window; and, for a
+write-capable scope specifically (portfolio positions), a disclosure that the risk there is data
+integrity, not money movement — no brokerage link exists, so the exposure is a corrupted record
+feeding the product's own downstream analysis, not a real trade. The directory-listing half of the
+same exhibit: a third-party MCP connector directory requiring a public privacy-policy URL found the
+existing policy lacked exactly the four items above, because it predated the connector entirely —
+confirming the scope note: this isn't a document you retrofit from the general privacy policy, it's
+one the agent-connection feature creates a dependency on the day it ships.
