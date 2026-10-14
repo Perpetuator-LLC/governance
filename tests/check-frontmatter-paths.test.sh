@@ -88,6 +88,14 @@ rc="$(run --vault-root "$V" --baseline "$TMP/baseline.json")"
 check "a NEW dead path still fails beside the baseline" "[ '$rc' = '1' ] && grep -q 'NewlyBroken.md' '$TMP/out'"
 rm "$V/notes/new.md"
 
+# --- re-running --write-baseline with no --reasons must not ERASE a reason already on record --------
+# Real bug, found mutation-testing (governance#240): the reasons dict was built from --reasons alone,
+# discarding whatever the baseline file on disk already recorded whenever the flag was simply omitted
+# on a later run — the ordinary case, since the reasons were already written last time.
+rc="$(run --vault-root "$V" --baseline "$TMP/baseline.json" --write-baseline)"
+check "re-running --write-baseline with NO --reasons preserves the reason already on record" \
+  "[ '$rc' = '0' ] && python3 -c \"import json,sys; kb=json.load(open('$TMP/baseline.json'))['known_bad']; sys.exit(0 if kb.get('Old/Layout/Gone.md')=='moved out of the vault on purpose' else 1)\""
+
 # --- cross-vault: resolves with an alias; baselining without one is REFUSED ------------------------
 S="$TMP/sibling"; mkdir -p "$S/State"; printf 'x' > "$S/State/Doc.md"
 printf -- '---\nid: f\nrelated: Other/State/Doc.md\n---\n' > "$V/notes/xref.md"
@@ -97,6 +105,26 @@ check "writing a baseline while an alias is MISSING is refused (exit 2), and not
 rc="$(run --vault-root "$V" --baseline "$TMP/baseline.json" --alias "Other/=$S")"
 check "with the alias the cross-vault reference resolves and is reported as CROSS-VAULT" \
   "[ '$rc' = '0' ] && grep -q 'CROSS-VAULT (resolved via an --alias): 1' '$TMP/out'"
+
+# --- the LEGACY baseline shape: a bare list of values, from before each entry carried a reason -----
+printf '{"known_bad": ["Old/Layout/Gone.md"]}' > "$TMP/legacy-baseline.json"
+rc="$(run --vault-root "$V" --baseline "$TMP/legacy-baseline.json" --alias "Other/=$S")"
+check "a legacy LIST-form baseline (no per-value reason) still suppresses the known-bad value" \
+  "[ '$rc' = '0' ] && grep -q '^baselined known-bad : 1' '$TMP/out'"
+check "...and every legacy entry counts as UNEXPLAINED (it never had a reason to begin with)" \
+  "grep -q '1 of the baseline is UNEXPLAINED' '$TMP/out'"
+
+# --- --json writes the FULL report, not just the console summary -----------------------------------
+rc="$(run --vault-root "$V" --alias "Other/=$S" --json "$TMP/report.json")"
+check "--json writes a parseable report naming the same dead value the console output shows" \
+  "[ -f '$TMP/report.json' ] && python3 -c \"import json; d=json.load(open('$TMP/report.json')); assert any(f['value']=='Old/Layout/Gone.md' for f in d['failing']), d['failing']\""
+
+# --- TWO --vault-root args are BOTH scanned, not just the first -------------------------------------
+V2="$TMP/vault2"; mkdir -p "$V2/notes"
+printf -- '---\nid: v2\nrelated: Another/Dead.md\n---\n' > "$V2/notes/dead2.md"
+rc="$(run --vault-root "$V" --vault-root "$V2" --alias "Other/=$S")"
+check "two --vault-root args: a dead path in the SECOND root is reported too, not only the first" \
+  "[ '$rc' = '1' ] && grep -q 'Another/Dead.md' '$TMP/out' && grep -q 'Old/Layout/Gone.md' '$TMP/out'"
 
 # --- present but unreadable is a failure, not a smaller vault (skipped as root) --------------------
 if [ "$(id -u)" != 0 ]; then
