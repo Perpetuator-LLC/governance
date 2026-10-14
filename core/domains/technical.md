@@ -3332,3 +3332,99 @@ not that the references are identical.
 above code that reads `refs/remotes/origin/<default>`. The comment and the code contradict each
 other, and the comment is the one that gets believed, because it is the one written in the language
 of the thing the reader wanted to be true.
+
+
+## A per-pass fact stored or queried under a key that is not per-pass answers truthfully about a pass you did not run
+
+**A routine that runs more than once in a period, and records a per-pass result under a key with
+coarser granularity than the pass (a date, a day file, a "latest" row), has each later pass overwrite
+the earlier ones.** Every read afterwards is well-formed and honest about *a* pass — just not the one
+asked about, and the passes that were overwritten can never be verified again. The same defect
+appears in the read direction: a scope taken from a coarser source than the pass (a prose list where
+a generated roster exists) returns a clean answer about a different population.
+
+**Scope:** any routine whose cadence is finer than its storage or scope key — verification stores,
+idempotence markers, run ledgers, "did X happen today" checks. The tell is a key whose granularity
+you would have to argue matches the pass, rather than read off it.
+
+**Where it would be wrong:** a genuinely idempotent daily fact — a day's closing balance, a date's
+snapshot reading — should be keyed on the day, and giving it a per-pass key creates duplicate rows
+that then disagree. The rule is not "always key finer"; it is that **the key's granularity must equal
+the granularity of the claim read back from it**. A per-pass claim needs a per-pass key; a per-day
+claim needs a per-day key, and a second pass that day must be a replace, not an append.
+
+## A transition count over a scrape-sampled series cannot observe a state shorter than the scrape interval, so its zero is not absence
+
+**Metrics systems sample. A query that counts changes in a gauge over a window can only see states
+that were live at a sample instant.** A short-lived state — a one-shot job that is active for two
+seconds, a transient container, a brief lock — is routinely never sampled, so the transition count is
+zero while the thing ran every time. The zero is well-formed, and a reader checking "did this ever
+run?" with it concludes it never has.
+
+**Scope:** transition/delta queries over sampled state or event-presence series, where the state's
+lifetime may be shorter than the scrape interval. It binds hardest on exactly the series an operator
+reaches for to prove a short job ran.
+
+**Where it would be wrong:** for a state expected to persist — a service that should be up
+continuously, a certificate that should stay valid — a transition count is the right instrument and
+its zero is the good news. The rule is about the ratio: **compare the state's expected lifetime to
+the scrape interval before reading a zero as absence**, and where the lifetime is shorter, read the
+authority that records each occurrence (a last-run timestamp, a counter that only increments)
+instead.
+
+## A query tool's default time window silently converts "retrying with backoff" into "never attempted"
+
+**Log- and metric-query tools commonly default to a short window (the last hour) when none is
+given.** A process that retries with exponential backoff has, by design, long gaps between attempts —
+so a default-window read of its logs returns nothing, and the natural conclusion is that the work was
+queued and dropped rather than attempted and failed. The diagnosis then moves to the wrong layer: "the
+scheduler never fires it" instead of "every attempt fails for reason R".
+
+**Scope:** any question of the form *did this ever happen* or *has it stopped happening*, asked of a
+tool with an implicit window, about a process whose retry interval grows.
+
+**Where it would be wrong:** for *is it happening now* — a liveness or rate question — a short window
+is correct and widening it imports resolved history as if it were current, which is how a fixed
+outage keeps paging. The rule is per-question: **state the window explicitly, and set it from the
+period the question covers, not from the tool's default**; an existence question needs a window at
+least as long as the process's maximum backoff.
+
+## `ENOSPC` on creating a file can mean the directory's index is full, not the filesystem
+
+**"No space left on device" is reported for several distinct exhaustions, and free-space figures only
+refute one of them.** A directory can reach its index limit — an on-disk B-tree at maximum depth, an
+entry-count or hash-bucket ceiling — and every new name in it then fails with `ENOSPC` while the
+volume reports terabytes free, and while writes elsewhere on the same volume succeed. The failure is
+also partial and intermittent: a new name fails only when its hash lands in a full index block, so
+most writes still succeed and the fault reads as flaky rather than structural.
+
+**Scope:** `ENOSPC` from a create (not a write/extend) where free space and free inodes are both
+ample, above all on a directory grown very large and flat by an automated writer. The kernel log is
+the discriminator — it names the limit; the filesystem's free-space report cannot.
+
+**Where it would be wrong:** the ordinary meaning is the common one. A box where free space is
+genuinely near zero must be treated as full, immediately — and the mirror error is just as real: a
+low-disk alert pattern-matched onto a known false-positive class and dismissed without reading the
+value, on a host that was already failing writes. So: **read the number first, and only when free
+space and inodes are both ample look past the filesystem to the directory.** Never let a familiar
+false-positive shape substitute for the one query that distinguishes them.
+
+## When a rule excludes a path from an automatic writer, enumerate every writer to that path first; otherwise a passing test reads exactly like a closed gap
+
+**A control that stops an automated process from touching a protected path binds only the process it
+was written against.** Where several independent writers reach the same path — a scheduled job, a
+third-party sync agent, a human or agent committing directly — excluding one leaves the others
+untouched, and a test proving the exclusion works (even with a correct negative control) passes while
+the protected path keeps being written. The gap then looks closed in the record, which is worse than
+looking open.
+
+**Scope:** path-level or resource-level exclusions where the set of writers is larger than one and not
+all of them are under your control. The roster discipline — any "check all X" ships the roster of X —
+applied to writers rather than to checks.
+
+**Where it would be wrong:** enumerating writers is not a reason to delay a partial fix. Excluding the
+one writer you control is a real reduction and should ship. The rule is about what you are then
+allowed to claim: the done-when names the writers covered and the writers not covered, and the ticket
+stays open on the remainder. A writer you cannot gate at all (a third-party agent) means no write-time
+control exists for that path, and the honest conclusion is architectural — move the protected content
+out of that writer's reach — not another test.
