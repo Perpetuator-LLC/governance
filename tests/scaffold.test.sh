@@ -130,6 +130,23 @@ check "a directory where a file is expected ⇒ refused" "status_of refused AGEN
 check "…and the rest is still created: $((N - 3)) created, 3 refused" \
   "[ \"\$(count_status created)\" = '$((N - 3))' ] && [ \"\$(count_status refused)\" = '3' ]"
 
+# Found by mutation (quality sweep, 2026-10-14): blocked()'s own docstring states a directory on the
+# path "must be a real directory (never a link: scaffold does not write through one)" — a DIFFERENT
+# check (`os.path.islink(p)`) from the "not a directory" case above, since `os.path.isdir()` follows a
+# symlink and would happily call a symlinked directory valid. Removing just the islink() half of that
+# condition passed every existing check in this file, because none of them ever makes the blocking
+# path a symlink — only a plain file (not a directory) or a plain directory (where a file is wanted).
+echo "governance scaffold — refuses to write through a symlinked directory"
+W2="$TMP/symlinked-dir"; DECOY="$TMP/decoy"; mkdir -p "$W2" "$DECOY"
+ln -s "$DECOY" "$W2/module"
+rc="$(gov scaffold --template stack-repo --out "$W2")"
+check "a symlinked directory on the path ⇒ every file under it refused, exit 1" \
+  "[ '$rc' = '1' ] && status_of refused 'module/services/example/compose\.$Y' && status_of refused 'module/services/example/env\.defaults'"
+check "…the symlink itself is untouched (still a link, still pointing at the decoy)" \
+  "[ -L '$W2/module' ] && [ \"\$(readlink '$W2/module')\" = '$DECOY' ]"
+check "…and NOTHING was written through it into the decoy directory" \
+  "[ -z \"\$(find '$DECOY' -mindepth 1)\" ]"
+
 echo "the scaffolded repository's own suites, run inside it"
 git init -q "$S" && (cd "$S" && git add -- "${EXPECTED[@]}")
 (cd "$S" && bash tests/module-lint.test.sh) >"$TMP/suite.out" 2>&1; rc=$?
