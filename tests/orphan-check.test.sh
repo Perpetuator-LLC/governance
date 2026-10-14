@@ -173,7 +173,10 @@ check "when the content check answers CANNOT-TELL, the branch stays a candidate"
   "[ '$rc_c' -eq 1 ] && grep -q 'content: CANNOT-TELL' <<< \"\$out_c\""
 
 # FAIL SAFE: with no content check available, a squashed branch stays a candidate, never clean.
-mkdir -p "$TMP/bare-bin" && cp "$CHECK" "$TMP/bare-bin/orphan-check"
+# lib/forge-tip.sh is still required (it is not the optional dependency this case is about), so it
+# rides along at the same relative path a real install keeps it at.
+mkdir -p "$TMP/bare-bin" "$TMP/lib" && cp "$CHECK" "$TMP/bare-bin/orphan-check" \
+  && cp "$ROOT/lib/forge-tip.sh" "$TMP/lib/forge-tip.sh"
 out_f="$("$TMP/bare-bin/orphan-check" --no-fetch "$TMP/squashed" 2>&1)"; rc_f=$?
 check "without landed-check, a branch ahead is CANNOT-TELL and stays a candidate" \
   "[ '$rc_f' -eq 1 ] && grep -q 'content: CANNOT-TELL' <<< \"\$out_f\""
