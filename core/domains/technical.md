@@ -3332,3 +3332,183 @@ not that the references are identical.
 above code that reads `refs/remotes/origin/<default>`. The comment and the code contradict each
 other, and the comment is the one that gets believed, because it is the one written in the language
 of the thing the reader wanted to be true.
+
+## Only an explicit refusal proves a mutation did not happen
+
+**When a call that changes state fails, report "it did not happen" only when the server explicitly
+refused it.** A timeout, a dropped connection or a 5xx means *"it may or may not have happened"* —
+the write can still be landing. Say which of the two you have.
+
+**Why it bites.** Some mutating endpoints do more than one thing: a merge endpoint that also deletes
+the source branch performs the merge first and then answers with an error if the *second* step
+fails. The caller reads a non-2xx and announces the merge did not happen, while the merge is already
+in history.
+
+**Scope:** any API call that mutates and can partially succeed; strongest where the endpoint bundles
+two effects.
+
+**Where it would be wrong:** an endpoint with a documented all-or-nothing transaction and an
+idempotency key — there a refusal and a timeout *are* equivalent, and hedging the message costs the
+reader certainty they are entitled to. Say which one you are in.
+
+## A duration measured between two timestamps the same event produced is zero by construction
+
+**Before reporting a latency, lead time or age, name the two events the two timestamps come from.**
+If one event *creates* the other in the same action, the number is zero by construction: it measures
+the code, not the world. Either find a timestamp from outside the system, or state that the metric
+cannot be computed.
+
+**Scope:** any derived duration, above all one that looks good.
+
+**Where it would be wrong:** a metric that is *supposed* to measure internal handling (a queue dwell
+time, a retry gap) legitimately has both ends inside one system — there the shared origin is the
+point. The test is whether the span you are *claiming* to measure is wholly inside it.
+
+## A CLI whose output format an environment variable can change cannot be parsed line by line
+
+**When a script parses another program's output, pin the format on the command line and assert on a
+row that must always be present.** Many tools let an environment variable select JSON, YAML or table
+output; inherited from the caller's shell, it silently changes the shape your `grep` is reading.
+
+**Why it bites, and the direction it fails in.** A line-oriented check for "is this item present?"
+returns *absent* for everything when the output arrives as JSON. If "absent" drives a
+create-or-overwrite, one exported variable turns a careful converger into a blind overwriter.
+
+**Scope:** any parse of a CLI's human-readable output, especially one that decides whether something
+exists.
+
+**Where it would be wrong:** a tool with no format switch at all — pinning a flag it does not have
+fails the command outright. Then the protection is the sentinel assertion alone, and that half is
+worth having regardless.
+
+## A delete takes the same lock as the refresh that can write the record back
+
+**Removing a cached or stored record is not safe merely because the removal is atomic.** If another
+path reads, mutates, then writes back that record, a refresh already in flight restores what you
+deleted, with no error on either side. The delete takes the same lock as the write-back path, or the
+write-back becomes a compare-and-set.
+
+**Scope:** any revoke, disconnect, logout, or cache invalidation in a system with a read-modify-write
+refresh. Security-relevant: the user believes access is gone.
+
+**Where it would be wrong:** a store with a monotonic version or a tombstone that the write-back must
+respect — there the delete needs no lock, because the write-back loses on its own. Prove the
+tombstone is honoured rather than assuming it.
+
+## A health check never prefix-matches a status line that describes several components
+
+**When a launcher or probe prints one line covering several parts (`a: running · b: absent …`), a
+check that matches the start of that line reads the first part's health as the system's health.**
+Parse the components, or require the whole line to equal a known-good form.
+
+**Scope:** any readiness, `ensure` or idempotence check built on a tool's own composite status
+output.
+
+**Where it would be wrong:** a status line deliberately designed as a single summary verdict (one
+word, by contract) — prefix-matching it is correct, and splitting it invents components. The tell is
+whether the line can ever describe two things.
+
+## A static "every call site is covered" check needs one control per receiver shape
+
+**A check that scans source for "every place X is called" matches a syntactic shape, not a
+concept.** If it only recognises one shape — a bare name, say — every other shape is invisible, the
+scan passes, and the pass is read as proof of coverage. Enumerate the receiver shapes the language
+allows (a plain name, an attribute, the result of a factory call, a local alias) and ship one
+deliberately-failing control per shape.
+
+**Scope:** any lint, AST scan or grep-based invariant whose claim is universal ("no bypasses", "every
+write is audited", "every call is rate-limited").
+
+**Where it would be wrong:** a codebase with an enforced single call convention *and* a check that
+fails on any unrecognised shape rather than skipping it — there one shape is the whole alphabet.
+Fail-closed on the unknown shape is what makes that safe: a scanner that silently skips what it
+cannot parse never qualifies.
+
+## A dependency-audit gate reddens an untouched tree as advisories are published
+
+**A dependency or vulnerability audit is a check against a database that changes on its own.** A
+branch that was green yesterday goes red today with no commit, and a red audit on an untouched tree
+is not a regression of that branch. Before diagnosing a change, compare the advisory's publication
+time with the last green run; and never treat "it was green when I opened the pull request" as
+evidence it is green now.
+
+**Scope:** any time-varying gate: dependency audits, license scans, certificate expiry,
+image-freshness checks.
+
+**Where it would be wrong:** a deterministic gate (tests, lint, type checks) — there a new failure on
+an unchanged tree is real news, usually a flake or an environment drift, and reaching for "the
+database moved" hides it.
+
+## A task that writes a config file wholesale from inline text erases what another task added
+
+**When one automation task renders a configuration file in full from text held inside it, every
+stanza any other task, script or human added to the live file disappears on the next run** — silently,
+with no diff and no backup. Install the file from a committed artifact that contains every stanza,
+take a backup, and compare against the live file (printing presence, never values) before replacing
+it.
+
+**Why it bites hardest.** The lost stanza is often the one that is *supposed* to be there for safety
+— audit logging, a retention setting, a deny rule. The service comes back healthy with the control
+off.
+
+**Scope:** any config-management step that writes a whole file rather than a managed block, above all
+for a security-relevant service.
+
+**Where it would be wrong:** a file the automation genuinely owns end to end, where a live-only edit
+is itself the defect — there wholesale rendering *is* the convergence you want. The distinction is
+whether a second writer is sanctioned; if it is, the two writers both belong in the artifact.
+
+## An absent-series function returns no identifying labels, so it joins only on the empty label set
+
+**In a time-series query language, the function that detects a missing series returns a result that
+carries none of the labels a present series would have** — no instance, no host. Combining it with a
+present-series condition using the default label-matching `and` therefore never matches, and the rule
+is silent forever with no error. Join on the empty label set explicitly (`and on()`), and prove it
+with a case where the series is genuinely absent.
+
+**Scope:** Prometheus-style alerting rules that mix "X is too high" with "X is missing".
+
+**Where it would be wrong:** where you *want* per-instance matching and the absent limb is
+unnecessary — a rule covering a fixed, enumerated set of instances can assert each one by name
+instead, which is clearer than an absence join. The rule is about the combination, not about absence
+detection as such.
+
+⚠️ **Second trap in the same family.** A machine that is off has the up-metric at zero, so the rule
+is silent rather than firing; that is usually what you want, but it must be a decision, written down
+and tested, not a side effect.
+
+## A shared entrypoint or health check cannot depend on a utility the base image omits
+
+**When one bootstrap entrypoint or health check is shared across services, every utility it shells
+out to becomes part of the image contract.** Slim and distroless bases routinely ship no HTTP client,
+no JSON tool and no shell beyond the minimum; on those images the shared script can never work, and no
+amount of environment or configuration changes it. Declare the required utilities, assert them at
+image-build time, or use a check the runtime provides natively.
+
+**Scope:** any multi-service platform with a shared entrypoint, sidecar bootstrap or a health check
+written as a shell command.
+
+**Where it would be wrong:** a deliberately minimal image whose correct health check is an in-process
+one (the application's own `--healthcheck` subcommand, or an orchestrator probe that needs no
+in-container tooling) — there the fix is to stop shelling out, not to fatten the image. Adding tools
+to a distroless base to satisfy a script trades the image's whole point for convenience.
+
+## Relocating a container runtime's data directory no longer relocates image content
+
+**Moving a container engine's data directory to another filesystem has historically moved image
+layers with it. In current engine versions image content lives in the underlying container runtime's
+own content store, which that setting does not relocate.** So a host whose data directory was moved
+can still fill its root filesystem with images, and a document or runbook that says "we moved it, so
+the root volume is safe" is stale advice rather than a record of fact. Verify where image content
+actually is, per engine version; never inherit the conclusion.
+
+**Scope:** any host running a container engine on a split filesystem layout, and every rebuild runbook
+that pins storage with a single data-directory setting.
+
+**Where it would be wrong:** a host pinned to an older engine version where the relocation does cover
+images — there the original procedure is correct and re-doing it as two settings is churn. The rule
+is to check the version, not to assume either answer.
+
+**Why it matters beyond the one setting.** This is the shape where an inherited conclusion outlives
+the mechanism that made it true. A runbook records what was done; whether its effect still holds is a
+measurement, and the measurement has to be dated.
