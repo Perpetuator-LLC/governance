@@ -66,6 +66,30 @@ out=$(python3 "$PCC" --bin "$TMP/bin" "$TMP/clean" 2>&1); rc=$?
 python3 "$PCC" --bin "$TMP/bin" "$TMP/empty" >/dev/null 2>&1; rc=$?
 [ "$rc" = 2 ] && ok "no Markdown under the paths exits 2, never a clean 0" || bad "empty dir: rc=$rc"
 
+# --- every SHELL_LANGS entry individually, not just bash/sh (zsh had no coverage at all) -----------
+mkdir -p "$TMP/langs"
+printf '# zsh\n\n```zsh\nbin/mytool --gone\n```\n' > "$TMP/langs/z.md"
+out=$(python3 "$PCC" --bin "$TMP/bin" "$TMP/langs" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "z.md:4  bin/mytool --gone" <<<"$out" \
+  && ok "a \`\`\`zsh fence is read as shell, same as bash/sh" || bad "zsh fence not scanned: $out"
+
+# --- the directory walk only reads .md files — a non-.md file sitting beside one is never scanned ---
+mkdir -p "$TMP/mixed"
+printf '# ok\n\n```sh\nbin/mytool --json\n```\n' > "$TMP/mixed/doc.md"
+printf 'Run `bin/mytool --gone` here.\n' > "$TMP/mixed/notes.txt"
+out=$(python3 "$PCC" --bin "$TMP/bin" "$TMP/mixed" 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "1 call(s) of a bin/ tool, 0 stale" <<<"$out" \
+  && ok "a directory walk reads ONLY .md files — a sibling .txt with the same stale flag is invisible" \
+  || bad "a non-.md file was scanned (or the .md one was missed): $out"
+
+# --- the DEFAULT --bin (this script's own directory) is exercised, not only an explicit --bin -------
+mkdir -p "$TMP/defaultbin"
+printf '# default bin\n\nRun `bin/detect-harness --quiet` to check.\n' > "$TMP/defaultbin/doc.md"
+out=$(python3 "$PCC" "$TMP/defaultbin" 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "1 call(s) of a bin/ tool, 0 stale" <<<"$out" && grep -q "0 tool(s) not in --bin" <<<"$out" \
+  && ok "with NO --bin given, the default (this repository's own bin/) resolves a real tool and its real flag" \
+  || bad "the default --bin fallback did not resolve a real tool: $out"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
