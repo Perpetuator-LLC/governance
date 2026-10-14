@@ -72,21 +72,50 @@ fmode=$(stat -c '%a' "$LOG4" 2>/dev/null || stat -f '%Lp' "$LOG4")
 [[ "$dmode" == "700" ]] && pass "a freshly created log directory is 0700" || fail "log directory is $dmode, not 700"
 [[ "$fmode" == "600" ]] && pass "a freshly created log file is 0600" || fail "log file is $fmode, not 600"
 
-# --- 4b. a PRE-EXISTING, loosely permissioned directory and file are TIGHTENED, not left alone ---
+# --- 4b. a PRE-EXISTING log FILE is TIGHTENED; a freshly CREATED directory is 0700 (control) ---
 # A POSIX mkdir()/open() mode argument only applies at creation — asking for 0700/0600 a second time
 # on a path that already exists is a no-op unless the code chmods explicitly. This caught a real bug
-# (governance quality sweep, 2026-10-14): the log silently stayed world-readable forever whenever its
-# directory or file predated this hook's own first write.
+# (governance quality sweep, 2026-10-14): the log file silently stayed world-readable forever whenever
+# it predated this hook's own first write.
 LOG4B="$TMP/d4b/deny.jsonl"
-mkdir -p "$TMP/d4b" && chmod 0755 "$TMP/d4b"
+mkdir -p "$TMP/d4b" && chmod 0700 "$TMP/d4b"   # not yet looked at by this hook; a clean control
 : > "$LOG4B" && chmod 0644 "$LOG4B"
 run "$LOG4B" bash-safety-gate R1 Bash x y >/dev/null
-dmode2=$(stat -c '%a' "$TMP/d4b" 2>/dev/null || stat -f '%Lp' "$TMP/d4b")
 fmode2=$(stat -c '%a' "$LOG4B" 2>/dev/null || stat -f '%Lp' "$LOG4B")
-[[ "$dmode2" == "700" ]] && pass "a pre-existing 0755 directory is tightened to 0700 on write" \
-  || fail "pre-existing directory stayed $dmode2, the stated 0700 guarantee did not hold"
 [[ "$fmode2" == "600" ]] && pass "a pre-existing 0644 log file is tightened to 0600 on write" \
   || fail "pre-existing log file stayed $fmode2, the stated 0600 guarantee did not hold"
+
+# --- 4c. a SHARED, pre-existing PARENT directory reached via a custom GOVERNANCE_DENY_LOG keeps its
+# mode. An earlier fix chmodded the parent directory on EVERY call, with no check for whether this
+# hook created it. GOVERNANCE_DENY_LOG is an operator's own
+# path; pointed into a directory shared with unrelated files (or a bare filename, where dirname("")
+# becomes ".", the current working directory), the old code would silently re-permission a directory
+# this hook does not own. A directory it did not create and does not exclusively own must be left alone.
+LOG4C="$TMP/d4c/deny.jsonl"
+mkdir -p "$TMP/d4c" && chmod 0755 "$TMP/d4c"
+printf 'unrelated sibling\n' > "$TMP/d4c/other-service.conf"
+run "$LOG4C" bash-safety-gate R1 Bash x y >/dev/null
+dmode3=$(stat -c '%a' "$TMP/d4c" 2>/dev/null || stat -f '%Lp' "$TMP/d4c")
+[[ "$dmode3" == "755" ]] && pass "a shared pre-existing parent directory keeps its mode, not tightened" \
+  || fail "a shared pre-existing parent was re-permissioned to $dmode3 (was 755)"
+fmode3=$(stat -c '%a' "$LOG4C" 2>/dev/null || stat -f '%Lp' "$LOG4C")
+[[ "$fmode3" == "600" ]] && pass "...while the log FILE itself is still tightened to 0600" \
+  || fail "log file in a shared directory stayed $fmode3, not 600"
+
+# --- 4d. a BARE filename (no directory component) must not chmod the current working directory ---
+LOG4D="d4d-deny.jsonl"
+mkdir -p "$TMP/d4d-cwd" && chmod 0755 "$TMP/d4d-cwd"
+( cd "$TMP/d4d-cwd" && run "$LOG4D" bash-safety-gate R1 Bash x y >/dev/null )
+dmode4=$(stat -c '%a' "$TMP/d4d-cwd" 2>/dev/null || stat -f '%Lp' "$TMP/d4d-cwd")
+[[ "$dmode4" == "755" ]] && pass "a bare filename (dirname '.') never chmods the working directory" \
+  || fail "the working directory was re-permissioned to $dmode4 (was 755) via a bare filename"
+
+# --- 4e. governance's own DEFAULT state directory, even pre-existing, IS tightened (the one exception) ---
+HOME4E="$TMP/home4e"; mkdir -p "$HOME4E/.local/state/governance" && chmod 0755 "$HOME4E/.local/state/governance"
+( HOME="$HOME4E" python3 "$HOOK" --gate bash-safety-gate --rule R1 --tool Bash --reason x <<<"y" >/dev/null 2>&1 )
+dmode5=$(stat -c '%a' "$HOME4E/.local/state/governance" 2>/dev/null || stat -f '%Lp' "$HOME4E/.local/state/governance")
+[[ "$dmode5" == "700" ]] && pass "governance's own default state directory is tightened even pre-existing" \
+  || fail "the default state directory stayed $dmode5, not 700"
 
 # --- 5. harness resolution: GOVERNANCE_HARNESS overrides; grok tools map to grok; else claude-code/unknown ---
 LOG5="$TMP/d5/deny.jsonl"
