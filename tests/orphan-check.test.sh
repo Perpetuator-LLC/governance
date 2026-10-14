@@ -62,8 +62,12 @@ check "a stranded commit exits 1" "[ '$rc_bad' -eq 1 ]"
 check "...names the rolling branch" "grep -q 'merge/tester' <<< \"\$out_bad\""
 check "...shows the stranded commit subject" \
   "grep -q 'never reached main' <<< \"\$out_bad\""
-check "...extracts the referenced ticket (#123)" \
-  "grep -q '#123' <<< \"\$out_bad\""
+# Found by mutation (quality sweep, 2026-10-14): a bare `grep -q '#123'` also matches the raw commit
+# subject line this check already prints — removing the "tickets referenced:" feature entirely still
+# passed, because #123 is right there in "feat: work that never reached main (#123)" regardless. The
+# assertion has to require the feature's OWN line, not merely that the ticket number appears anywhere.
+check "...extracts the referenced ticket onto its own 'tickets referenced' line" \
+  "grep -q 'tickets referenced: #123' <<< \"\$out_bad\""
 check "...tells the reader to check for an open PR" \
   "grep -qi 'OPEN PR' <<< \"\$out_bad\""
 
