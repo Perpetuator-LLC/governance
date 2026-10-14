@@ -816,3 +816,19 @@ either admits everyone or locks everyone out, and nothing says which until someo
 - **Build time is not run time.** A rename or delete after the bind breaks the gate the same way, and
   the build check cannot see it. Pair the build check with a periodic report that reads each bound
   gate and resolves its names again.
+
+
+## A client authenticating to a pinned endpoint inherits the ambient credential environment unless it is cleared
+
+**CLI clients for secret stores, registries and clouds read a token from the environment or the
+user's home directory and send it on every call, including the login to an endpoint the caller
+pinned explicitly.** So a credential for a different tenant, left in the shell by an earlier tool, is
+transmitted to the pinned endpoint.
+
+**Scope:** any process that authenticates to an endpoint it names explicitly, using a client that
+also honours ambient credential configuration. It is a boundary rule, not only a correctness one.
+
+**Where it would be wrong:** ambient credentials are the intended mechanism for an interactive
+operator session and for an agent sidecar that deliberately supplies them — stripping the environment
+there breaks the design. The rule binds where the code names its endpoint, because naming it is a
+claim that nothing else decides where the credential goes.
