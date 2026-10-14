@@ -1958,6 +1958,18 @@ the system that consumes it. **Where it is wrong:** when the owning system is it
   one step of arithmetic against the input. **Where it is wrong:** a label echoed by an independent
   source is evidence; and an unlabelled value is not safer, it only moves the assumption to the reader.
 
+  ⚠️ **A sharper case of the same rule: sometimes nothing was converted, and the label was invented.**
+  A language model extracting a date or time from unstructured text commonly copies a local
+  wall-clock value and appends a UTC marker that no conversion produced — treat the zone marker it
+  emits as unreliable even when present. The same failure gives a date with no time arriving as
+  midnight, indistinguishable from a real midnight event. Carry an explicit "time given / not given"
+  flag out of extraction, and resolve the zone from the source, never from the marker. **Where it is
+  wrong:** a source that is itself machine-generated in a known zone (a structured feed, an ISO field
+  the model merely copied) — there the marker is evidence, and adding a flag the pipeline never
+  populates is dead weight. **And the consequence compounds:** a confirmation prompt for a value
+  change that says only "start differs," without showing both values, lets a human approve a change
+  built on an invented label.
+
 ## A mapping across a boundary is added in BOTH directions, or the reverse is ruled out in writing
 
 **When you teach a resolver that names in namespace A live in namespace B, add the mirror mapping in
