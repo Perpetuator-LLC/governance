@@ -58,6 +58,8 @@ git -C "$R" checkout -q -b feat/short-new "$BASE"; echo 1.3 > "$R/VERSION"; c sh
 git -C "$R" checkout -q -b feat/bump-missing "$BASE"; echo 1.3 > "$R/ver.txt"; c bump-missing
 git -C "$R" checkout -q -b feat/bump-landed "$BASE"; echo 1.4 > "$R/ver.txt"; c bump-landed
 git -C "$R" checkout -q -b feat/short-unsure "$BASE"; echo on > "$R/flags.txt"; c short-unsure
+git -C "$R" checkout -q -b feat/missing-and-unsure "$BASE"
+echo "docs text never landed" > "$R/newdoc.md"; echo on > "$R/flags.txt"; c "missing file + unsure short removal"
 
 git -C "$R" checkout -q main
 git -C "$R" merge -q --squash feat/squashed >/dev/null; git -C "$R" commit -qm "squash: beta + helpers"
@@ -96,6 +98,13 @@ grep -q 'nothing of substance to land' <<<"$(out feat/empty)" && [ "$(verdict fe
   || fail "landed bump: $(verdict feat/bump-landed)"
 [ "$(verdict feat/short-unsure)" = CANNOT-TELL ] && pass "a short removal the base still carries reads CANNOT-TELL, never LANDED" \
   || fail "short unsure: $(verdict feat/short-unsure)"
+# Found by mutation (quality sweep, 2026-10-14): swapping check_branch's own priority (CANNOT-TELL
+# checked before MISSING) passed every other case in this file, because none of them puts a
+# definitely-missing file and a merely-unsure file on the SAME branch. MISSING must win: it is a
+# stronger, more actionable finding than "could not decide", and silently downgrading it is exactly
+# the direction governance#59 says never to fail in.
+[ "$(verdict feat/missing-and-unsure)" = MISSING ] && pass "a branch with one file definitely MISSING and one merely unsure still reads MISSING, never CANNOT-TELL" \
+  || fail "missing+unsure priority: $(verdict feat/missing-and-unsure)"
 head -1 <<<"$(out feat/squashed)" | grep -q "base origin/main @ $(git -C "$R" rev-parse --short=12 origin/main)" \
   && pass "prints the base and the SHA it compared against" || fail "base line missing or wrong"
 
