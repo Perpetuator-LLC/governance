@@ -87,6 +87,17 @@ out=$("$BR" --repo "$R" 2>&1)
 grep -q 'merged/inworktree' <<<"$out" && fail "proposed a branch held by another worktree" \
   || pass "worktree-held branch not proposed"
 
+# --- 4b. a detached-HEAD checkout contributes no row at all (governance#193) ---
+# Named "wt-nobranch", not "detached": the repo's own label in branch-reap's output is its
+# directory name, and a name containing "detached" would make the next grep pass for the wrong
+# reason (it would match the LABEL, not the placeholder this test exists to rule out).
+git -C "$R" worktree add -q --detach "$TMP/wt-nobranch" main >/dev/null 2>&1
+out=$("$BR" --repo "$TMP/wt-nobranch" 2>&1)
+grep -qi 'HEAD detached' <<<"$out" && fail "a detached HEAD produced git's placeholder text" \
+  || pass "detached HEAD checkout: no placeholder row"
+grep -qi 'REFUSED' <<<"$out" && fail "a detached HEAD was reported as a REFUSED branch" \
+  || pass "detached HEAD: zero REFUSED rows from this cause"
+
 # --- 5. --protect keeps a glob ---
 git -C "$R" branch keepme/one
 out=$("$BR" --repo "$R" --protect 'keepme/*' 2>&1)
