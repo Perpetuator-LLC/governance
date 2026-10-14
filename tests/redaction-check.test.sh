@@ -77,6 +77,17 @@ printf -- '---\ntype: note\n---\nSome prose.\n' > "$TMP/nofence.md"
 rc="$(run --private-patterns "$TMP/nofence.md" "$TMP/c/clean.md")"
 check "Markdown with no fence ⇒ refused (exit 3), never compiled" "[ '$rc' = '3' ]"
 
+# Found by mutation (quality sweep, 2026-10-14): removing the `status == "unterminated"` branch alone
+# left every existing case here passing — fenced_lines() returns ([], "unterminated") for an unclosed
+# fence, and an EMPTY line list silently compiles to "0 pattern(s)", which load_private then reports
+# as a private list that RAN, not one that was skipped. A truncated or hand-edited private-patterns
+# file would read as "checked, nothing private to find" instead of refusing — the exact
+# absence-as-health failure this file's other tests assert against, from a different cause.
+printf -- '```redaction-instances\nliteral:host-01.corp\n' > "$TMP/unterminated.md"
+rc="$(run --private-patterns "$TMP/unterminated.md" "$TMP/c/clean.md")"
+check "an unterminated fence ⇒ refused (exit 3), never read as zero patterns" "[ '$rc' = '3' ]"
+check "…and says so, not just SKIPPED" "grep -qi 'never closed' '$TMP/out'"
+
 # --- report-only vs enforce; paths ------------------------------------------------
 rc="$(run --private-patterns "$TMP/private.txt" "$TMP/c/dirty.md")"
 check "report-only: findings do not fail" "[ '$rc' = '0' ]"
