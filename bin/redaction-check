@@ -15,8 +15,8 @@ requests runs code the author controls, so granting it the list lets any pull re
 full check where the list already lives.
 
 A TEST FIXTURE IS NOT LIVE RULE TEXT. tests/*.test.sh files are exempt from the built-in SHAPE legs
-only (a mutation-coverage suite needs a concrete "vault.yml" or "widget#412" on the line its assertion
-reads, the same way a known-bad control needs the real shape to prove a gate fires on it). The
+only (a mutation-coverage suite needs a concrete config filename or ticket reference on the line its
+assertion reads, the same way a known-bad control needs the real shape to prove a gate fires on it). The
 private-name leg still reads every line of every test file: a real instance name is exactly as public
 in a fixture as in prose, and this exemption must never widen into one.
 
