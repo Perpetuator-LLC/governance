@@ -160,6 +160,35 @@ check "the log appends rather than truncating" "[ '$after' -gt '$before' ]"
 check "--status summarises without error" \
   "'$AUDIT' --status >/dev/null 2>&1"
 
+# --- --status's own counts, not just that it runs -----------------------------------
+# Found by mutation (quality sweep, 2026-10-14): cmd_status's "N of them with rules MISSING vs HEAD"
+# count had no assertion anywhere beyond "the command exits 0" — the one number in --status's output
+# that answers "how many times has this actually happened" was unverified. A fresh, precisely
+# controlled log: restore the live file, two clean oneshots, re-strip it, one more oneshot with a
+# miss — 3 events, exactly 1 of them a strip.
+python3 -c "
+import json
+p = '$TARGET'
+d = json.load(open(p))
+d['permissions']['deny'] = ['Bash(rm -rf /)', 'Bash(git push --force)', 'Bash(curl-pipe-sh)']
+json.dump(d, open(p, 'w'), indent=2)
+"
+: > "$LOG"
+"$AUDIT" --oneshot >/dev/null 2>&1
+"$AUDIT" --oneshot >/dev/null 2>&1
+python3 -c "
+import json
+p = '$TARGET'
+d = json.load(open(p))
+d['permissions']['deny'] = [r for r in d['permissions']['deny'] if 'force' not in r]
+json.dump(d, open(p, 'w'), indent=2)
+"
+"$AUDIT" --oneshot >/dev/null 2>&1
+status_out="$("$AUDIT" --status)"
+check "--status counts exactly 3 events recorded" "grep -q '3 events recorded' <<< \"\$status_out\""
+check "--status counts exactly 1 of them with rules MISSING vs HEAD (not 0, not 3)" \
+  "grep -q '1 of them with rules MISSING vs HEAD' <<< \"\$status_out\""
+
 # --- a target outside any git repo: the reference is UNDETERMINED, never "clean" ---
 mkdir -p "$TMP/norepo"
 cp "$TARGET" "$TMP/norepo/settings.json"
