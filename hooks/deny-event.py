@@ -86,18 +86,26 @@ def main():
     a, _ = ap.parse_known_args()
     data = sys.stdin.buffer.read() if not sys.stdin.isatty() else b""
     digest = hashlib.sha256(data).hexdigest()[:16]
-    path = os.path.expanduser(os.environ.get("GOVERNANCE_DENY_LOG") or "~/.local/state/governance/deny.jsonl")
+    default_log = os.path.expanduser("~/.local/state/governance/deny.jsonl")
+    path = os.path.expanduser(os.environ.get("GOVERNANCE_DENY_LOG") or default_log)
     dirpath = os.path.dirname(path) or "."
+    # The mode given to makedirs is a no-op when the directory already exists (a POSIX mkdir() only
+    # applies its mode argument at CREATION) — so a pre-existing, loosely permissioned directory would
+    # silently keep that permission forever, however tightly this module asks to create it. chmod
+    # explicitly to actually hold 0700 rather than only asking for it once — but ONLY a directory this
+    # call just created, or governance's own default state directory. GOVERNANCE_DENY_LOG is a path an
+    # operator chooses; pointed at a bare filename (no directory component, so dirpath becomes ".") or
+    # into a directory shared with unrelated files, chmodding that PRE-EXISTING directory on every call
+    # would silently re-permission something this hook does not own and was never asked to lock down —
+    # the cwd, or another service's shared log directory. A directory we just made, or our own default
+    # directory nothing else should be sharing, carries no such risk.
+    existed_before = os.path.isdir(dirpath)
     os.makedirs(dirpath, mode=0o700, exist_ok=True)
-    # The mode given to makedirs/open is a no-op when the directory or file already exists (a POSIX
-    # open()/mkdir() only applies its mode argument at CREATION) — so a pre-existing, loosely
-    # permissioned directory or log file would silently keep those permissions forever, however
-    # tightly this module tries to create them. chmod explicitly, every call, to actually hold the
-    # 0700/0600 this file promises rather than only asking for it once.
-    try:
-        os.chmod(dirpath, 0o700)
-    except OSError:
-        pass
+    if not existed_before or path == default_log:
+        try:
+            os.chmod(dirpath, 0o700)
+        except OSError:
+            pass
     line = json.dumps(event(a.gate, a.rule, a.tool, a.reason, digest), separators=(",", ":")) + "\n"
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
