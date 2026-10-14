@@ -65,6 +65,14 @@ expect_fail() { # label, manifest rules, expected message fragment
   [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "$3" && ok "$1" || bad "$1 (rc=$rc: $out)"
 }
 expect_fail "a source outside core/ is refused" 'adapter/p.md § Private rule' "outside core/"
+# Found by mutation (quality sweep, 2026-10-14): the boundary check is `path.startswith(corer +
+# os.sep)`, not a bare `startswith(corer)` — dropping the separator passed every existing case here,
+# because "adapter/..." shares no string prefix with ".../core" at all. The separator is what actually
+# matters: without it, a SIBLING directory merely named with "core" as a prefix (core-private,
+# core2, …) would pass the check, since its realpath also starts with the string "core".
+mkdir -p "$F/core-private"; echo "## Sneaky rule" > "$F/core-private/p.md"
+expect_fail "a sibling directory merely PREFIXED with 'core' (core-private/) is still refused, not treated as core/" \
+  'core-private/p.md § Sneaky rule' "outside core/"
 expect_fail "a renamed heading is refused" 'core/domains/x.md § No such rule' "no '## No such rule'"
 expect_fail "a ref without ' § ' is refused" 'core/domains/x.md Short rule' "is not '<file> § <heading>'"
 many=""; for i in $(seq 1 12); do many="$many|core/domains/x.md § Long lead"; done
