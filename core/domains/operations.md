@@ -1192,3 +1192,58 @@ So write it so the expiry is detectable:
 - **Prefer pointing at the artefact over restating its state.** A pointer stays true as the artefact
   moves; a restatement is a copy that has to be maintained, and copies are what go stale.
 
+
+
+## A ticket comment carries the verdict or receipt first and stays under 1,200 characters
+
+**A ticket comment leads with its verdict or receipt, and analysis longer than that belongs in a
+document in the owning repo or vault, linked rather than pasted in full.** A comment thread that
+every later reader re-reads whole is a cost paid on every read, charged against whoever wrote the
+longest one.
+
+**Scope:** comments on work tickets; a ticket's body, a release notes line, and a post-mortem are
+exempt.
+
+**Where it is wrong:** a one-line comment that only says "done" without a receipt is worse, not
+better — the rule is receipt-first, not short. Length is the symptom; a terse comment that omits the
+verdict fails the rule while satisfying its letter.
+
+## A message to another seat states one change and links the artifact; it never restates what the artifact says
+
+**A message to another seat states one change and links the artifact it concerns, and never restates
+what the artifact already says.** A relay message that repeats a ticket's content costs a read on
+both ends for information the ticket already carries, and drifts from the ticket the moment either
+is edited.
+
+**Scope:** agent-to-agent messaging; a hand-off block to a human keeps the human message contract.
+
+**Where it is wrong:** when the artifact does not exist yet — an urgent finding with nowhere written
+down yet — the message carries the finding and files the artifact in the same turn, rather than
+pointing at a link that is not there.
+
+## A seat row is written on a state transition, not per turn
+
+**A seat row is patched when its ticket, step, blocked state or holding changes — not on every
+turn — and its `current_step` field stays at or under 600 characters.** A patch that rewrites a
+multi-thousand-character `current_step` with no state change is a write that recorded nothing new.
+
+**Scope:** looping and interactive seats alike; the stale-seat alert reads `last_loop_at`, which a
+transition-only patch still refreshes within its interval.
+
+**Where it is wrong:** a seat whose loop interval is shorter than the gap between its transitions
+still patches on the interval, with an unchanged step — the interval is the floor, not a reason to
+patch on every turn once transitions are rare.
+
+## A seat's boot loads its tool roster in one search, not one search per first use
+
+**A seat's boot loads its tool roster in a single search named in the seat's skill, instead of
+discovering it one deferred-tool search at a time as each tool is first used.** The same top-named
+tools get reloaded, one search apiece, every session that needs them, for a roster that is already
+known in advance.
+
+**Scope:** harnesses with deferred tools, where a seat type's roster is stable enough to name once and
+maintained in its own skill, re-measured periodically from transcripts.
+
+**Where it is wrong:** a seat whose tool needs are genuinely unpredictable per task (a one-off
+exploratory investigation with no fixed roster) gains nothing from pre-loading a roster it will not
+use, and a stale pre-load becomes dead weight the seat never calls.
