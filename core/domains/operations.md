@@ -1049,6 +1049,36 @@ wrong document. **Where it is wrong:** a store that cites by path needs none of 
 in a declared namespace are deliberate: a naive *"must be a UUID"* rule floods with false positives and
 gets switched off.
 
+## A classification check reads its vocabulary from the destination, not from where it was written
+
+**A check that tests for the presence of a classification label must read that label's vocabulary
+from the system it is querying, not assume the vocabulary it was written against.** A triage leg, a
+status scan or any "is this labelled?" check built against one system's label set returns a
+confident, well-formed number when pointed at a second system with its own names for the same
+concept — every item reads as unlabelled (or every item reads as labelled, depending on the test's
+polarity), and the number is wrong in whichever direction hides the defect.
+
+**This is the dangerous kind of wrong, not the loud kind.** It fails in both directions at once: a
+destination whose real items ARE classified, under different names, gets counted as entirely
+unclassified (false positives that teach readers to discount the count); a destination with a
+genuinely mixed roster has its real gaps buried inside that noise (false negatives, which persist,
+because the check's output for that destination was never readable either way).
+
+**The fix:** resolve the vocabulary per destination — read it from the destination itself (its own
+label list, or a declared mapping) — and **refuse rather than guess** when it cannot be resolved.
+Report that destination as `NOT MEASURED` with the reason, excluded from the total, never folded in
+as zero or as "all unclassified." A leg that silently falls back to the vocabulary it was written
+against produces exactly the failure above: a confident number about a population it could not see.
+
+**Scope:** destinations that own their own label vocabulary — separate forges, separate
+organisations, or a system that has deliberately localised its own classification names.
+
+**Where it would be wrong:** this does not license per-subsystem vocabularies inside one system where
+a shared vocabulary is itself the standard. There, a subsystem using its own names *is* the finding,
+and a check that silently adapts to it hides a drift it should be reporting instead. The
+discriminator is whether the destination is a different *authority* for the classification, not
+merely a different subsystem of the same one.
+
 ## A record's coverage ends at its LAST CITED EVENT, not at when it was WRITTEN
 
 **"The record is recent" is not evidence that it is current.** A hand-off, status or summary is
