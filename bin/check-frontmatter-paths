@@ -446,7 +446,7 @@ def main():
     # actually true instead of what would be tidier.
     print("unparseable frontmatter (fails the exit code, not counted in FAILING): %d" % len(r["unparseable"]))
     print("UNREADABLE file/subtree (fails the exit code, not counted in FAILING) : %d" % len(r["unreadable"]))
-    print("FAILING (path values): %d" % len(r["failing"]))
+    print("FAILING             : %d" % len(r["failing"]))
     if r.get("unavailable"):
         print("  ⚠️  of which UNAVAILABLE, not dead (volume not mounted): %d"
               % len(r["unavailable"]))
