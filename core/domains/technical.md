@@ -3347,7 +3347,7 @@ a generated roster exists) returns a clean answer about a different population.
 idempotence markers, run ledgers, "did X happen today" checks. The tell is a key whose granularity
 you would have to argue matches the pass, rather than read off it.
 
-**Where it would be wrong:** a genuinely idempotent daily fact — a day's closing balance, a date's
+**Where it is wrong:** a genuinely idempotent daily fact — a day's closing balance, a date's
 snapshot reading — should be keyed on the day, and giving it a per-pass key creates duplicate rows
 that then disagree. The rule is not "always key finer"; it is that **the key's granularity must equal
 the granularity of the claim read back from it**. A per-pass claim needs a per-pass key; a per-day
@@ -3365,7 +3365,7 @@ run?" with it concludes it never has.
 lifetime may be shorter than the scrape interval. It binds hardest on exactly the series an operator
 reaches for to prove a short job ran.
 
-**Where it would be wrong:** for a state expected to persist — a service that should be up
+**Where it is wrong:** for a state expected to persist — a service that should be up
 continuously, a certificate that should stay valid — a transition count is the right instrument and
 its zero is the good news. The rule is about the ratio: **compare the state's expected lifetime to
 the scrape interval before reading a zero as absence**, and where the lifetime is shorter, read the
@@ -3383,7 +3383,7 @@ scheduler never fires it" instead of "every attempt fails for reason R".
 **Scope:** any question of the form *did this ever happen* or *has it stopped happening*, asked of a
 tool with an implicit window, about a process whose retry interval grows.
 
-**Where it would be wrong:** for *is it happening now* — a liveness or rate question — a short window
+**Where it is wrong:** for *is it happening now* — a liveness or rate question — a short window
 is correct and widening it imports resolved history as if it were current, which is how a fixed
 outage keeps paging. The rule is per-question: **state the window explicitly, and set it from the
 period the question covers, not from the tool's default**; an existence question needs a window at
@@ -3402,7 +3402,7 @@ most writes still succeed and the fault reads as flaky rather than structural.
 ample, above all on a directory grown very large and flat by an automated writer. The kernel log is
 the discriminator — it names the limit; the filesystem's free-space report cannot.
 
-**Where it would be wrong:** the ordinary meaning is the common one. A box where free space is
+**Where it is wrong:** the ordinary meaning is the common one. A box where free space is
 genuinely near zero must be treated as full, immediately — and the mirror error is just as real: a
 low-disk alert pattern-matched onto a known false-positive class and dismissed without reading the
 value, on a host that was already failing writes. So: **read the number first, and only when free
@@ -3422,7 +3422,7 @@ looking open.
 all of them are under your control. The roster discipline — any "check all X" ships the roster of X —
 applied to writers rather than to checks.
 
-**Where it would be wrong:** enumerating writers is not a reason to delay a partial fix. Excluding the
+**Where it is wrong:** enumerating writers is not a reason to delay a partial fix. Excluding the
 one writer you control is a real reduction and should ship. The rule is about what you are then
 allowed to claim: the done-when names the writers covered and the writers not covered, and the ticket
 stays open on the remainder. A writer you cannot gate at all (a third-party agent) means no write-time
