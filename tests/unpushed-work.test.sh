@@ -86,5 +86,23 @@ mkdir -p "$P/broken/.git"
 "$UW" --root "$P" --no-fetch >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ok "an unreadable repository exits 2" || bad "broken repo exit $rc"
 
+# A bare mirror cloned now and never touched again: the forge moves on, so this clone's own objects
+# fall behind what a LIVE `ls-remote` reports (bare repos are judged against a fresh ls-remote, never
+# fetched — see the comment on `against` in repo_report). Found by mutation (quality sweep,
+# 2026-10-14): removing the resulting refusal passed every existing case here, because the only bare
+# fixture in the main sweep (aaa-bare.git) is never allowed to fall behind by anything later in this
+# file. Isolated in its own root: mixed into the main sweep it would flip that run's own exit code
+# from 1 (work found) to 2 (error), breaking an assertion that has nothing to do with this case.
+B="$TMP/bare-check"; mkdir -p "$B"
+q git clone -q --bare "$O" "$B/mirror.git"
+q git clone -q "$O" "$TMP/elsewhere" 2>/dev/null
+q git -C "$TMP/elsewhere" switch -qc forge-moved-on main
+echo moved > "$TMP/elsewhere/m"; q git -C "$TMP/elsewhere" add m; q git -C "$TMP/elsewhere" commit -qm moved
+q git -C "$TMP/elsewhere" push -q origin forge-moved-on
+out="$("$UW" --root "$B" --no-fetch 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && printf '%s\n' "$out" | grep -q "bare clone is behind its remote (1 remote heads not local): fetch it to judge" \
+  && ok "a bare mirror missing a commit the LIVE forge now reports: refused, not silently judged stale" \
+  || bad "a stale bare mirror was not refused (rc=$rc): $out"
+
 echo; echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
