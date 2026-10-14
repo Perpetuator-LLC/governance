@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# tests/id-provenance-gate.test.sh — governance#203: refuse a body citing an id no earlier
+# transcript entry contains; allow one that's genuinely there, or one the user just typed.
+
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HOOK="$ROOT/hooks/id-provenance-gate.py"
+[[ -f "$HOOK" ]] || { echo "FAIL: $HOOK missing"; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "FAIL: no python3 to run this hook with"; exit 1; }
+
+TMP=$(mktemp -d) || exit 1
+trap 'rm -rf "$TMP"' EXIT
+fails=0
+pass() { printf '  PASS  %s\n' "$1"; }
+fail() { printf '  FAIL  %s\n' "$1"; fails=$((fails + 1)); }
+
+mktranscript() {  # mktranscript <file> <line...> — one JSONL line per arg, already-JSON-encoded strings
+  local f="$1"; shift
+  : > "$f"
+  for l in "$@"; do printf '%s\n' "$l" >> "$f"; done
+}
+
+run_gate() {  # run_gate <tool_name> <field> <body> <transcript_file> [<user_prompt>]
+  python3 "$HOOK" <<EOF
+{"tool_name": "$1", "tool_input": {"$2": $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$3")}, "transcript_path": "$4", "prompt": $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1] if len(sys.argv) > 1 else ""))' "${5:-}")}
+EOF
+}
+
+echo "── id-provenance-gate"
+
+# --- 1. an id minted in an EARLIER tool result is allowed ---
+T1="$TMP/t1.jsonl"
+mktranscript "$T1" '{"type":"tool_result","content":"comment posted: https://forge/x/issues/9#issuecomment-76292"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c76292 for context" "$T1"); rc=$?
+[[ $rc -eq 0 ]] && pass "id seen in an earlier tool result: allowed" \
+  || fail "id seen in an earlier tool result was blocked: $out"
+
+# --- 1b. the mirror: an #issuecomment- form is cited, only the short c-form exists earlier ---
+T1b="$TMP/t1b.jsonl"
+mktranscript "$T1b" '{"type":"tool_result","content":"posted as c76292"}'
+out=$(run_gate SendMessage message "see https://forge/x#issuecomment-76292" "$T1b"); rc=$?
+[[ $rc -eq 0 ]] && pass "issuecomment- form matched against an earlier short c-form: allowed" \
+  || fail "issuecomment- form was blocked despite the same id's short form earlier: $out"
+
+# --- 2. the SAME id with no earlier occurrence is refused ---
+T2="$TMP/t2.jsonl"
+mktranscript "$T2" '{"type":"tool_result","content":"unrelated"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c76292 for context" "$T2"); rc=$?
+[[ $rc -eq 2 ]] && pass "id with no earlier occurrence: refused" \
+  || fail "id with no earlier occurrence was allowed (rc=$rc): $out"
+
+# --- 3. an id the USER typed this turn is allowed ---
+T3="$TMP/t3.jsonl"
+mktranscript "$T3" '{"type":"tool_result","content":"unrelated"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "re your c99999" "$T3" "please reply to c99999"); rc=$?
+[[ $rc -eq 0 ]] && pass "id present in the user's own prompt: allowed" \
+  || fail "id in the user's prompt was blocked: $out"
+
+# --- 4. a placeholder is refused regardless of transcript content ---
+T4="$TMP/t4.jsonl"
+mktranscript "$T4" '{"type":"tool_result","content":"#i=PENDING appears right here, verbatim"}'
+out=$(run_gate mcp__perpetuator__state_item_upsert notes "card #i=PENDING" "$T4"); rc=$?
+[[ $rc -eq 2 ]] && pass "#i=PENDING placeholder: refused even if the literal text is in the transcript" \
+  || fail "placeholder was allowed (rc=$rc): $out"
+
+out=$(run_gate SendMessage message "ping <id> when ready" "$T4"); rc=$?
+[[ $rc -eq 2 ]] && pass "angle-bracket placeholder <id>: refused" \
+  || fail "angle-bracket placeholder was allowed (rc=$rc): $out"
+
+# --- 5. an id inside a FENCED code block the body quotes is not flagged ---
+T5="$TMP/t5.jsonl"
+mktranscript "$T5" '{"type":"tool_result","content":"unrelated"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment 'example: ```see c12345 in the old format```' "$T5"); rc=$?
+[[ $rc -eq 0 ]] && pass "id inside a fenced block: not flagged" \
+  || fail "id inside a fenced block was blocked: $out"
+
+# --- 6. an ungated tool is never touched ---
+T6="$TMP/t6.jsonl"
+mktranscript "$T6" '{"type":"tool_result","content":"unrelated"}'
+out=$(run_gate SomeOtherTool comment "see c76292" "$T6"); rc=$?
+[[ $rc -eq 0 ]] && pass "a tool not in GATED_TOOLS: never checked" \
+  || fail "an ungated tool was blocked: $out"
+
+# --- 7. malformed stdin fails OPEN ---
+out=$(printf 'not json' | python3 "$HOOK" 2>&1); rc=$?
+[[ $rc -eq 0 ]] && pass "malformed hook payload: fails open (rc 0), not a refusal" \
+  || fail "malformed payload did not fail open (rc=$rc)"
+
+echo
+if [[ $fails -eq 0 ]]; then echo "  ✅ all checks passed"; exit 0
+else echo "  ❌ $fails failed"; exit 1; fi
