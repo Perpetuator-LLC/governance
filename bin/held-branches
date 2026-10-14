@@ -51,6 +51,7 @@
 #
 # Exit: 0 nothing unfolded · 1 findings · 2 usage/setup error
 set -uo pipefail
+source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")/lib/forge-tip.sh"
 FETCH=1
 LOCAL=0
 REPOS=()
@@ -71,14 +72,10 @@ for R in "${REPOS[@]}"; do
   if [ "$FETCH" = 1 ]; then
     git -C "$R" fetch origin --prune --quiet || { echo "held-branches: fetch failed in $R — refusing to report on stale refs (use --no-fetch to accept them)" >&2; exit 2; }
   fi
-  # The default branch from origin/HEAD. Fall back ONLY to a main/master that exists; never guess.
-  D="$(git -C "$R" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"; D="${D#origin/}"
-  if [ -z "$D" ]; then
-    for cand in main master; do
-      git -C "$R" rev-parse --verify --quiet "refs/remotes/origin/$cand" >/dev/null && { D="$cand"; break; }
-    done
-  fi
-  [ -n "$D" ] || { echo "held-branches: cannot resolve the default branch of $R (no origin/HEAD, main or master)" >&2; exit 2; }
+  # The default branch from origin/HEAD, asked of the forge directly when that cache is unset —
+  # never guessed from a main/master naming convention (governance#228 Finding 3).
+  D="$(forge_default_branch "$R")"
+  [ -n "$D" ] || { echo "held-branches: cannot resolve the default branch of $R (no origin/HEAD, and the forge could not be asked)" >&2; exit 2; }
 
   ROLL=()
   while IFS= read -r m; do [ -n "$m" ] && ROLL+=("$m"); done \
