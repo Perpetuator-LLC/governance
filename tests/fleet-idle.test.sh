@@ -77,6 +77,34 @@ echo "$TMP/no-such-repo" > "$TMP/repos-bad"
 [ $rc = 1 ] && grep -q "STALL $(t 0) → $(t 150) · 5 window(s) · idle throughout: alpha, beta" "$TMP/out" \
   && pass "replay reports the stall span by hand: T0 → T0+150m, 5 windows" || fail "replay: rc $rc $(cat "$TMP/out")"
 
+# --- default K (no --min-idle) requires EVERY readable lane idle, not just one of them -----------
+# Two fresh lanes: gamma stays active (a commit in-window), delta has none. With the default K (=2,
+# every readable lane), one idle lane out of two must NOT stall the fleet.
+mklane gamma; mklane delta
+commit_at "$TMP/gamma" 25 "still working"
+git -C "$TMP/gamma" push -q origin HEAD:main; git -C "$TMP/delta" push -q origin HEAD:main
+printf '%s\n%s\n' "$TMP/gamma" "$TMP/delta" > "$TMP/repos-gd"
+t5=$(t 300); echo "$t5" > "$TMP/marker-gd"
+"$FI" --repos-from "$TMP/repos-gd" --no-fetch --consecutive 1 --marker "$TMP/marker-gd" --now "$(t 30)" > "$TMP/out" 2>&1; rc=$?
+[ "$rc" = 0 ] && grep -q '1 idle' "$TMP/out" && ! grep -q FINDING "$TMP/out" \
+  && pass "1 of 2 lanes idle does NOT stall the fleet under the default K (every readable lane)" \
+  || fail "default K: rc $rc $(cat "$TMP/out")"
+
+# --- the window boundary is HALF-OPEN (since, until]: a commit AT a boundary belongs to exactly ---
+# --- ONE window, never both. A commit placed exactly at T0+30 belongs to (T0, T0+30], not to the ---
+# --- following (T0+30, T0+60] -- so the SAME lane reads active ending T0+30 and idle ending T0+60.
+mklane epsilon
+commit_at "$TMP/epsilon" 30 "right on the boundary"
+git -C "$TMP/epsilon" push -q origin HEAD:main
+printf '%s\n' "$TMP/epsilon" > "$TMP/repos-e"
+echo "$t5" > "$TMP/marker-e"
+"$FI" --repos-from "$TMP/repos-e" --no-fetch --consecutive 1 --marker "$TMP/marker-e" --now "$(t 30)" > "$TMP/out" 2>&1
+grep -q '0 idle' "$TMP/out" && pass "a commit exactly AT a window's end is counted IN that window (active)" \
+  || fail "boundary (inclusive end): $(cat "$TMP/out")"
+"$FI" --repos-from "$TMP/repos-e" --no-fetch --consecutive 1 --marker "$TMP/marker-e" --now "$(t 60)" > "$TMP/out" 2>&1
+grep -q '1 idle' "$TMP/out" && pass "...and is NOT double-counted into the FOLLOWING window (exclusive start)" \
+  || fail "boundary (exclusive start): $(cat "$TMP/out")"
+
 echo
 if [[ $fails -eq 0 ]]; then echo "  ✅ all checks passed"; else echo "  ❌ $fails failed"; fi
 exit $(( fails > 0 ))

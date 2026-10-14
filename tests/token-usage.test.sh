@@ -152,6 +152,26 @@ out=$("$BIN" --root "$TMP/names" --json 2>/dev/null)
   && pass "seat = directory minus the encoded home; a directory outside home is kept whole" \
   || fail "seat naming wrong: $(get 'sorted(s["seat"] for s in d["seats"])')"
 
+# --- --days excludes turns from before the given date, not just --since's time cutoff ---------------
+mkdir -p "$TMP/days/${P}seatE"
+E="$TMP/days/${P}seatE/t.jsonl"
+turn "$E" 2030-01-14 1 1 1 1    # before the cutoff
+turn "$E" 2030-01-16 1 1 1 1    # on/after the cutoff
+out=$("$BIN" --root "$TMP/days" --days 2030-01-15 --json 2>/dev/null)
+[[ "$(get 'd["scan"]["turns"]')" == "1" && "$(get 'd["days"][0]["day"]')" == "2030-01-16" ]] \
+  && pass "--days drops every turn from before the given date" \
+  || fail "--days wrong: $(get 'd["scan"]["turns"]'), days=$(get '[r["day"] for r in d["days"]]')"
+
+# --- "usage" present but not a MAPPING (a malformed record) is counted as no_usage, never a crash ----
+mkdir -p "$TMP/badusage/${P}seatF"
+F="$TMP/badusage/${P}seatF/t.jsonl"
+printf '{"timestamp":"2030-01-15T10:00:00Z","message":{"usage":"not-an-object"}}\n' >> "$F"
+turn "$F" 2030-01-15 1 1 1 1
+out=$("$BIN" --root "$TMP/badusage" --json 2>/dev/null); rc=$?
+[[ $rc -ne 2 && "$(get 'd["scan"]["no_usage"]')" == "1" && "$(get 'd["scan"]["turns"]')" == "1" ]] \
+  && pass "a non-mapping \"usage\" value is counted as no_usage, not a crash, and does not block the real turn" \
+  || fail "non-mapping usage: rc=$rc $(get 'd["scan"]')"
+
 echo
 [[ $fails -eq 0 ]] && echo "All assertions passed." || echo "$fails assertion(s) FAILED."
 exit $((fails > 0))
