@@ -87,8 +87,8 @@ can actually read it.
   The strongest candidates are the irreversible or other-party-affecting ones: moving money, deleting
   the account, changing the user's own consent/privacy settings, reaching a *different* user's data,
   changing sign-in/recovery credentials, or widening another connection's own grant. A capability that
-  doesn't exist yet (trading, in the exhibit below) still gets a *standing* entry, so it lands on the
-  list automatically the day someone builds it, not after a review nobody scheduled.
+  doesn't exist yet (automated trading is a common one) still gets a *standing* entry, so it lands on
+  the list automatically the day someone builds it, not after a review nobody scheduled.
 - **Logging and attribution** — every action a connection takes is recorded under that connection's
   own identity, separately from the user's own actions, and the record outlives a revocation by a
   bounded window (the same shape as *Rotation is a routine, not a ceremony* in `security.md`, applied
@@ -116,17 +116,4 @@ the platform the user chose to connect, which has its own practices the product 
 the policy doesn't cover. Clearing the deny list and skipping this is solving half the problem while
 reading as having solved all of it.
 
-**Exhibit** (measured, a consumer financial product adding an MCP-style connector): the worked policy
-covered — a per-connection, per-scope consent screen naming the tenant boundary explicitly (not just
-"full access"); a deny list (payment/checkout, account deletion, consent/privacy changes, cross-user
-data export, auth/recovery-credential changes, modifying *another* connection's own grant, and a
-standing entry denying automated trade execution pending the product's own investment-adviser
-registration question, filed before any brokerage integration existed to deny); grant and usage logs
-attributed to the connection, retained past revocation for a bounded audit window; and, for a
-write-capable scope specifically (portfolio positions), a disclosure that the risk there is data
-integrity, not money movement — no brokerage link exists, so the exposure is a corrupted record
-feeding the product's own downstream analysis, not a real trade. The directory-listing half of the
-same exhibit: a third-party MCP connector directory requiring a public privacy-policy URL found the
-existing policy lacked exactly the four items above, because it predated the connector entirely —
-confirming the scope note: this isn't a document you retrofit from the general privacy policy, it's
-one the agent-connection feature creates a dependency on the day it ships.
+*(Exhibit kept in the adapter, not here — per Contributing a rule upstream above.)*
