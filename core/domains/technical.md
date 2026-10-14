@@ -3221,6 +3221,72 @@ helper calls.
   that needs a credential must not depend on a presence-gated store at all (*A test of an UNATTENDED
   job, run from an interactive session, borrows that session's credentials*).
 
+## An unattended pause that outlives a presence cache turns a working credential into a refusal
+
+**A credential gated on human presence — a hardware token, a biometric-protected key, a short-lived
+interactive login — usually works through a cache: a session, an unlocked screen, a connection
+multiplexer with a lifetime.** Any pause in unattended work that is longer than that cache converts
+the credential from working to refused. The consequence is that a second failure, which looks
+unrelated, is caused by the first stall, and the usual diagnosis blames the layer named in the error
+(a network, a server, a key) instead of the gap in time.
+
+Two things follow: a perishable precondition is renewed at the head of a chain, not assumed from its
+start; and an unattended job whose credential is presence-gated reports a **deferral**, not a
+failure, with the alarm set on staleness rather than on any single skipped run.
+
+**Scope:** unattended automation on a workstation or any host where a credential's availability
+depends on a person being there.
+
+**Where it is wrong:** where the credential is genuinely presence-free by policy, this explanation is
+a distraction, and reaching for it hides a real fault. Note the mirror, which is the reason this rule
+exists: a probe that *succeeded* while the machine was unattended may have ridden a cache that
+happened to be live, so it proves the key worked at that moment and never that the grant persists.
+Both directions need a fresh, uncached probe.
+
+## An unattended automation needs a permission mode AND a recorded per-tool authorization; the mode alone lets it block forever holding a concurrency slot
+
+**Where an agent runtime has both a per-task permission mode and a store of previously-granted
+per-tool approvals, setting the mode to its permissive value is necessary and not sufficient.** A
+task whose mode is permissive still stops at the first call for which no stored approval exists, and
+— with no human to answer — stays blocked indefinitely, holding one of a small number of global
+execution slots. Enough such tasks and the whole scheduler starves: later routines are skipped, and
+any liveness detector that runs *as* a scheduled task is skipped with them.
+
+**Scope:** agent runtimes with a global concurrency limit and an approval store distinct from the
+permission mode. Two failure directions, both of which must be covered: a task not configured for
+unattended running, and a task that is but whose tool set has grown since its approvals were
+recorded.
+
+**Where it is wrong:** do not read this as "pre-approve every tool an automation might call." That is
+how an unattended routine acquires standing authority over actions nobody sanctioned, and it is
+strictly worse than a frozen run. The rule is: **enumerate the tools the routine actually calls,
+authorize exactly those, and make a block on anything else loud and self-releasing** — a prompt with
+no answerer must time out and free its slot, never wait forever. The detector for this condition must
+run outside the starvable pool.
+
+## A credential or permission answered "once" stores nothing; an unattended routine needs a durable grant, and a presence-gated credential store is its MIRROR
+
+**An interactive approval has at least two answers that both let the work continue now and differ
+entirely for the next run: one grants this use, the other persists.** A "once"/"allow this time"
+answer stores nothing, so a scheduled or unattended invocation of the same step is blocked again with
+nobody present to answer. The failure is quiet in the worst way — the attended test that established
+the step works is the very thing that cannot establish it will work unattended.
+
+So for a step an unattended routine must perform: **grant it durably and verify the grant from a
+non-interactive run**, or remove the need for the prompt. And when a scheduled run is found to have
+stalled, check whether an approval is sitting unanswered before looking at the routine's own logic; a
+stalled request is not a crash and leaves no error.
+
+⚠️ **Scope, and it is load-bearing, because the neighbouring rule says the opposite for a different
+object.** This is about a **harness or tool permission** — may this agent run this command, call this
+tool, write this path — where the thing being protected is scope, and a standing grant is the
+intended configuration. It is **not** about a **presence-gated credential store** (an OS keychain, a
+hardware key): there, a standing grant converts a per-use human presence check into an
+always-available secret, which is the harm the gate exists to prevent, and the correct fix is to stop
+the run from reaching the credential at all. **The discriminator is what the prompt protects: a
+permission boundary, or a human's presence.** The first should be made durable; the second must not
+be.
+
 ## A fleet audit measures against the FORGE, never against `refs/remotes/*` as found
 
 **`origin/<default>` is a local file.** It is a pointer cached by the last fetch, and its *spelling*
