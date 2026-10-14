@@ -37,9 +37,12 @@
 
 set -uo pipefail
 
+SELF_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+source "$SELF_DIR/../lib/forge-tip.sh"
+
 FETCH=1
 KNOWN=""
-LANDED_CHECK="$(cd "$(dirname "$0")" && pwd)/landed-check"
+LANDED_CHECK="$SELF_DIR/landed-check"
 ALL_DIR=""
 REPOS_FROM=""
 REPOS=()
@@ -113,14 +116,9 @@ $url"
     fi
   fi
 
-  # The default branch as origin sees it, not as this checkout is parked.
-  default="$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"
-  default="${default#origin/}"
-  if [ -z "$default" ]; then
-    for cand in main master; do
-      git -C "$repo" rev-parse --verify --quiet "origin/$cand" >/dev/null && { default="$cand"; break; }
-    done
-  fi
+  # The default branch as origin sees it, not as this checkout is parked — asked of the forge
+  # directly when the local cache is unset, never guessed (governance#228 Finding 3).
+  default="$(forge_default_branch "$repo")"
   [ -z "$default" ] && { echo "⚠️  $(basename "$repo"): no default branch on origin — skipped"; continue; }
 
   rolling="$(git -C "$repo" for-each-ref --format='%(refname:short)' 'refs/remotes/origin/merge/*' 2>/dev/null)"

@@ -440,8 +440,12 @@ def main():
     print("  of which CROSS-VAULT (resolved via an --alias): %d" % len(r["cross_vault"]))
     print("baselined known-bad : %d%s" % (r["baselined"],
           ("  ⚠️ %d of the baseline is UNEXPLAINED" % unexplained) if unexplained else ""))
-    print("unparseable frontmatter (counted as FAILING): %d" % len(r["unparseable"]))
-    print("UNREADABLE file/subtree (counted as FAILING) : %d" % len(r["unreadable"]))
+    # governance#60 c73664: these two are NOT in r["failing"] (that's the path-value residual
+    # only) — they reach only the exit code, below. The old labels claimed "counted as FAILING",
+    # which the FAILING number then contradicted by not moving when one was fixed. Say what's
+    # actually true instead of what would be tidier.
+    print("unparseable frontmatter (fails the exit code, not counted in FAILING): %d" % len(r["unparseable"]))
+    print("UNREADABLE file/subtree (fails the exit code, not counted in FAILING) : %d" % len(r["unreadable"]))
     print("FAILING             : %d" % len(r["failing"]))
     if r.get("unavailable"):
         print("  ⚠️  of which UNAVAILABLE, not dead (volume not mounted): %d"
