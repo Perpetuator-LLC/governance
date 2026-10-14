@@ -41,8 +41,12 @@ cat > "$R/.claims/surfaces.json" <<'EOF'
   {"id": "processor-sdk", "claim": "Our processors are listed in the policy.", "register": "https://forge.example/r#processors",
    "paths": ["requirements.txt"]},
   {"id": "assets", "claim": "Images carry no tracking.", "register": "https://forge.example/r#assets",
-   "paths": ["web/img/**"], "added": ["x"]}]}
+   "paths": ["web/img/**"], "added": ["x"]},
+  {"id": "glob-depth", "claim": "lib util files are reviewed.", "register": "https://forge.example/r#libutil",
+   "paths": ["lib/**/util.py"]}]}
 EOF
+mkdir -p "$R/lib"
+printf 'def helper(): pass\n' > "$R/lib/util.py"
 g add -A; g commit -q -m base
 br() { g checkout -q -b "$1" main; }
 br pixel;  sed -i.bak '2a\
@@ -55,6 +59,7 @@ br retention; sed -i.bak 's/RETENTION_DAYS = 30/RETENTION_DAYS = 365/' "$R/app/c
 br testonly; mkdir -p "$R/app/tests"; printf 'fake = Field()\n' > "$R/app/tests/test_models.py"; g add app/tests; g commit -qm testonly
 br sdk;    printf 'tracker-sdk==1.0\n' > "$R/requirements.txt"; g add requirements.txt; g commit -qm sdk
 br binary; mkdir -p "$R/web/img"; printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > "$R/web/img/logo.png"; g add web/img/logo.png; g commit -qm binary
+br globdepth; printf 'def helper(): return 1\n' >> "$R/lib/util.py"; g commit -qam globdepth
 g checkout -q main
 
 run() { (cd "$R" && "$CC" "$@" >"$TMP/out" 2>"$TMP/err"); echo $?; }
@@ -86,6 +91,14 @@ rc=$(run --base main --head sdk --json)
 rc=$(run --base main --head binary --json --comment-out "$TMP/c.md")
 [ "$rc" = 0 ] && [ "$(st)" = not-evaluated ] && [ "$(q 'len(d["not_evaluated"])')" = 2 ] && grep -q 'Not evaluated' "$TMP/c.md" \
   && ok "a binary file in a line-checked path is NOT EVALUATED (2 notes), never clean, and the comment says so" || bad "binary: rc $rc $(cat "$TMP/out")"
+# Found by mutation (quality sweep, 2026-10-14): glob_to_regex's "**/" compiles to an OPTIONAL
+# segment, "(?:.*/)?" — a pattern like "lib/**/util.py" must match lib/util.py itself (zero
+# intervening directories), not only lib/a/util.py. Requiring at least one segment instead
+# (".*/ ") passed every existing case here, because "app/**/models.py" is always accompanied by a
+# redundant bare "app/models.py" alternative in the same surface — this surface has only the glob.
+rc=$(run --base main --head globdepth --json)
+[ "$(q '[(f["surface"],f["file"]) for f in d["findings"]]')" = "[('glob-depth', 'lib/util.py')]" ] \
+  && ok "'**/' matches ZERO intervening directories, not only one or more" || bad "glob-depth: $(cat "$TMP/out")"
 rc=$(run --base main --head pixel --declaration nope.json --json --comment-out "$TMP/c.md")
 [ "$rc" = 0 ] && [ "$(st)" = not-evaluated ] && grep -q 'no declaration at nope.json' "$TMP/c.md" \
   && ok "no declaration: not evaluated, and the comment says why" || bad "no declaration: $(cat "$TMP/out")"
