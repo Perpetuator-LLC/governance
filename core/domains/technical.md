@@ -1809,6 +1809,36 @@ your mistakes.
 Same principle as *a probe that cannot distinguish the thing from a REFERENCE to it, or its own
 FAILURE from a negative, is not evidence* — one layer down, in the suite rather than the probe.
 
+## A fixture built from a permission check depends on WHO RUNS IT
+
+**Scope:** a test makes its condition out of the operating system's access control (a `chmod 000`
+file for "unreadable", a read-only directory for "cannot write", a low port for "cannot bind"), and the
+suite runs both on developers' machines and in CI. **Root, or any process holding the overriding
+capability, passes straight through those checks**, and CI containers commonly run as root. So one
+case tests the branch on a laptop and tests nothing in CI, or fails there for a reason unrelated to the
+code. Measured: three "unreadable" cases in one cycle. Two failed only in CI. The third had been
+written to skip under root, so the branch it guarded never ran in the one run that gates a merge.
+
+- **In-process: make the condition with a double, not with mode bits.** Replace the call (`open`,
+  `os.access`) for that one path so it raises or returns what the real call does. Keep the
+  real-permission version as the double's calibration, run where permissions bind.
+- **A subprocess you cannot patch: drop the privilege, then PROBE.** Under root, run the command with
+  the overriding capabilities removed (on Linux, `setpriv` dropping `CAP_DAC_OVERRIDE` and
+  `CAP_DAC_READ_SEARCH` from the inheritable and bounding sets). It stays uid 0 and the owner of its
+  fixtures, and the owner's `000` bits now bind. Probe the condition in that same reduced context
+  before the case counts.
+- **The probe has three outcomes, and only one runs the case.** *Condition holds* → run it.
+  *Condition does not hold* or *the probe did not run* → fail as NOT CHECKED. Measured: in a container
+  without the capability to change the bounding set, the drop was a silent no-op and the probe read
+  "readable". Without the probe, that case passes while checking nothing.
+- **Never skip under root unless another case still exercises the branch there.** A skip and a pass
+  look the same in a summary line.
+
+**Where it is wrong:** when the subject of the test IS the permission model (an installer's file modes,
+a sandbox), a double defeats the purpose; use the privilege drop. **The mirror:** a case that needs
+root (`chown`, binding a low port) and is skipped for non-root developers is the same defect from the
+other side. It must run where it gates.
+
 ## Prove a job you just kicked RAN by the output's IDENTITY, not by its timestamp
 
 **Scope:** you start a job and then poll a status or output file it writes, to decide whether this
