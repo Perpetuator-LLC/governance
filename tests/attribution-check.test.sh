@@ -73,6 +73,68 @@ g checkout -q -
 g merge -q --no-ff side -m "merge side, no trailers"
 HEAD_=$(g rev-parse HEAD)
 
+# --- mutation sweep: every AI_COAUTHOR keyword individually, not just 'claude' ---------------------
+# The earlier coauthor-only fixture only exercises the "claude" branch of the keyword alternation.
+# Mutating out any OTHER keyword (anthropic, codex, openai, gpt, grok, xai) survived every check above
+# — a co-author line naming Codex or Grok, with no other trailer, would be silently read as a human's
+# commit (UNATTRIBUTED) instead of INCOMPLETE. One fixture per remaining keyword, same shape as
+# coauthor-only, kills each.
+commit <<'EOF'
+coauthor-anthropic: names the org, not a product
+Co-Authored-By: An Anthropic Agent <noreply@anthropic.com>
+EOF
+KW_ANTHROPIC=$(g rev-parse HEAD)
+commit <<'EOF'
+coauthor-codex: a different harness entirely
+Co-Authored-By: Codex <noreply@example.com>
+EOF
+KW_CODEX=$(g rev-parse HEAD)
+commit <<'EOF'
+coauthor-openai: the vendor name, not the product
+Co-Authored-By: OpenAI Assistant <noreply@openai.com>
+EOF
+KW_OPENAI=$(g rev-parse HEAD)
+commit <<'EOF'
+coauthor-gpt: bare model family name
+Co-Authored-By: GPT-5 <noreply@example.com>
+EOF
+KW_GPT=$(g rev-parse HEAD)
+commit <<'EOF'
+coauthor-grok: xAI's model
+Co-Authored-By: Grok <noreply@x.ai>
+EOF
+KW_GROK=$(g rev-parse HEAD)
+commit <<'EOF'
+coauthor-xai: the vendor name, not the product
+Co-Authored-By: An xAI Agent <noreply@x.ai>
+EOF
+KW_XAI=$(g rev-parse HEAD)
+
+# --- mutation sweep: a trailer KEY with no value must not count as present -------------------------
+# has()'s \S requirement after the colon is what makes this fail correctly; removing it (a key present,
+# value empty or whitespace-only) survived every check above.
+commit <<'EOF'
+empty-value: Harness is declared but given no value
+
+Harness:
+Model: claude-opus-5-5
+Initiated-By: nik
+EOF
+EMPTY_VALUE=$(g rev-parse HEAD)
+
+# --- mutation sweep: a trailer-shaped phrase embedded in PROSE must not count as a trailer -----------
+# has()'s requirement that a match sit at line-start or directly after a '· ' separator is what keeps
+# a conversational mention from being read as a real trailer. Relaxing that requirement to "anywhere in
+# the text" survived every check above — all three keys below appear only mid-sentence, never at a
+# line's own start.
+commit <<'EOF'
+prose-mention: a conversational reference to the trailer names, never actually set as trailers
+
+This explains why Harness: claude and Model: claude-opus-5-5 and Initiated-By: nik are the three
+fields the gate requires, without actually declaring any of them on this commit.
+EOF
+PROSE_MENTION=$(g rev-parse HEAD)
+
 echo "attribution-check"
 out="$(cd "$R" && "$CHK" "$BASE..$HEAD_")"; rc=$?
 check "a range holding incomplete commits exits 1"          "[ $rc -eq 1 ]"
@@ -93,6 +155,23 @@ out="$(cd "$R" && "$CHK" "nosuch..$HEAD_" 2>&1)"; rc=$?
 check "an unreadable range exits 2"                         "[ $rc -eq 2 ]"
 out="$(cd "$R" && "$CHK" 2>&1)"; rc=$?
 check "no range is a usage error (2)"                       "[ $rc -eq 2 ]"
+
+echo "attribution-check — mutation sweep additions"
+for pair in "KW_ANTHROPIC:anthropic" "KW_CODEX:codex" "KW_OPENAI:openai" "KW_GPT:gpt" "KW_GROK:grok" "KW_XAI:xai"; do
+  var="${pair%%:*}"; kw="${pair##*:}"
+  sha="${!var}"
+  out="$(cd "$R" && "$CHK" "$sha^..$sha")"; rc=$?
+  check "a Co-Authored-By naming '$kw' with no other trailer is INCOMPLETE, not UNATTRIBUTED" \
+    "[ $rc -eq 1 ] && grep -q '^INCOMPLETE' <<<\"\$out\" && ! grep -q '^UNATTRIBUTED' <<<\"\$out\""
+done
+
+out="$(cd "$R" && "$CHK" "$EMPTY_VALUE^..$EMPTY_VALUE")"; rc=$?
+check "a trailer KEY present with an EMPTY value does not count — INCOMPLETE, names Harness:" \
+  "[ $rc -eq 1 ] && grep -A1 '^INCOMPLETE' <<<\"\$out\" | grep -q 'lacks Harness:\$'"
+
+out="$(cd "$R" && "$CHK" "$PROSE_MENTION^..$PROSE_MENTION")"; rc=$?
+check "the three trailer names mentioned mid-PROSE (never at line-start, never after '· ') are not trailers — UNATTRIBUTED" \
+  "[ $rc -eq 0 ] && grep -q '^UNATTRIBUTED' <<<\"\$out\""
 
 echo
 echo "  $pass passed, $fail failed"
