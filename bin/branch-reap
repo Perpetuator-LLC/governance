@@ -153,7 +153,7 @@ for repo in "${REPOS[@]}"; do
         # ": " in the capture, which is always an advice `hint:` line (#31). Parsed without a pipe:
         # `printf | grep -m1` under pipefail can report a match as a failure (SIGPIPE).
         reason=$(first_line 'error:' "$out" || first_line 'warning:' "$out" || printf '%s' "${out%%$'\n'*}")
-        if printf '%s' "$reason" | grep -qi 'not found'; then
+        if grep -qi 'not found' <<<"$reason"; then
           # Enumerated at listing time, gone by the time -d ran: another process deleted or renamed it
           # in between. Git's answer here is already precise — "this is not a branch" — so print
           # exactly that. The rewound-forge guess below is a diagnosis for a DIFFERENT failure shape (a
