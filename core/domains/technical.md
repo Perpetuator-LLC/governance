@@ -2918,8 +2918,8 @@ new side — only in what the proxy actually counted.
 - **Resurrection list**: exactly what would need to happen to bring the old service back (the
   backup, the image, the config, the data snapshot, and who can authorize it), named and reachable
   *before* termination, because the question "can we still undo this" is cheap to answer in advance
-  and expensive to answer under pressure afterward (technical.md → *Three roles per change: build,
-  test, refactor*'s **Reversible** property, applied to a whole service rather than one change).
+  and expensive to answer under pressure afterward — the same reason a rollback path is named at
+  ship time for any other change, applied here to a whole service rather than one change.
 
 **Scope:** a service sitting behind a proxy or gateway that counts calls to it. **Where it is
 wrong:** without such a proxy, this rule does not say "skip the measurement" — it says add the
