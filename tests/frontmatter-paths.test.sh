@@ -182,25 +182,61 @@ assert not any(p.endswith('plain.md') for p, _, _ in results), results
 assert any(p.endswith('note.md') for p, _, _ in results), 'the real frontmatter file vanished too'
 "
 
-mkdir -p "$TMP/v3"
-printf -- '---\nkey: x\n---\n' > "$TMP/v3/ok.md"
+# "Unreadable" is made by a test double, not by mode bits: root ignores mode bits and CI runs the
+# suites as root, so a chmod-000 case passes or fails depending on who runs it. The double raises
+# what the real call raises (PermissionError from open, False from os.access); the chmod cases below
+# calibrate that against the real filesystem wherever mode bits bind, i.e. when not root.
 mkdir -p "$TMP/v3/sub"
-printf -- '---\nkey: y\n---\n' > "$TMP/v3/sub/also-ok.md"
-chmod 000 "$TMP/v3/sub/also-ok.md"
+printf -- '---\nkey: x\n---\n' > "$TMP/v3/a.md"
+printf -- '---\nkey: y\n---\n' > "$TMP/v3/b.md"
+printf -- '---\nkey: z\n---\n' > "$TMP/v3/sub/c.md"
+# The FIRST .md the walk opens is refused, whichever it is, so the walk must continue past it:
+# 3 files in, 1 refused, so 2 yielded and exactly one sink entry naming the refused path.
 pyok "a file present but UNREADABLE is appended to the unreadable sink (never silently dropped), and the walk continues past it" \
   "
+import frontmatter_paths as fp
+refused, real_open = [], open
+def refuse_first(p, *a, **k):
+    if not refused and str(p).endswith('.md'):
+        refused.append(p)
+        raise PermissionError(13, 'Permission denied', p)
+    return real_open(p, *a, **k)
+fp.open = refuse_first
 unreadable = []
-results = list(iter_markdown('$TMP/v3', unreadable=unreadable))
-assert any(p.endswith('ok.md') for p, _, _ in results), 'the readable sibling was lost too'
-assert any(u['path'].endswith('also-ok.md') for u in unreadable), unreadable
+results = [p for p, _, _ in iter_markdown('$TMP/v3', unreadable=unreadable)]
+assert len(refused) == 1, refused
+assert unreadable == [{'path': refused[0], 'error': 'PermissionError', 'kind': 'file'}], unreadable
+assert len(results) == 2 and refused[0] not in results, results
+assert sorted(results + refused) == sorted(['$TMP/v3/a.md', '$TMP/v3/b.md', '$TMP/v3/sub/c.md']), results
 "
-chmod 644 "$TMP/v3/sub/also-ok.md"
 
 mkdir -p "$TMP/v4"
 printf -- '---\nkey: x\n---\n' > "$TMP/v4/ok.md"
-chmod 000 "$TMP/v4"
+pyok "an UNREADABLE ROOT raises SystemExit naming it explicitly, distinct from a missing one" \
+  "
+import os
+real_access = os.access
+os.access = lambda p, *a, **k: False if p == '$TMP/v4' else real_access(p, *a, **k)
+try:
+    list(iter_markdown('$TMP/v4'))
+    assert False, 'did not raise'
+except SystemExit as e:
+    assert 'VAULT ROOT PRESENT BUT UNREADABLE' in str(e), e
+"
+
+# Calibration of the two doubles above against real mode bits. Root reads through them, so these run
+# only where they can bind; the cases above exercise the same branches for every user.
 if [ "$(id -u)" != 0 ]; then
-  pyok "an UNREADABLE ROOT raises SystemExit naming it explicitly, distinct from a missing one" \
+  chmod 000 "$TMP/v3/sub/c.md"
+  pyok "calibration: a real chmod-000 file reaches the sink as the PermissionError the double raises" \
+    "
+unreadable = []
+list(iter_markdown('$TMP/v3', unreadable=unreadable))
+assert unreadable == [{'path': '$TMP/v3/sub/c.md', 'error': 'PermissionError', 'kind': 'file'}], unreadable
+"
+  chmod 644 "$TMP/v3/sub/c.md"
+  chmod 000 "$TMP/v4"
+  pyok "calibration: a real chmod-000 root is refused as unreadable, as the os.access double makes it" \
     "
 try:
     list(iter_markdown('$TMP/v4'))
@@ -208,10 +244,10 @@ try:
 except SystemExit as e:
     assert 'VAULT ROOT PRESENT BUT UNREADABLE' in str(e), e
 "
+  chmod 755 "$TMP/v4"
 else
-  echo "  (skip: running as root — permission bits do not block root, so this arm cannot be exercised)"
+  echo "  (calibration of the unreadable doubles not run: root ignores mode bits; the double-based cases above still ran)"
 fi
-chmod 755 "$TMP/v4"
 
 mkdir -p "$TMP/v5"
 printf 'no markdown here\n' > "$TMP/v5/readme.txt"
