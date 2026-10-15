@@ -151,6 +151,36 @@ it is empty, say so plainly: they will paste once more, and because most service
 at creation, one they did not save is revoked and minted again. Never write that an earlier token
 "still works": that is true only if the human still holds it, which is the store's job.
 
+## An agent connects to one MCP front door; the door injects secrets, never the agent
+
+**An agent connects to one MCP front door. The door injects secrets server-side at call time; an
+agent never holds a key.** A tool that needs a credential reads it from the store at call time, into
+memory, on the door's own side of the connection — not into the agent's context, and not into a
+config file the agent can read. This is the same "never in agent context" boundary as *Secrets in
+code* and *Ask-once provisioning* above, pushed one layer further back: those rules say the agent
+never *handles* a secret's value; this one says the agent never even has a *path* to request one
+directly, because there is exactly one door, and the door is what holds the key.
+
+- **One front door, not one-per-tool.** An agent with direct credentials to several backing
+  services is several places a leaked context compromises; an agent with one MCP connection and no
+  credentials of its own is one place, and that place never held what it would leak.
+- **Server-side, at call time, into memory.** The secret is fetched when the call is made, held only
+  for the call's duration, and never written to disk or returned to the agent as a value — the same
+  shape as a service fetching from the secret store at runtime, moved to the door instead of the
+  service.
+- **Mirror case — reading is not the same as holding:** an agent reading a secret's *metadata*
+  (its name, its version, its age) is fine; the value is not. A tool that answers "is there a token
+  for X, and how old is it" without returning the token itself has not violated this rule — the
+  question this rule answers is never "can the agent know a secret exists," only "can the agent read
+  its value."
+
+**Scope:** an agent's own calls into backing services and tools. **Where it is wrong:** a human's own
+CLI session on their workstation is not routed through the door — a person authenticating as
+themselves is not the case this rule is about. Nor is the single, network-locked credential the door
+itself uses to authenticate each agent seat: that credential identifies the connection to the door,
+it is not one the door hands out, and a front door has to hold at least that much to be a door at
+all.
+
 ## A first-run setup endpoint is claimed by the deploy, before anyone else can reach it
 
 **A service whose first run serves an unauthenticated setup endpoint (claim the owner or admin,

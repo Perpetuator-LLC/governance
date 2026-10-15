@@ -2895,6 +2895,38 @@ Calling it done is a false claim, not an optimistic one.
   one bucket while `restore.sh` read another, and secret-name drift (`DB_*` → `POSTGRES_*`)
   broke both. Only a restore rehearsal catches that class; no green deploy ever will.
 
+## A strangler migration terminates a service only on a MEASURED zero-use window
+
+**Terminate the old side of a strangler migration only after a measured zero-use window on the
+proxy in front of it, plus a reachability list (what still points at it) and a resurrection list
+(what would bring it back).** "We migrated everything" is a claim about the cutover; the zero-use
+window is the only thing that tests whether anything was missed. A stale client, a cached DNS
+record, a cron job pinned to the old host, or a hardcoded fallback all keep sending real traffic
+long after the migration is believed complete, and none of them shows up in a code review of the
+new side — only in what the proxy actually counted.
+
+- **The proxy's own counter is the evidence, not a grep for callers.** A caller inventory is a claim
+  about what *should* call the old service; the proxy's call count is a measurement of what *does*.
+  The gap between the two is exactly the set of callers nobody remembered to migrate.
+- **The window must be long enough to see every caller's own cycle** — a batch job that runs
+  monthly, a report that runs on quarter-end, a mobile client that only phones home when a user
+  reopens the app after weeks away. A zero-use window shorter than the slowest legitimate caller's
+  period reads "nothing called it" when the truth is "nothing called it yet."
+- **Reachability list**: everything a determined search can still find pointed at the old service —
+  DNS records, load-balancer rules, config files, cron entries, client SDKS pinned to an old
+  endpoint — named before termination, not discovered after something breaks.
+- **Resurrection list**: exactly what would need to happen to bring the old service back (the
+  backup, the image, the config, the data snapshot, and who can authorize it), named and reachable
+  *before* termination, because the question "can we still undo this" is cheap to answer in advance
+  and expensive to answer under pressure afterward (technical.md → *Three roles per change: build,
+  test, refactor*'s **Reversible** property, applied to a whole service rather than one change).
+
+**Scope:** a service sitting behind a proxy or gateway that counts calls to it. **Where it is
+wrong:** without such a proxy, this rule does not say "skip the measurement" — it says add the
+counter first, even a crude one (an access log grep, a request counter in the old service itself),
+because a termination decided on a code-level caller inventory alone is the same mistake this rule
+exists to prevent, just without the proxy that would have caught it.
+
 ## Fix at the serving layer
 
 When a capability must reach a SET of clients (all LAN devices, all VPN devices, phones
