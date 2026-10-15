@@ -86,6 +86,28 @@ out=$(cd "$d/work" && "$CP" -F "$d/msg" -- a 2>&1); rc=$?
 check "a rejected push: exit 1, 'committed locally only', origin keeps the other tip" \
   '[ $rc = 1 ] && grep -q "committed locally only" <<<"$out" && [ "$(remote_tip "$d" feature)" = "$(git -C "$d/other" rev-parse HEAD)" ]'
 
+# 7f. THE REMOTE READ-BACK ITSELF: `git push` reporting success is not trusted on its own — the remote
+# is asked again and its answer must equal the new HEAD. A `git` shim makes `push` succeed genuinely
+# (so the mutation this proves isn't "did the push fail") while `ls-remote` answers with a WRONG sha,
+# the same shape as a race (another push landing, or a mirror not yet caught up) between the push and
+# the read-back. Real-world-rare, and exactly why dropping this whole check survived every OTHER test
+# in this file when tried as a mutant — this is the one built to catch it.
+d=$(mkrepo raceremote); echo change >> "$d/work/a"
+REAL_GIT=$(command -v git)
+FAKEBIN="$TMP/fakebin-race"; mkdir -p "$FAKEBIN"
+cat > "$FAKEBIN/git" <<SH
+#!/bin/sh
+if [ "\$1" = "ls-remote" ]; then
+  echo "0000000000000000000000000000000000000000	refs/heads/feature"
+  exit 0
+fi
+exec "$REAL_GIT" "\$@"
+SH
+chmod +x "$FAKEBIN/git"
+out=$(cd "$d/work" && PATH="$FAKEBIN:$PATH" "$CP" -F "$d/msg" -- a 2>&1); rc=$?
+check "the remote read-back disagreeing with the push: exit 1, names the mismatch, not a false success" \
+  '[ $rc = 1 ] && grep -q "is .0000000" <<<"$out"'
+
 # 7b. A rename: the old name is gone from the tree (git mv staged it); naming both commits the rename.
 d=$(mkrepo rename); git -C "$d/work" mv a a2
 (cd "$d/work" && "$CP" -F "$d/msg" -- a a2 >/dev/null 2>&1); rc=$?
@@ -99,6 +121,23 @@ gone=$(git -C "$d/work" cat-file -e HEAD:b 2>/dev/null && echo kept || echo gone
 (cd "$d/work" && "$CP" -F "$d/msg" -- no-such-file >/dev/null 2>&1); r2=$?
 check "a deleted tracked file is committed as a deletion; an unknown path exits 2 with nothing committed" \
   '[ $r1 = 0 ] && [ "$gone" = gone ] && [ $r2 = 2 ] && [ "$(git -C "$d/work" rev-list --count HEAD)" = 2 ]'
+
+# 7d. A valid path named BEFORE an invalid one in the same invocation leaves the INDEX CLEAN.
+# Real bug, found mutation-testing (governance#238): path validation and `git add` were interleaved in
+# one loop, so a valid path got staged before the loop reached the invalid one and exited 2 — "nothing
+# committed" was true, but the index was left dirty with nobody told. Validate every path first, stage
+# only once all have passed.
+d=$(mkrepo partial); base=$(git -C "$d/work" rev-parse HEAD); echo change >> "$d/work/a"
+(cd "$d/work" && "$CP" -F "$d/msg" -- a no-such-file >/dev/null 2>&1); rc=$?
+check "a valid path before a bad one: exit 2, HEAD unmoved, and the valid path is NOT left staged" \
+  '[ $rc = 2 ] && [ "$(git -C "$d/work" rev-parse HEAD)" = "$base" ] && [ "$(git -C "$d/work" status --porcelain a)" = " M a" ]'
+
+# 7e. An UNBORN branch (zero commits yet) names itself, rather than leaking git'"'"'s raw stderr with no
+# commit-push prefix and an unexplained exit 1. Real bug, found mutation-testing (governance#238).
+UB="$TMP/unborn"; mkdir -p "$UB"; git init -q "$UB"; echo x > "$UB/a"
+out=$(cd "$UB" && "$CP" -F "$d/msg" -- a 2>&1); rc=$?
+check "an unborn HEAD (no commits yet): exit 2, names itself, not git's raw 'fatal:' text" \
+  '[ $rc = 2 ] && grep -q "commit-push: HEAD has no commit yet" <<<"$out" && ! grep -q "^fatal:" <<<"$out"'
 
 # 8. The test can see the failure: commit-push WITHOUT the HEAD-moved check publishes the base in case 2.
 M="$TMP/commit-push.mutant"; sed 's/if \[ "\$rc" -ne 0 \] || \[ "\$after" = "\$before" \] || .*; then/if false; then/' "$CP" > "$M"; chmod +x "$M"
