@@ -415,9 +415,20 @@ def main():
         # supersedor nobody verified. So every entry carries a reason, and one that
         # has none is written as UNEXPLAINED and counted loudly on every run
         # rather than blending into the suppressed set.
+        # The baseline FILE ITSELF is the first source of truth for a value's reason: without this,
+        # re-running --write-baseline a second time with no --reasons (the common case — the reasons
+        # were already recorded last time) silently downgraded every already-reasoned entry back to
+        # UNEXPLAINED, discarding work a human did specifically so it would not have to be redone.
         reasons = {}
+        if os.path.exists(args.baseline):
+            try:
+                existing_kb = json.load(open(args.baseline, encoding="utf-8")).get("known_bad")
+                if isinstance(existing_kb, dict):
+                    reasons.update(existing_kb)
+            except (ValueError, OSError):
+                pass
         if args.reasons and os.path.exists(args.reasons):
-            reasons = json.load(open(args.reasons, encoding="utf-8"))
+            reasons.update(json.load(open(args.reasons, encoding="utf-8")))
         vals = sorted({f["value"] for f in r["failing"]})
         kb = {v: reasons.get(v) or "UNEXPLAINED — state why this is permanently "
                                    "unresolvable, or fix it" for v in vals}
