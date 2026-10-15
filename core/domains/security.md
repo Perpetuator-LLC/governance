@@ -585,6 +585,26 @@ encoded form. Measured: a widely deployed authorization server accepted both `%4
 - **Mirror:** a pattern that is too narrow (an exact port, for an app that picks an ephemeral one) fails
   at sign-in, loudly. Only the too-wide pattern fails silently, and that is the one this rule prevents.
 
+## A component that TERMINATES a protocol step inherits every check the old endpoint made on that step's inputs
+
+**When a change puts a new component at the end of a protocol step that another component used to
+terminate** — a broker, a gateway, a cache, an adapter — **the step's input checks move with it.**
+Before building, list every check the old endpoint made on that step's inputs (allowlists, client
+binding, replay refusal, expiry), and re-home each one, or record why it is no longer needed. The old
+endpoint now sees only the new component's inputs, so a check left behind is not weakened; it is gone,
+and nothing reports it.
+
+**Scope:** this applies when the new component terminates the step, so the old endpoint never sees the
+original input. It does not apply to a transparent pass-through, where the old endpoint still receives
+the input unchanged — copying its checks there makes two copies that drift apart.
+
+**Where it is wrong:** a pass-through redirect, where the original endpoint still sees and enforces on
+the unmodified input: re-implementing its checks at the new component only adds a second list to keep
+in sync.
+
+**Mirror:** removing such a component hands its checks back to the next endpoint, which must already
+perform them.
+
 ## A credential your code sends over HTTP is pinned to its hosts, and a redirect may carry it elsewhere
 
 **Some HTTP clients copy a header you set yourself, `Authorization` included, onto a redirect to any
