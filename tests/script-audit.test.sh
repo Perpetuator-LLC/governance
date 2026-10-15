@@ -103,13 +103,25 @@ rc=$(run "$h" "bash $TMP/does-not-exist.sh")
 # shasum/cat both fail on the unreadable file, but the header/footer lines still get written around
 # the empty content — a malformed entry, not nothing. "no marker text" alone cannot tell that apart
 # from "no entry at all", so this asserts the stronger, correct claim: `script=<path>` never appears.
+# Root ignores mode bits (CAP_DAC_OVERRIDE), so chmod 000 alone hides nothing from it, and CI runs
+# the suites as root. Under root the hook runs with those capabilities dropped: still uid 0 and still
+# the owner of $TMP, but now the owner bits (000) apply. The probe proves the file is unreadable to
+# the hook before the case counts; a probe that cannot run reports NOT CHECKED as a failure.
+nodac=()
+[ "$(id -u)" = 0 ] && nodac=(setpriv --inh-caps=-dac_override,-dac_read_search \
+                                     --bounding-set=-dac_override,-dac_read_search --)
 h="$TMP/home-unreadable"; mkdir -p "$h"
 f="$TMP/unreadable.sh"; echo 'marker-unreadable' > "$f"; chmod 000 "$f"
-rc=$(run "$h" "bash $f")
+probe=$(${nodac[@]+"${nodac[@]}"} bash -c '[[ -r "$1" ]] && echo readable || echo unreadable' _ "$f" 2>/dev/null)
+if [ "$probe" != unreadable ]; then
+  bad "could not make a file unreadable to the hook (uid $(id -u), probe: '${probe:-did not run}'): the -r leg is NOT CHECKED"
+else
+  rc=$(bash_json "bash $f" | HOME="$h" env -u CLAUDE_TOOL_INPUT ${nodac[@]+"${nodac[@]}"} bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; echo $?)
+  [ "$rc" = 0 ] && ! grep -qF "script=$f " "$h/.claude/audit/scripts.log" 2>/dev/null \
+    && ok "a file that exists but is not readable gets NO log entry at all, not a malformed one" \
+    || bad "an unreadable file produced a log entry (or the hook misbehaved)"
+fi
 chmod 644 "$f"  # restore so the trap's rm -rf can clean it up without a permission fight
-[ "$rc" = 0 ] && ! grep -qF "script=$f " "$h/.claude/audit/scripts.log" 2>/dev/null \
-  && ok "a file that exists but is not readable gets NO log entry at all, not a malformed one" \
-  || bad "an unreadable file produced a log entry (or the hook misbehaved)"
 
 # --- separators split multiple commands in ONE call, both captured ------------------------------
 h="$TMP/home-multi"; mkdir -p "$h"
