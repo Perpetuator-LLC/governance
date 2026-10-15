@@ -105,6 +105,17 @@ if python3 -c 'import yaml' >/dev/null 2>&1; then
     rc=$(run "$f")
     [ "$rc" = 0 ] && says 'error\|expect' && ok "yaml ($ext): a malformed file is reported" \
       || bad "malformed $ext not reported (rc=$rc): $(cat "$TMP/out" "$TMP/err")"
+    # Real bug, found by the merge lead on real PyYAML (Debian/macOS): the old code piped the
+    # exception's TRACEBACK into `head -5`, and PyYAML's own problem description is the LAST line of
+    # a multi-line marked error — a traceback above it (module import, call stack) pushed that line
+    # past the cutoff, so the one line anyone wanted was exactly what got cut. A loose grep for
+    # "error" still passed, because "ScannerError" appears mid-traceback too. Pin the STRUCTURAL
+    # property instead: no "Traceback" text, and the report is exactly one line.
+    combined="$(cat "$TMP/out" "$TMP/err")"
+    n="$(printf '%s' "$combined" | grep -c . )"
+    ! grep -q 'Traceback' <<<"$combined" && [ "$n" -le 1 ] \
+      && ok "yaml ($ext): the report is the error message alone, never a traceback" \
+      || bad "yaml ($ext) report leaked a traceback or more than one line ($n): $combined"
   done
   f="$TMP/clean.yaml"; printf 'a: 1\nb: 2\n' > "$f"
   rc=$(run "$f")

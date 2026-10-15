@@ -94,7 +94,25 @@ case "$ext" in
     ;;
   yaml|yml)
     if command -v python3 &>/dev/null; then
-      python3 -c "import yaml; yaml.safe_load(open('$path'))" 2>&1 | head -5
+      # A bare `... 2>&1 | head -5` piped the TRACEBACK, not the error: PyYAML's own problem
+      # description is the LAST line of a multi-line marked error, and a long traceback above it
+      # (module import, call stack) pushed that line past the 5-line cutoff, so head kept only
+      # frames nobody wanted and dropped the one line that mattered. Catch the exception here
+      # instead and print just its type, message and line/column, which is never more than one line.
+      python3 -c "
+import sys
+try:
+    import yaml
+    yaml.safe_load(open('$path'))
+except Exception as e:
+    problem = getattr(e, 'problem', None)
+    if problem is None:
+        lines = str(e).splitlines()
+        problem = lines[0] if lines else type(e).__name__
+    mark = getattr(e, 'problem_mark', None)
+    loc = ' (line %d, column %d)' % (mark.line + 1, mark.column + 1) if mark else ''
+    print('%s: %s%s' % (type(e).__name__, problem, loc), file=sys.stderr)
+" 2>&1 | head -5
     fi
     ;;
   sh|bash|zsh)
