@@ -152,9 +152,11 @@ failure after the capture (a hang, a red check, a typo, a timeout, a wrong accou
 failed step with zero prompts. Chaining a mint in front of steps that can fail, with `&&` in one
 pasted block, turns the first downstream error into a second mint, and every one after it into another.
 - **A cache that expires recreates the ask.** Keep a captured credential until the credential itself
-  expires or is rotated, not for a fixed window. A "kept 24 h" cache makes tomorrow's retry a re-mint.
-  Where a long-held credential is too strong to keep, mint it short-lived at the source (an expiry on
-  the token), not short-lived in the store.
+  expires or is rotated, or, if it was created only for this piece of work, until the work's last step
+  revokes it (`operations.md` → *Hand the human a SCRIPT, not steps — self-logging by design*, test 3).
+  Never for a fixed window: a "kept 24 h" cache makes tomorrow's retry a re-mint. Where a long-held
+  credential is too strong to keep, mint it short-lived at the source (an expiry on the token), not
+  short-lived in the store.
 - **Never recommend re-minting a stored credential "to be safe".** Re-mint only on evidence: proven
   exposure (the value was printed where an agent or log could read it), proven revocation, or a
   store check showing it absent. An unproven re-mint is a repeat ask with no benefit.
