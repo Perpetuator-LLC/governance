@@ -2992,7 +2992,7 @@ new side — only in what the proxy actually counted.
   reopens the app after weeks away. A zero-use window shorter than the slowest legitimate caller's
   period reads "nothing called it" when the truth is "nothing called it yet."
 - **Reachability list**: everything a determined search can still find pointed at the old service —
-  DNS records, load-balancer rules, config files, cron entries, client SDKS pinned to an old
+  DNS records, load-balancer rules, config files, cron entries, client SDKs pinned to an old
   endpoint — named before termination, not discovered after something breaks.
 - **Resurrection list**: exactly what would need to happen to bring the old service back (the
   backup, the image, the config, the data snapshot, and who can authorize it), named and reachable
@@ -3004,7 +3004,9 @@ new side — only in what the proxy actually counted.
 wrong:** without such a proxy, this rule does not say "skip the measurement" — it says add the
 counter first, even a crude one (an access log grep, a request counter in the old service itself),
 because a termination decided on a code-level caller inventory alone is the same mistake this rule
-exists to prevent, just without the proxy that would have caught it.
+exists to prevent, just without the proxy that would have caught it. An emergency stop (a
+compromise, a legal order, active harm) is not a strangler termination: stop the service now, and
+write the reachability and resurrection lists immediately after, not before.
 
 ## Fix at the serving layer
 
