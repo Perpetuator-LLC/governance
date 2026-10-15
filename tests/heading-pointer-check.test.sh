@@ -88,6 +88,15 @@ echo 'Follow `orchestrator/G.md` → *Attribution*.' > "$TMP/adp/skills/worker/S
 rc="$(run --root "$TMP/r" "$TMP/adp/skills/worker/SKILL.md")"
 check "a relative prefix resolves against an ANCESTOR (skills/worker → skills/orchestrator)" "[ '$rc' = '0' ]"
 
+# --- an AMBIGUOUS bare basename is not guessed — resolve_doc's own documented contract -------------
+mkdir -p "$TMP/r/amba" "$TMP/r/ambb"
+printf '## Rule A\n' > "$TMP/r/amba/dup.md"
+printf '## Rule B\n' > "$TMP/r/ambb/dup.md"
+echo 'See `dup.md` → *Rule A*.' > "$TMP/r/docs/ambiguous.md"
+rc="$(run --root "$TMP/r" "$TMP/r/docs/ambiguous.md")"
+check "a bare basename matching TWO files anywhere in the tree is NO-SUCH-DOC, never a guess at either one" \
+  "[ '$rc' = '1' ] && grep -q 'NO-SUCH-DOC' '$TMP/out'"
+
 # --- the gate: this tree -------------------------------------------------------------
 rc="$(run --root "$ROOT")"
 check "THIS TREE has no dangling pointer" "[ '$rc' = '0' ]"

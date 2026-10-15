@@ -55,6 +55,19 @@ check "an INVALID declaration refuses loudly (exit 2) instead of falling through
   "noenv env GOVERNANCE_HARNESS=claude-code CLAUDE_CODE_ENTRYPOINT=cli '$DETECT' >'$TMP/o' 2>'$TMP/e'; [ \$? -eq 2 ] && [ ! -s '$TMP/o' ] && grep -q 'not one of' '$TMP/e'"
 check "an unknown argument exits 2" \
   "noenv '$DETECT' --bogus >/dev/null 2>&1; [ \$? -eq 2 ]"
+# is_valid() must match a WHOLE word in VALID, not any substring: "ud" is a substring of "claude" and
+# "od" is a substring of "codex", so a validator keying on substring presence would wrongly accept
+# either as a declared name.
+check "a SUBSTRING of a valid name (not the whole word) is refused: 'ud' is inside 'claude'" \
+  "noenv env GOVERNANCE_HARNESS=ud '$DETECT' --quiet; [ \$? -eq 2 ]"
+check "a SUBSTRING of a valid name (not the whole word) is refused: 'od' is inside 'codex'" \
+  "noenv env GOVERNANCE_HARNESS=od '$DETECT' --quiet; [ \$? -eq 2 ]"
+check "--explain names the reason on the REFUSAL path too, not only on success" \
+  "noenv '$DETECT' --explain >'$TMP/o' 2>'$TMP/e'; grep -q 'no positive signal' '$TMP/e' && [ ! -s '$TMP/o' ]"
+check "GOVERNANCE_EXTRA_HARNESSES: the SECOND of two declared names is accepted, not just the first" \
+  "out=\$(noenv env GOVERNANCE_EXTRA_HARNESSES='bot-a bot-b' GOVERNANCE_HARNESS=bot-b '$DETECT'); [ \"\$out\" = bot-b ]"
+check "GOVERNANCE_EXTRA_HARNESSES: the FIRST of two declared names is still accepted too" \
+  "out=\$(noenv env GOVERNANCE_EXTRA_HARNESSES='bot-a bot-b' GOVERNANCE_HARNESS=bot-a '$DETECT'); [ \"\$out\" = bot-a ]"
 
 # The rejected detector, asserted as rejected: if detection is ever "fixed" by testing for a marker
 # directory, this fails on a home where every overlay exists.

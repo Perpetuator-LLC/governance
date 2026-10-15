@@ -77,7 +77,7 @@ fi
 
 [ ${#REPOS[@]} -eq 0 ] && REPOS=("$PWD")
 
-total_del=0; total_kept=0; rc=0
+total_del=0; total_kept=0; total_vanished=0; rc=0
 for repo in "${REPOS[@]}"; do
   if ! git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
     echo "branch-reap: not a git repo: $repo" >&2; rc=1; continue
@@ -153,16 +153,26 @@ for repo in "${REPOS[@]}"; do
         # ": " in the capture, which is always an advice `hint:` line (#31). Parsed without a pipe:
         # `printf | grep -m1` under pipefail can report a match as a failure (SIGPIPE).
         reason=$(first_line 'error:' "$out" || first_line 'warning:' "$out" || printf '%s' "${out%%$'\n'*}")
-        up=$(git -C "$repo" rev-parse --abbrev-ref "$b@{upstream}" 2>/dev/null)
-        echo "      REFUSED $b — git says: ${reason#*: }"
-        # A branch reaches -d only when every commit is in the CACHED origin/$def. Say which half of
-        # that holds: the forge may not have been asked, or may no longer hold it (rewound).
-        if [ -z "$forge" ]; then
-          echo "              every commit is in the cached origin/$def, but the forge could not be asked; git compared against ${up:-the checked-out HEAD}"
+        if grep -qi 'not found' <<<"$reason"; then
+          # Enumerated at listing time, gone by the time -d ran: another process deleted or renamed it
+          # in between. Git's answer here is already precise — "this is not a branch" — so print
+          # exactly that. The rewound-forge guess below is a diagnosis for a DIFFERENT failure shape (a
+          # branch that still EXISTS but fails -d's safety check), and reaching for it here would be a
+          # confident, wrong answer about an object that was never real (#193's second defect).
+          echo "      SKIPPED $b — not a branch (git says: ${reason#*: }; vanished since listing)"
+          total_vanished=$((total_vanished+1))
         else
-          echo "              the cached origin/$def holds it and the forge's $def does NOT (rewound?); kept"
+          up=$(git -C "$repo" rev-parse --abbrev-ref "$b@{upstream}" 2>/dev/null)
+          echo "      REFUSED $b — git says: ${reason#*: }"
+          # A branch reaches -d only when every commit is in the CACHED origin/$def. Say which half of
+          # that holds: the forge may not have been asked, or may no longer hold it (rewound).
+          if [ -z "$forge" ]; then
+            echo "              every commit is in the cached origin/$def, but the forge could not be asked; git compared against ${up:-the checked-out HEAD}"
+          else
+            echo "              the cached origin/$def holds it and the forge's $def does NOT (rewound?); kept"
+          fi
+          total_kept=$((total_kept+1)); rc=1
         fi
-        total_kept=$((total_kept+1)); rc=1
       fi
     elif on_forge "$sha"; then
       echo "      would reap $b ($(printf '%.9s' "$sha"); on the forge's $def)"
@@ -176,7 +186,9 @@ done
 
 echo
 if [ "$APPLY" -eq 1 ]; then
-  echo "branch-reap: deleted $total_del; $total_kept refused by git."
+  vanished_note=""
+  [ "$total_vanished" -gt 0 ] && vanished_note=" ($total_vanished vanished since listing — not a refusal)"
+  echo "branch-reap: deleted $total_del; $total_kept refused by git.$vanished_note"
   [ -n "$LOG" ] && echo "  undo log: $LOG   (restore: git branch <name> <sha>)"
 else
   echo "branch-reap: DRY RUN — $total_del branch(es) would be deleted. Re-run with --apply."

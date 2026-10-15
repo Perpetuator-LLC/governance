@@ -88,6 +88,55 @@ landed on the consolidator, not the author. Same session: three feature branches
 492-commits-stale duplicates of already-merged work were deleted outright, which was the
 highest-value change of the day and produced zero new code.
 
+## Three roles per change: build, test, refactor
+
+**Every unit of work passes through three roles each session: BUILD writes the code; TEST writes
+tests independently of BUILD, ideally a different agent and a different model, so the tests are not
+the author grading their own work; REFACTOR improves the code while every test stays green.** This is
+the role-separation half of the cycle above (*Simplest thing that works*'s test-fails → code-passes →
+refactor); that rule is about the SEQUENCE of steps, this one is about who performs each step and why
+it must not be the same mind throughout.
+
+**With two or more agents, split the roles across them. With one agent, it performs all three in
+order and labels which role made each commit** — the sequence still holds even when the headcount
+does not, and the label is what lets a later reader tell "the author re-reading their own work" from
+"an independent check" apart, after the fact.
+
+**Why independence matters more than headcount:** a test written by the same mind that wrote the code
+inherits that mind's blind spots. It proves the code does what its author believes it does, not what
+the requirement actually demands — the two differ exactly where the author was wrong, which is the
+one place a self-written test cannot catch it. A different agent, and ideally a different model,
+approaches the same requirement without the author's assumptions already built in; that is what makes
+"the tests pass" mean more than "the author still agrees with themselves."
+
+**Prefer fixed roles with checks and balances over many agents with overlapping authority.** Adding
+agents without separating what each one is accountable for multiplies coordination cost without
+multiplying any actual check: two agents both free to touch build, test and refactor at will is not
+more independent than one agent doing all three badly — it is the same absence of a check, with more
+actors to coordinate around it.
+
+**Name the four ROCK properties alongside SOLID, carried by every change this cycle produces:**
+- **Reversible.** Every change is undoable, with its rollback path named when it ships, not
+  reconstructed under pressure afterward.
+- **Observable.** Behaviour that matters emits a metric, an alert or a receipt; silence is not
+  success — the same absence-as-health trap a checker falls into when firing is mistaken for being
+  right (technical.md → *A checker that FIRES is not a checker that is RIGHT*), pointed at the system
+  under change rather than at the thing that checks it.
+- **Choke-pointed.** Each invariant is enforced at one place, by scope, never by a soft rule a
+  reviewer has to remember to apply (technical.md → *An invariant with more than one SOURCE is
+  answered by ONE choke-point function*).
+- **Known-answer tested.** Tests are scenarios with a hand-derived expected answer, each shown to
+  fail on the bug it guards before it is trusted to catch one — the same two-demonstration proof a
+  new gate owes before anyone acts on its output (technical.md → *A checker that FIRES is not a
+  checker that is RIGHT*), applied to a test as much as to a checker.
+
+**Scope:** a unit of work substantial enough to carry its own risk — a feature, a bug fix, a refactor
+someone could get meaningfully wrong. **Where it is wrong:** a one-line config change or an emergency
+revert does not need three roles and a rollback plan written in advance; the fix IS the rollback, and
+routing it through a build/test/refactor cycle delays the response the emergency exists to need. The
+discriminator is whether getting it wrong costs more than the ceremony: when it does, the roles pay
+for themselves before the session ends; when it does not, skip them and say why.
+
 ## AVAILABILITY is a selection column, not a footnote
 
 **"Can we actually get this hardware on the day we need it?" ranks beside price and specs — a
@@ -1759,6 +1808,36 @@ your mistakes.
 
 Same principle as *a probe that cannot distinguish the thing from a REFERENCE to it, or its own
 FAILURE from a negative, is not evidence* — one layer down, in the suite rather than the probe.
+
+## A fixture built from a permission check depends on WHO RUNS IT
+
+**Scope:** a test makes its condition out of the operating system's access control (a `chmod 000`
+file for "unreadable", a read-only directory for "cannot write", a low port for "cannot bind"), and the
+suite runs both on developers' machines and in CI. **Root, or any process holding the overriding
+capability, passes straight through those checks**, and CI containers commonly run as root. So one
+case tests the branch on a laptop and tests nothing in CI, or fails there for a reason unrelated to the
+code. Measured: three "unreadable" cases in one cycle. Two failed only in CI. The third had been
+written to skip under root, so the branch it guarded never ran in the one run that gates a merge.
+
+- **In-process: make the condition with a double, not with mode bits.** Replace the call (`open`,
+  `os.access`) for that one path so it raises or returns what the real call does. Keep the
+  real-permission version as the double's calibration, run where permissions bind.
+- **A subprocess you cannot patch: drop the privilege, then PROBE.** Under root, run the command with
+  the overriding capabilities removed (on Linux, `setpriv` dropping `CAP_DAC_OVERRIDE` and
+  `CAP_DAC_READ_SEARCH` from the inheritable and bounding sets). It stays uid 0 and the owner of its
+  fixtures, and the owner's `000` bits now bind. Probe the condition in that same reduced context
+  before the case counts.
+- **The probe has three outcomes, and only one runs the case.** *Condition holds* → run it.
+  *Condition does not hold* or *the probe did not run* → fail as NOT CHECKED. Measured: in a container
+  without the capability to change the bounding set, the drop was a silent no-op and the probe read
+  "readable". Without the probe, that case passes while checking nothing.
+- **Never skip under root unless another case still exercises the branch there.** A skip and a pass
+  look the same in a summary line.
+
+**Where it is wrong:** when the subject of the test IS the permission model (an installer's file modes,
+a sandbox), a double defeats the purpose; use the privilege drop. **The mirror:** a case that needs
+root (`chown`, binding a low port) and is skipped for non-root developers is the same defect from the
+other side. It must run where it gates.
 
 ## Prove a job you just kicked RAN by the output's IDENTITY, not by its timestamp
 

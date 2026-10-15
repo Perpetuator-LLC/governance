@@ -70,6 +70,15 @@ o=$(printf 'x #9\n' | "$BR"); grep -q '^#9' <<<"$o" && pass "reads standard inpu
 "$BR" "$TMP/no-such.md" >/dev/null 2>&1; [ $? -eq 2 ] && pass "an unreadable file exits 2" || fail "missing file did not exit 2"
 "$BR" --repo nohost "$TMP/t.md" >/dev/null 2>&1; [ $? -eq 2 ] && pass "a malformed --repo exits 2" || fail "bad --repo accepted"
 
+# --- a link whose VISIBLE text number does not match its own href's number is plain bare, not link-text ---
+# [#9](.../issues/458): the reader sees "#9", the href goes to issue 458 -- a different, worse mistake
+# than a correctly-numbered link to the wrong repo, and out of this tool's stated scope either way. It
+# must not be silently folded into "link-text" (which implies the number IS right, just the repo isn't).
+o=$(printf '[#9](https://git.example/acme/billing/issues/458) mismatched number\n' | "$BR")
+got=$(kinds "$o")
+[ "$got" = "#9:bare " ] && pass "a link whose text number differs from its href number: reported bare, not link-text" \
+  || fail "mismatched link-text/href: [$got]"
+
 echo
 if [[ $fails -eq 0 ]]; then echo "  ✅ all checks passed"; else echo "  ❌ $fails failed"; fi
 exit $(( fails > 0 ))

@@ -9,8 +9,10 @@
 #   decision-named.md  cadence: monday, routine: nightly-vault (a name)      -> clean (declared)
 #   broken.md          frontmatter that will not parse                       -> UNREADABLE (own count)
 #   plain.md           no cadence                                            -> clean
+#   empty-cadence.md   cadence: "" (present, empty)                          -> clean, not a recurrence
+#   list-frontmatter.md whole frontmatter parses to a LIST, not a dict        -> UNREADABLE, never a crash
 #   tasks/snap/SKILL.md  the routine's file, no frontmatter (never yielded)
-# => checked 6 · 4 name a cadence · 1 unreadable · 2 findings · exit 1.
+# => checked 7 · 4 name a cadence · 2 unreadable · 2 findings · exit 1.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CC="$ROOT/bin/check-cadence"
@@ -29,20 +31,24 @@ fm decision-once.md   $'type: decision\ncadence: once'
 fm decision-named.md  $'type: decision\ncadence: monday\nroutine: nightly-vault'
 fm broken.md          $'cadence: weekly: [unclosed'
 fm plain.md           $'type: note'
+fm empty-cadence.md   $'type: kpi\ncadence: ""'
+printf -- '---\n- just\n- a\n- list\n---\nbody\n' > "$V/list-frontmatter.md"
 echo "the task body" > "$V/tasks/snap/SKILL.md"
 
 echo "── check-cadence"
 out=$("$CC" --vault-root "$V" 2>&1); rc=$?
 [ $rc -eq 1 ] && pass "findings exit 1" || fail "exit $rc, expected 1"
-grep -q 'checked 6 frontmatter(s) · 4 name a cadence · 1 unreadable' <<<"$out" \
-  && pass "counts: 6 checked, 4 with a cadence, 1 unreadable" || fail "counts wrong: $(grep checked <<<"$out")"
+grep -q 'checked 7 frontmatter(s) · 4 name a cadence · 2 unreadable' <<<"$out" \
+  && pass "counts: 7 checked, 4 with a cadence, 2 unreadable" || fail "counts wrong: $(grep checked <<<"$out")"
 grep -qE 'NO-ROUTINE +kpi-weekly.md' <<<"$out" && pass "a cadence with no routine is a finding" || fail "kpi-weekly not reported"
 grep -qE 'ROUTINE-NAMES-NOTHING +kpi-dangling.md' <<<"$out" && pass "a routine path that resolves to nothing is a finding" \
   || fail "kpi-dangling not reported"
 grep -qE 'UNREADABLE +broken.md' <<<"$out" && pass "an unparseable frontmatter is reported as UNREADABLE" || fail "broken.md not reported"
-! grep -qE '(NO-ROUTINE|NOTHING) +(kpi-armed|decision-once|decision-named|plain)' <<<"$out" \
-  && pass "an existing routine, a one-time value, a named routine and no cadence are all clean" \
-  || fail "a clean document was reported: $(grep -E 'armed|once|named|plain' <<<"$out")"
+grep -qE 'UNREADABLE +list-frontmatter.md' <<<"$out" \
+  && pass "a frontmatter that parses to a LIST (not a dict) is UNREADABLE, not a crash" || fail "list-frontmatter.md not reported"
+! grep -qE '(NO-ROUTINE|NOTHING) +(kpi-armed|decision-once|decision-named|plain|empty-cadence)' <<<"$out" \
+  && pass "an existing routine, a one-time value, a named routine, no cadence, and an EMPTY cadence are all clean" \
+  || fail "a clean document was reported: $(grep -E 'armed|once|named|plain|empty-cadence' <<<"$out")"
 [ "$(grep -cE '^  (NO-ROUTINE|ROUTINE-NAMES-NOTHING)' <<<"$out")" = 2 ] && pass "exactly 2 findings" \
   || fail "finding count: $(grep -cE '^  (NO-ROUTINE|ROUTINE-NAMES-NOTHING)' <<<"$out")"
 
@@ -50,7 +56,7 @@ grep -qE 'UNREADABLE +broken.md' <<<"$out" && pass "an unparseable frontmatter i
 out=$("$CC" --vault-root "$V" --baseline "$TMP/b.json" 2>&1); rc=$?
 [ $rc -eq 0 ] && grep -q 'baseline: 2 entr(ies)' <<<"$out" && pass "a baseline suppresses the known two, and prints its size" \
   || fail "baseline: rc $rc, $(grep baseline <<<"$out")"
-grep -q '1 unreadable' <<<"$out" && pass "the unreadable count still shows with a baseline" || fail "unreadable count hidden"
+grep -q '2 unreadable' <<<"$out" && pass "the unreadable count still shows with a baseline" || fail "unreadable count hidden"
 fm kpi-new.md $'type: kpi\ncadence: monthly'
 out=$("$CC" --vault-root "$V" --baseline "$TMP/b.json" 2>&1); rc=$?
 [ $rc -eq 1 ] && grep -qE 'NO-ROUTINE +kpi-new.md' <<<"$out" && ! grep -q 'kpi-weekly' <<<"$out" \

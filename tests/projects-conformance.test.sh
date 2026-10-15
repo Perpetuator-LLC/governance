@@ -80,5 +80,25 @@ printf '%s\n' "$out" | grep -q "third-party: NOT CHECKED" && ok "no --ref-list â
 import json,sys; d=json.load(sys.stdin); assert d["nonconforming"]==10 and d["top_level"]==12 and d["third_party_checked"], d' \
   && ok "--json carries the same numbers" || bad "json"
 
+echo "norm_remote and duplicate-clone keep selection:"
+# --- a 'user@' prefix is stripped: two URLs for the SAME repo, one WITH it and one WITHOUT -----------
+P2="$TMP/p2"; mkdir -p "$P2"
+repo "$P2/widget"      "https://forge.example/org/widget.git"     # no user@ prefix
+repo "$P2/widget-copy" "git@forge.example:org/widget.git"         # user@ prefix: same repo if stripped
+out2="$("$PC" --root "$P2")"
+printf '%s\n' "$out2" | grep -qE "^duplicate-clone +widget-copy .*kept: widget" \
+  && ok "a 'user@'-prefixed URL and a plain one for the SAME repo are recognised as duplicates" \
+  || bad "user@ stripping not exercised: $out2"
+
+# --- the CANONICALLY-named clone (matching the repo's own forge name) is kept, never just the one ---
+# --- that happens to sort first alphabetically -------------------------------------------------------
+P3="$TMP/p3"; mkdir -p "$P3"
+repo "$P3/aaa-mirror" "git@forge.example:org/gadget.git"   # sorts FIRST alphabetically, but is not forge-named
+repo "$P3/gadget"     "https://forge.example/org/gadget.git"  # forge-named: the one that should be kept
+out3="$("$PC" --root "$P3")"
+printf '%s\n' "$out3" | grep -qE "^duplicate-clone +aaa-mirror .*kept: gadget" \
+  && ok "the forge-NAMED clone is kept even when another copy sorts first alphabetically" \
+  || bad "canonical-name preference not exercised: $out3"
+
 echo; echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

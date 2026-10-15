@@ -72,7 +72,9 @@ case "$ext" in
     ;;
   go)
     if command -v gofmt &>/dev/null; then
-      gofmt -e "$path" >/dev/null 2>&1 | head -10
+      # Same fix as the json branch below: discard only stdout (gofmt's reformatted echo on a VALID
+      # file), never stderr, where `-e`'s syntax error actually lands.
+      gofmt -e "$path" 2>&1 >/dev/null | head -10
     fi
     ;;
   rs)
@@ -83,12 +85,34 @@ case "$ext" in
     if command -v jq &>/dev/null; then
       jq empty "$path" 2>&1 | head -5
     elif command -v python3 &>/dev/null; then
-      python3 -m json.tool "$path" >/dev/null 2>&1 | head -5
+      # `>/dev/null 2>&1` BEFORE the pipe would redirect stdout AND stderr to /dev/null first, so
+      # `head` receives nothing — the error message this branch exists to report, discarded before it
+      # could be seen. Discard only stdout (json.tool's pretty-printed echo on a VALID file, which
+      # nobody asked for); stderr, where the actual parse error lands, still reaches head.
+      python3 -m json.tool "$path" 2>&1 >/dev/null | head -5
     fi
     ;;
   yaml|yml)
     if command -v python3 &>/dev/null; then
-      python3 -c "import yaml; yaml.safe_load(open('$path'))" 2>&1 | head -5
+      # A bare `... 2>&1 | head -5` piped the TRACEBACK, not the error: PyYAML's own problem
+      # description is the LAST line of a multi-line marked error, and a long traceback above it
+      # (module import, call stack) pushed that line past the 5-line cutoff, so head kept only
+      # frames nobody wanted and dropped the one line that mattered. Catch the exception here
+      # instead and print just its type, message and line/column, which is never more than one line.
+      python3 -c "
+import sys
+try:
+    import yaml
+    yaml.safe_load(open('$path'))
+except Exception as e:
+    problem = getattr(e, 'problem', None)
+    if problem is None:
+        lines = str(e).splitlines()
+        problem = lines[0] if lines else type(e).__name__
+    mark = getattr(e, 'problem_mark', None)
+    loc = ' (line %d, column %d)' % (mark.line + 1, mark.column + 1) if mark else ''
+    print('%s: %s%s' % (type(e).__name__, problem, loc), file=sys.stderr)
+" 2>&1 | head -5
     fi
     ;;
   sh|bash|zsh)
