@@ -165,7 +165,9 @@ product name.
 - **G5 — Every decision is recorded and owned.** A decision gets a stable ID, an owner, a date, and
   its rationale. Link it from where it's enacted up to the strategy it serves.
 - **G6 — Every artifact has one home and one owner.** File each in the correct layer (placement
-  policy below). Cross-link; never duplicate.
+  policy below). Cross-link; never duplicate. One owner means exactly one Responsible and one
+  Accountable: two of either, or none, is invalid.
+  `domains/operations.md` → *Exactly one Responsible and one Accountable for every system*.
 - **G7 — Attribute and make reversible every agent write.** Log who/when/what (human vs. agent).
   Mass edits, moves, deletions must be staged or trivially undoable.
 - **G8 — Respect boundaries.** Keep engagement/client/tenant data separated. Never leak secrets,
