@@ -126,15 +126,23 @@ rc="$(run --vault-root "$V" --vault-root "$V2" --alias "Other/=$S")"
 check "two --vault-root args: a dead path in the SECOND root is reported too, not only the first" \
   "[ '$rc' = '1' ] && grep -q 'Another/Dead.md' '$TMP/out' && grep -q 'Old/Layout/Gone.md' '$TMP/out'"
 
-# --- present but unreadable is a failure, not a smaller vault (skipped as root) --------------------
-if [ "$(id -u)" != 0 ]; then
-  mkdir -p "$V/locked"; printf -- '---\nid: g\n---\n' > "$V/locked/hidden.md"; chmod 000 "$V/locked"
-  rc="$(run --vault-root "$V" --baseline "$TMP/baseline.json" --alias "Other/=$S")"
-  chmod 755 "$V/locked"
-  check "an unreadable subtree fails the run instead of shrinking it" "[ '$rc' = '1' ] && grep -q 'UNREADABLE directory' '$TMP/out'"
+# --- present but unreadable is a failure, not a smaller vault --------------------------------------
+# Root ignores mode bits (CAP_DAC_OVERRIDE), and CI runs the suites as root, so under root the command
+# runs with those capabilities dropped: still uid 0 and owner of $TMP, but the 000 owner bits apply.
+# The probe proves the directory is unreadable to the command before the case counts; a probe that
+# cannot run reports NOT CHECKED as a failure, never a skip.
+nodac=()
+[ "$(id -u)" = 0 ] && nodac=(setpriv --inh-caps=-dac_override,-dac_read_search \
+                                     --bounding-set=-dac_override,-dac_read_search --)
+mkdir -p "$V/locked"; printf -- '---\nid: g\n---\n' > "$V/locked/hidden.md"; chmod 000 "$V/locked"
+probe=$(${nodac[@]+"${nodac[@]}"} bash -c '[[ -r "$1" ]] && echo readable || echo unreadable' _ "$V/locked" 2>/dev/null)
+if [ "$probe" != unreadable ]; then
+  bad "could not make a directory unreadable to the command (uid $(id -u), probe: '${probe:-did not run}'): the unreadable-subtree case is NOT CHECKED"
 else
-  echo "  ⏭️  SKIPPED unreadable-subtree case: running as root, chmod cannot make a path unreadable"
+  rc="$(${nodac[@]+"${nodac[@]}"} "$CHECK" --vault-root "$V" --baseline "$TMP/baseline.json" --alias "Other/=$S" >"$TMP/out" 2>"$TMP/err"; echo $?)"
+  check "an unreadable subtree fails the run instead of shrinking it" "[ '$rc' = '1' ] && grep -q 'UNREADABLE directory' '$TMP/out'"
 fi
+chmod 755 "$V/locked"
 
 echo
 echo "  $pass passed, $fail failed"
