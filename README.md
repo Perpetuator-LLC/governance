@@ -59,6 +59,7 @@ lesson travels upstream — is `core/AGENTS.md` → *Layers*.
 | `bin/redaction-check` | no private identifiers reach this repository: home-directory paths, contact addresses, registration ids, internal ticket references, vendor tool names — plus, where you supply one, your own list of instance names |
 | `bin/heading-pointer-check` | every pointer from one doc to a section of another still names text that exists |
 | `bin/governance check` | a rendered instruction file still matches the layers it was built from |
+| `bin/raci-check` | every row of an ownership (RACI) table names exactly one Responsible and one Accountable; a scan that finds no such table reports NOT CHECKED |
 
 Each check is tested against a known-good and a known-bad input in the same pass (`tests/`), and CI
 runs every suite plus the first two checks against this tree.

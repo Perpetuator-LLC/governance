@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Refuse an ownership (RACI) row that does not name exactly one Responsible and one Accountable.
+
+`core/domains/operations.md` → *Exactly one Responsible and one Accountable for every system*: a row
+with two R's or two A's is invalid, and so is a row with none. Where the table is machine-readable,
+this check refuses such a row so it cannot merge.
+
+A TABLE is checked when its header row has an R column and an A column: a header cell that reads `R`
+or `A`, or starts with `Responsible` or `Accountable` (markup and a parenthesised note ignored, so
+`**R**esponsible (does the edit)` counts). Every other table is ignored.
+
+A CELL names its parties. Parenthesised text is a note, never a party: `billing-lane (its build twin)` is one.
+Parties are separated by `·` `/` `+` `&`. A comma is prose, not a separator: ownership cells read
+`whoever creates it, at creation` or `X, or the lane on its direction`, and a list split on commas
+cries wolf on them (measured on a real ownership document: three of seven findings were commas). An
+empty cell, or one that is only `—` `–` `-` `?` `none` `tbd` or `n/a`, names none. Other prose is not
+parsed either: `X with Y` is one party, so a table meant to be checked names its parties plainly.
+
+⚠️ AN EMPTY SCAN IS NOT A CLEAN SCAN. Paths that hold no RACI table at all exit 3 (NOT CHECKED): a
+table whose header was renamed would otherwise pass forever.
+
+Usage:  raci-check [--json] PATH...
+Exit:   0 every row has one R and one A · 1 finding(s) · 2 cannot run · 3 no RACI table found
+"""
+import argparse, json, re, sys
+
+NONE = {"", "—", "–", "-", "?", "none", "tbd", "n/a"}
+SEP = re.compile(r"\s*(?:·|/|\+|&)\s*")
+MARKUP = re.compile(r"[*_`]")
+NOTE = re.compile(r"\([^()]*\)")
+
+
+def plain(cell):
+    """The cell without markup and without its parenthesised notes (nested ones too)."""
+    s = MARKUP.sub("", cell)
+    while NOTE.search(s):
+        s = NOTE.sub("", s)
+    return s.strip()
+
+
+def parties(cell):
+    return [p for p in SEP.split(plain(cell)) if p.strip().lower() not in NONE]
+
+
+def cells(line):
+    """A Markdown table row's cells; an escaped `\\|` stays inside its cell."""
+    row = line.strip()
+    if row.startswith("|"):
+        row = row[1:]
+    if row.endswith("|") and not row.endswith("\\|"):
+        row = row[:-1]
+    return [c.replace("\\|", "|").strip() for c in re.split(r"(?<!\\)\|", row)]
+
+
+def column(header, letter, word):
+    for i, h in enumerate(header):
+        name = plain(h).lower()
+        if name == letter or name.startswith(word):
+            return i
+    return None
+
+
+SEPARATOR_ROW = re.compile(r"^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
+
+
+def check(path, text):
+    """(tables, rows, findings) for one file."""
+    lines = text.splitlines()
+    tables, rows, findings = 0, 0, []
+    i = 0
+    while i < len(lines):
+        if lines[i].lstrip().startswith("|") and i + 1 < len(lines) and SEPARATOR_ROW.match(lines[i + 1].strip()):
+            header = cells(lines[i])
+            r, a = column(header, "r", "responsible"), column(header, "a", "accountable")
+            i += 2
+            if r is None or a is None:
+                continue
+            tables += 1
+            while i < len(lines) and lines[i].lstrip().startswith("|"):
+                row = cells(lines[i])
+                rows += 1
+                label = plain(row[0]) if row else ""
+                for col, role in ((r, "R"), (a, "A")):
+                    got = parties(row[col]) if col < len(row) else []
+                    if len(got) != 1:
+                        findings.append({"file": path, "line": i + 1, "row": label, "role": role, "parties": got})
+                i += 1
+            continue
+        i += 1
+    return tables, rows, findings
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="raci-check", description="One R and one A in every RACI row.")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("paths", nargs="*")
+    args = ap.parse_args(argv)
+    if not args.paths:
+        print("raci-check: name the files that hold RACI tables", file=sys.stderr)
+        return 2
+    tables = rows = 0
+    findings = []
+    for path in args.paths:
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError as e:
+            print(f"raci-check: cannot read {path}: {e.strerror}", file=sys.stderr)
+            return 2
+        t, n, found = check(path, text)
+        tables, rows, findings = tables + t, rows + n, findings + found
+    if args.json:
+        print(json.dumps({"tables": tables, "rows": rows, "findings": findings}, ensure_ascii=False))
+    else:
+        for f in findings:
+            what = f"no {f['role']}" if not f["parties"] else f"{len(f['parties'])} {f['role']}'s: " + ", ".join(f["parties"])
+            print(f"{f['file']}:{f['line']}: {f['row']}: {what}")
+        print(f"raci-check — {len(args.paths)} file(s), {tables} table(s), {rows} row(s), {len(findings)} finding(s)")
+    if tables == 0:
+        print("raci-check: NOT CHECKED — no table with an R and an A column in the paths given", file=sys.stderr)
+        return 3
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

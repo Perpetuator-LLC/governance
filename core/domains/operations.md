@@ -435,7 +435,9 @@ outcome.** They may be the same party. Shared responsibility is how work gets mi
 assumes the other has it, and the gap stays invisible until something fails.
 - **A row with two R's or two A's is invalid, and so is a row with none.** An unowned system fails the
   same way as a doubly owned one, only sooner. Where the table is machine-readable, **a check refuses
-  such a row** so it cannot merge. Where it is prose, the reviewer refuses it.
+  such a row** so it cannot merge: `bin/raci-check <files>` exits 1 on it, naming the row and its
+  parties (`·` `/` `+` `&` separate parties; a comma is prose; a parenthesised note is a note). Where
+  it is prose, the reviewer refuses it.
 - **R and A name a role, held by one holder at a time.** A rotation (on-call, a seat that hands over)
   is still one R; the hand-over moves it.
 - **Everyone else is C or I.** A party that is not the R proposes to the R, by a message or by a
