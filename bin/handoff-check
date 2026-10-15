@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""handoff-check — a hand-off block that prompts a human must name who it is prompting and where.
+
+  handoff-check [--base-dir DIR] PATH [PATH ...]
+
+A script that stops on `sudo`, a password read, a vault login or a keychain prompt and names no
+account and no host hands a human a blind decision: type a password into *this* prompt, on *whose*
+machine, as *whom*? The rule "every prompt is named by owner + host" can sit in an agent's resident
+instructions and still not be applied at hand-off time — prose is read once, at session start, and
+acted on from memory after that; this reads the actual text, every time.
+
+For each PATH (a script, or a Markdown file holding fenced ```bash/sh/shell/zsh/console blocks):
+
+  SUDO    a `sudo` invocation with no `-p '<owner>@<host>: ...'` (or `--prompt=...`) naming who is
+          being prompted and on which host
+  PROMPT  a `read -s`, an `ssh` call that has not disabled password fallback (`-o BatchMode=yes`), a
+          `bao login`, or a keychain/secret-store lookup, with no labelled line — a comment or an
+          echo naming <owner>@<host> — before it
+  CALLS   a line that runs another committed script (`bash x.sh`, `./x.sh`, `python3 x.py`, …) also
+          lints that script, resolved relative to --base-dir (default: PATH's own directory)
+
+A line that is itself a comment (`#...`) is read as documentation, never as an invocation, and is
+never a match. An interactive tool that already names its own target when it prompts — an OIDC
+browser login naming its realm, say — is out of scope: nothing here flags a command by name alone,
+only a `sudo` / `read -s` / `ssh` / `bao login` / keychain line with no owner+host naming nearby.
+
+Scope: a script or block that will put a prompt in front of a human. A script run only by CI or by
+an agent unattended, which never reaches an interactive prompt, is out of scope — there is no
+account or host for a missing prompt to name.
+
+Exit: 0 no finding · 1 at least one finding, named by file:line · 2 cannot read a PATH given.
+"""
+import argparse
+import os
+import re
+import sys
+
+SHELL_LANGS = {"bash", "sh", "shell", "zsh", "console"}
+FENCE = re.compile(r"^\s*(```+|~~~+)\s*([A-Za-z0-9_-]*)")
+
+OWNER_HOST = r"[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.-]*"
+SUDO_RE = re.compile(r"\bsudo\b")
+SUDO_LABELLED_RE = re.compile(r"(?:-p\s+|--prompt[= ])(['\"]).*?" + OWNER_HOST + r".*?\1")
+PROMPT_RE = re.compile(
+    r"\bread\s+(?:-\w*s\w*|--silent)\b"
+    r"|\bbao\s+login\b"
+    r"|\bsecurity\s+find-(?:generic|internet)-password\b"
+    r"|\bsecret-tool\s+lookup\b"
+    r"|\bkeyctl\s+request\b"
+    r"|\bssh\b"
+)
+SSH_BATCH_MODE_RE = re.compile(r"-o\s+BatchMode=yes")
+LABEL_RE = re.compile(r"(?:^\s*#|\becho\b|\bprintf\b).*" + OWNER_HOST, re.IGNORECASE)
+CALL_RE = re.compile(
+    r"(?:^|[\s;&|()`])(?:"
+    r"(?:bash|sh|zsh|dash|python3?|node)\s+(?:-\S+\s+)*(\S+\.(?:sh|py|js|mjs|cjs|ts))"
+    r"|(\.{1,2}/\S+)"
+    r")"
+)
+
+
+def logical_lines(text):
+    """(line number, text) pairs, joining `\\`-continued lines so a flag split across lines is still
+    read as one command."""
+    raw = text.splitlines()
+    out, i, n = [], 0, len(raw)
+    while i < n:
+        start = i + 1
+        buf = raw[i]
+        while buf.endswith("\\") and i + 1 < n:
+            i += 1
+            buf = buf[:-1] + " " + raw[i]
+        out.append((start, buf))
+        i += 1
+    return out
+
+
+def is_unlabelled_prompt(line):
+    if SSH_BATCH_MODE_RE.search(line):
+        return False
+    return True
+
+
+def check_text(text, label, base_dir, visited):
+    lines = logical_lines(text)
+    findings = []
+    for idx, (lineno, line) in enumerate(lines):
+        if line.strip().startswith("#"):
+            continue
+        if SUDO_RE.search(line) and not SUDO_LABELLED_RE.search(line):
+            findings.append((label, lineno, "SUDO",
+                              "sudo with no -p '<owner>@<host>: ...' naming who is prompted and where"))
+        if PROMPT_RE.search(line) and is_unlabelled_prompt(line):
+            labelled = bool(LABEL_RE.search(line))
+            if not labelled:
+                j = idx - 1
+                while j >= 0 and not lines[j][1].strip():
+                    j -= 1
+                if j >= 0 and LABEL_RE.search(lines[j][1]):
+                    labelled = True
+            if not labelled:
+                findings.append((label, lineno, "PROMPT",
+                                  "a prompt with no labelled line (a comment or echo naming "
+                                  "<owner>@<host>) before it"))
+        for m in CALL_RE.finditer(line):
+            target = m.group(1) or m.group(2)
+            if not target:
+                continue
+            path = os.path.normpath(os.path.join(base_dir, target))
+            if path in visited or not os.path.isfile(path):
+                continue
+            visited.add(path)
+            try:
+                with open(path, "r", errors="replace") as fh:
+                    content = fh.read()
+            except OSError:
+                continue
+            findings.extend(check_text(content, path, os.path.dirname(path) or ".", visited))
+    return findings
+
+
+def markdown_blocks(text):
+    """(first line number, block text) for every fenced SHELL_LANGS block in Markdown."""
+    blocks = []
+    fenced, fence, buf, start = False, "", [], 0
+    for n, line in enumerate(text.splitlines(), 1):
+        m = FENCE.match(line)
+        if not fenced and m:
+            if m.group(2).lower() in SHELL_LANGS:
+                fenced, fence, buf, start = True, m.group(1)[0] * 3, [], n + 1
+            continue
+        if fenced:
+            if line.strip().startswith(fence):
+                blocks.append((start, "\n".join(buf)))
+                fenced = False
+                continue
+            buf.append(line)
+    return blocks
+
+
+def lint_path(path, base_dir_override, visited):
+    try:
+        with open(path, "r", errors="replace") as fh:
+            text = fh.read()
+    except OSError as e:
+        print(f"handoff-check: cannot read {path}: {e}", file=sys.stderr)
+        return None
+    base_dir = base_dir_override or (os.path.dirname(os.path.abspath(path)) or ".")
+    visited.add(os.path.abspath(path))
+    findings = []
+    if path.endswith(".md"):
+        for start, block in markdown_blocks(text):
+            for lbl, lineno, rule, msg in check_text(block, path, base_dir, visited):
+                findings.append((lbl, lineno + start - 1 if lbl == path else lineno, rule, msg))
+    else:
+        findings.extend(check_text(text, path, base_dir, visited))
+    return findings
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--base-dir", default=None)
+    ap.add_argument("paths", nargs="*")
+    args = ap.parse_args(argv)
+    if not args.paths:
+        print(__doc__.strip().splitlines()[2], file=sys.stderr)
+        return 2
+
+    all_findings, visited, had_error = [], set(), False
+    for arg in args.paths:
+        if arg == "-":
+            text = sys.stdin.read()
+            all_findings.extend(check_text(text, "<stdin>", args.base_dir or ".", visited))
+            continue
+        if not os.path.isfile(arg):
+            print(f"handoff-check: cannot read {arg}: no such file", file=sys.stderr)
+            had_error = True
+            continue
+        result = lint_path(arg, args.base_dir, visited)
+        if result is None:
+            had_error = True
+            continue
+        all_findings.extend(result)
+
+    for label, lineno, rule, msg in all_findings:
+        print(f"{label}:{lineno}: {rule} {msg}")
+    print(f"handoff-check: {len(args.paths)} path(s), {len(all_findings)} finding(s)")
+    if had_error:
+        return 2
+    return 1 if all_findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
