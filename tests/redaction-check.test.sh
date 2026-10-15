@@ -93,6 +93,30 @@ printf 'literal:acme-fe\n' > "$TMP/mpriv"
 rc="$(run --json --private-patterns "$TMP/mpriv" "$TMP/cm/commented.sh")"
 check "a private name on a '#' comment line is caught (comment lines skip SHAPES only)" "kind 'instance-name:1'"
 
+# --- a test fixture's own SHAPE-matching data is not live rule text (cos decision, 2026-10-14) -----
+# tests/*.test.sh files are exempt from the SHAPE legs only, because a mutation-coverage suite needs
+# the concrete filename/ticket-ref/etc. its assertion reads. The private-name leg must still see every
+# line of a test file — the exemption must never widen into hiding a real instance name. Neither
+# fixture line starts with '#': that would hit the pre-existing per-LINE comment skip and confound it
+# with the new per-FILE exemption being tested here.
+mkdir -p "$TMP/tests"
+printf 'check_blocked "repo/vault.yml" "the gate config"\nassert mcp__gw__deploy_status seen for widget#412\nacme-fe is checked via the private list, not a SHAPE\n' \
+  > "$TMP/tests/sample.test.sh"
+rc="$(run --json "$TMP/tests/sample.test.sh")"
+check "3 SHAPEs in tests/x.test.sh (workflow-filename, ticket-ref, mcp-tool-path) produce no findings" \
+  "grep -q '\"findings\": \[\]' '$TMP/out'"
+rc="$(run --json --private-patterns "$TMP/mpriv" "$TMP/tests/sample.test.sh")"
+check "...while a private-pattern literal in that SAME tests/x.test.sh file is still caught, and ONLY that" \
+  "[ \"\$(grep -c '\"kind\"' '$TMP/out')\" = 1 ] && kind 'instance-name:1'"
+mkdir -p "$TMP/nottests"; cp "$TMP/tests/sample.test.sh" "$TMP/nottests/sample.test.sh"
+rc="$(run --json "$TMP/nottests/sample.test.sh")"
+check "the identical content in a NON-test path is still refused (control: the exemption is path-scoped)" \
+  "[ \"\$(grep -c '\"kind\"' '$TMP/out')\" = 3 ] && kind workflow-filename && kind ticket-ref && kind mcp-tool-path"
+mkdir -p "$TMP/sub/tests"; cp "$TMP/tests/sample.test.sh" "$TMP/sub/tests/nested.test.sh"
+rc="$(run --json "$TMP/sub/tests/nested.test.sh")"
+check "a tests/*.test.sh at any depth (not just repo-root tests/) is exempt the same way" \
+  "grep -q '\"findings\": \[\]' '$TMP/out'"
+
 # --- commit messages (--commits) ---------------------------------------------------
 # Expected values derived by hand from the scratch history and the one-name list (acme-fe):
 #   c1 cites widget#12 and names ci.yml   -> 0  (a message may cite its ticket and the files it changed)

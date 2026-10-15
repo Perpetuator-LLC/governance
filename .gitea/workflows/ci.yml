@@ -64,7 +64,10 @@ jobs:
         run: |
           # The runner executes this under `bash -e`: a bare `cmd; rc=$?` aborts before rc is read.
           set -uo pipefail
-          files=$(git ls-files | grep -vE '^tests/redaction-check\.test\.sh$' | grep -E '\.(md|sh|py|json|ya?ml)$|^bin/|^hooks/')
+          # No special-case exclusion for this checker's own test file: redaction-check itself now
+          # exempts every tests/*.test.sh from the SHAPE legs (fixture data, not live rule text), so
+          # this file is scanned like any other.
+          files=$(git ls-files | grep -E '\.(md|sh|py|json|ya?ml)$|^bin/|^hooks/')
           rc=0; python3 bin/redaction-check --enforce $files || rc=$?
           echo "redaction-check exit $rc (0 clean · 1 findings · 2 cannot run · 3 private leg not checked)"
           case "$rc" in

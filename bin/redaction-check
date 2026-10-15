@@ -14,6 +14,12 @@ SKIPPED and the exit code says so. Do not give CI access to the private list: a 
 requests runs code the author controls, so granting it the list lets any pull request read it. Run the
 full check where the list already lives.
 
+A TEST FIXTURE IS NOT LIVE RULE TEXT. tests/*.test.sh files are exempt from the built-in SHAPE legs
+only (a mutation-coverage suite needs a concrete config filename or ticket reference on the line its
+assertion reads, the same way a known-bad control needs the real shape to prove a gate fires on it). The
+private-name leg still reads every line of every test file: a real instance name is exactly as public
+in a fixture as in prose, and this exemption must never widen into one.
+
 PRIVATE LIST FORMAT: a Markdown note with the patterns in one fence tagged ```redaction-instances, or
 a plain file with one pattern per line. `#` starts a comment; a `literal:` prefix means "a name, not a
 regex" and is escaped. A Markdown file WITHOUT the fence is refused, because prose compiles into
@@ -61,6 +67,14 @@ SHAPE_PATTERNS = [
 # Comment lines, shell-prompt lines and fence markers legitimately carry shapes; a checker that flags
 # its own explanation trains people to ignore it.
 SKIP_LINE = re.compile(r"^\s*(?:#|//)|^\s{4,}[$>]|^\s*```")
+# A test's own FIXTURE data is not live rule text: a mutation-coverage suite asserting "vault.yml is
+# blocked, deploy.yml is not" needs the concrete filename on the line the assertion reads, the same way
+# a known-bad control needs the real shape to prove the gate fires on it. Scoped to tests/*.test.sh only
+# (not every *.sh, not nested subdirectories) — widening it further would exempt hook scripts that
+# ARE live rule text. The private-name leg is NOT part of this exemption: a real instance name is just
+# as public inside a fixture as inside prose, so every line of every file still gets it (the same split
+# SKIP_LINE already makes per line, here made per file instead).
+TEST_FIXTURE_FILE = re.compile(r"(^|/)tests/[^/]+\.test\.sh$")
 # A commit message is a RECORD, not a rule: it cites its ticket (tracing up) and may name a workflow
 # file it changed. Only the shapes that are personal or identifying data apply to it.
 MESSAGE_SHAPES = {"home-path", "contact-address", "registration-id"}
@@ -155,9 +169,10 @@ def scan_lines(name, lines, shapes, private):
 def scan(paths, shapes, private):
     findings, unreadable = [], []
     for path in paths:
+        file_shapes = [] if TEST_FIXTURE_FILE.search(path.replace(os.sep, "/")) else shapes
         try:
             with open(path, encoding="utf-8", errors="ignore") as fh:
-                findings += scan_lines(path, fh, shapes, private)
+                findings += scan_lines(path, fh, file_shapes, private)
         except OSError as e:
             print(f"error: cannot read {path}: {e}", file=sys.stderr)
             unreadable.append(path)
