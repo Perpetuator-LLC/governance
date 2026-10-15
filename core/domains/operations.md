@@ -425,6 +425,27 @@ a standing queue with no owner stalls. The test runs in both directions.
 agreed window it must move the human's queue size and the human round-trips per verified item, or
 it is reversed.
 
+## Exactly one Responsible and one Accountable for every system
+
+**Scope.** This applies wherever work is split across lanes, people or teams, and an ownership table
+(a RACI) says who does what. A single agent working alone has nothing to split.
+
+**Each system or artifact has exactly one R, who does the work, and one A, who answers for the
+outcome.** They may be the same party. Shared responsibility is how work gets missed: each holder
+assumes the other has it, and the gap stays invisible until something fails.
+- **A row with two R's or two A's is invalid, and so is a row with none.** An unowned system fails the
+  same way as a doubly owned one, only sooner. Where the table is machine-readable, **a check refuses
+  such a row** so it cannot merge. Where it is prose, the reviewer refuses it.
+- **R and A name a role, held by one holder at a time.** A rotation (on-call, a seat that hands over)
+  is still one R; the hand-over moves it.
+- **Everyone else is C or I.** A party that is not the R proposes to the R, by a message or by a
+  change on its own branch for the R to take, and never edits the R's copy. The R decides.
+- **Too big for one R? Split the system, not the responsibility:** two parts, two rows, one R each.
+
+**Where it is wrong:** a reviewer or auditor does not share responsibility for the change. They are C
+on it and R for their own verdict. A P0 handled by whoever is present (the exception above) is
+logged to the R afterwards, and the R stays the R.
+
 ## A lane that serves people runs AHEAD of them, not behind them
 
 **Scope:** any agent lane whose people (a team, or clients) need its approvals, reviews, answers,
