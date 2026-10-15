@@ -295,18 +295,27 @@ def self_test():
                                len(r3["unreadable"]) >= 1))
         finally:
             os.chmod(locked, 0o755)
+        # The locked root is EMPTY, so a walk that skipped the unreadable-root guard still exits, for
+        # "no readable .md files". Only the guard's own message counts as the refusal.
         root_locked = tempfile.mkdtemp()
         os.chmod(root_locked, 0o000)
         try:
             fp.iter_markdown(root_locked).__next__()
-            checks.append(("unreadable ROOT refuses", False))
-        except SystemExit:
-            checks.append(("unreadable ROOT refuses", True))
+            refused = False
+        except SystemExit as e:
+            refused = "PRESENT BUT UNREADABLE" in str(e)
         except StopIteration:
-            checks.append(("unreadable ROOT refuses", False))
+            refused = False
         finally:
             os.chmod(root_locked, 0o755)
             os.rmdir(root_locked)
+        if os.geteuid() == 0:
+            # Root reads through 000, so the guard cannot fire here. tests/frontmatter-paths.test.sh
+            # exercises it for every user with an os.access double.
+            skipped.append("unreadable ROOT refuses "
+                           "(running as root: chmod cannot make a path unreadable)")
+        else:
+            checks.append(("unreadable ROOT refuses", refused))
         ok = True
         for name, passed in checks:
             print("  %-62s %s" % (name, "PASS" if passed else "FAIL"))
