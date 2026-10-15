@@ -88,6 +88,55 @@ landed on the consolidator, not the author. Same session: three feature branches
 492-commits-stale duplicates of already-merged work were deleted outright, which was the
 highest-value change of the day and produced zero new code.
 
+## Three roles per change: build, test, refactor
+
+**Every unit of work passes through three roles each session: BUILD writes the code; TEST writes
+tests independently of BUILD, ideally a different agent and a different model, so the tests are not
+the author grading their own work; REFACTOR improves the code while every test stays green.** This is
+the role-separation half of the cycle above (*Simplest thing that works*'s test-fails → code-passes →
+refactor); that rule is about the SEQUENCE of steps, this one is about who performs each step and why
+it must not be the same mind throughout.
+
+**With two or more agents, split the roles across them. With one agent, it performs all three in
+order and labels which role made each commit** — the sequence still holds even when the headcount
+does not, and the label is what lets a later reader tell "the author re-reading their own work" from
+"an independent check" apart, after the fact.
+
+**Why independence matters more than headcount:** a test written by the same mind that wrote the code
+inherits that mind's blind spots. It proves the code does what its author believes it does, not what
+the requirement actually demands — the two differ exactly where the author was wrong, which is the
+one place a self-written test cannot catch it. A different agent, and ideally a different model,
+approaches the same requirement without the author's assumptions already built in; that is what makes
+"the tests pass" mean more than "the author still agrees with themselves."
+
+**Prefer fixed roles with checks and balances over many agents with overlapping authority.** Adding
+agents without separating what each one is accountable for multiplies coordination cost without
+multiplying any actual check: two agents both free to touch build, test and refactor at will is not
+more independent than one agent doing all three badly — it is the same absence of a check, with more
+actors to coordinate around it.
+
+**Name the four ROCK properties alongside SOLID, carried by every change this cycle produces:**
+- **Reversible.** Every change is undoable, with its rollback path named when it ships, not
+  reconstructed under pressure afterward.
+- **Observable.** Behaviour that matters emits a metric, an alert or a receipt; silence is not
+  success — the same absence-as-health trap a checker falls into when firing is mistaken for being
+  right (technical.md → *A checker that FIRES is not a checker that is RIGHT*), pointed at the system
+  under change rather than at the thing that checks it.
+- **Choke-pointed.** Each invariant is enforced at one place, by scope, never by a soft rule a
+  reviewer has to remember to apply (technical.md → *An invariant with more than one SOURCE is
+  answered by ONE choke-point function*).
+- **Known-answer tested.** Tests are scenarios with a hand-derived expected answer, each shown to
+  fail on the bug it guards before it is trusted to catch one — the same two-demonstration proof a
+  new gate owes before anyone acts on its output (technical.md → *A checker that FIRES is not a
+  checker that is RIGHT*), applied to a test as much as to a checker.
+
+**Scope:** a unit of work substantial enough to carry its own risk — a feature, a bug fix, a refactor
+someone could get meaningfully wrong. **Where it is wrong:** a one-line config change or an emergency
+revert does not need three roles and a rollback plan written in advance; the fix IS the rollback, and
+routing it through a build/test/refactor cycle delays the response the emergency exists to need. The
+discriminator is whether getting it wrong costs more than the ceremony: when it does, the roles pay
+for themselves before the session ends; when it does not, skip them and say why.
+
 ## AVAILABILITY is a selection column, not a footnote
 
 **"Can we actually get this hardware on the day we need it?" ranks beside price and specs — a
