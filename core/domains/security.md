@@ -285,8 +285,9 @@ exists in ANY store, the human's command reads it from that store (`"$(store get
 Only a value that exists nowhere yet is typed, and then into a **silent prompt** (`read -rs`),
 never argv. A ceremony that PRINTS a secret is worse than one that asks for it.
 
-- **Probe credential files with `grep -c` / `grep -o`, never whole** — you need to know a key is
-  present and well-shaped, not what it is.
+- **Probe credential files with `grep -c` / `grep -q`, never `grep -o` and never whole** — `-o`
+  prints the matched text, which is the secret itself the moment a shape regex matches it; you need
+  to know a key is present and well-shaped, not what it is.
 - **Never grep FOR a secret — search by SHAPE.** A literal search puts the value in your own
   command line and your own history, which is the disclosure you were checking for.
 - **The clipboard is not a secret channel: no `pbpaste`, `pbcopy`, `xclip` or `wl-paste` in a command
@@ -335,10 +336,22 @@ never argv. A ceremony that PRINTS a secret is worse than one that asks for it.
 ⚠️ **CODE that prints a secret — and the day its output gains a reader.** The rules above bind what an
 agent does and the commands it hands a human; they say nothing about **code that prints a secret at
 runtime**, and the exposure that matters is usually created by a change that prints nothing new.
-1. **Automation reports a secret's PRESENCE, never its value or any part of it.** Print
-   `present / missing`, a length, or a verification result. A masked prefix-and-suffix is still a
-   fragment. A step that holds a raw value suppresses its own output (for example a task-level
-   no-log flag), because verbose modes and failure dumps print task results.
+1. **A probe of a secret-bearing value — automation's own output, or an agent's ad-hoc command while
+   diagnosing — prints only its length, counts of character classes, and the truth of named
+   predicates (`starts with "Bearer "`: true/false). It never prints a substring: not a scheme, not a
+   prefix, not a suffix, even when you believe you know the format.** Whether a value is
+   secret-bearing is decided by **where it came from**, never by what you expect it to look like: a
+   probe written for the expected format leaks under any other format, which is exactly the format
+   you are probing because you do not know it. A masked prefix-and-suffix is still a fragment. A step
+   that holds a raw value suppresses its own output (a task-level no-log flag), because verbose modes
+   and failure dumps print task results.
+   **Scope:** any value secret-bearing by source — a secret store, a credential file, an auth header,
+   a helper that emits one, a token env var. **Where it is wrong:** a value that is not secret-bearing
+   by source (a URL host, a public-key fingerprint, a non-credential config field) may be printed
+   freely; this rule is keyed to source, never to format, so it never reaches a value merely because
+   it sits near a credential. Its mirror — printing the *whole* value — is already forbidden; a
+   boolean, a length or a class count is the floor this rule allows, nothing closer to the value than
+   that.
 2. **Widening who can read an output is a secret-exposure change.** Terminal → file → agent-read
    file → transcript → export → backup: each step outlives and out-reaches the one before. The change
    that widens a channel must, **in the same change**, audit every producer that writes to it and add
