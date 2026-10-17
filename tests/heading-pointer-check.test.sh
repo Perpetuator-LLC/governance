@@ -43,6 +43,19 @@ check "known-BAD: names file, line and target" "grep -q 'dead.md:1' '$TMP/out' &
 rc="$(run --root "$TMP/r" "$TMP/r/docs/nodoc.md")"
 check "a pointer to a doc that does not exist fails" "[ '$rc' = '1' ] && grep -q 'NO-SUCH-DOC' '$TMP/out'"
 
+# governance#251: the pointer's OWN `doc.md → *target*` syntax wrapping across a line — not the
+# target's prose in the body doc, which the good.md case above already covers — used to vanish from
+# the scan entirely: FORM_A's `[^*\n]` stops at the newline, so a wrapped pointer matched nothing and
+# was never even counted as dangling. Resolved: exit 0, found, not silently invisible.
+cat > "$TMP/r/docs/wrapped.md" <<'DOC'
+See `ops.md` → *bold sub-rule that is
+wrapped across a line*.
+DOC
+rc="$(run --root "$TMP/r" "$TMP/r/docs/wrapped.md")"
+check "governance#251: a pointer wrapped across a line is still found, not invisible (exit 0)" "[ '$rc' = '0' ]"
+check "governance#251: …and it is the wrapped target that resolved, not a false positive" \
+  "grep -q '1 pointer(s), 0 dangling' '$TMP/out'"
+
 rc="$(run --root "$TMP/r" "$TMP/r/docs/none.md")"
 check "an EMPTY scan refuses (exit 2), never reads as clean" "[ '$rc' = '2' ]"
 
