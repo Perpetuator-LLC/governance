@@ -137,29 +137,6 @@ routing it through a build/test/refactor cycle delays the response the emergency
 discriminator is whether getting it wrong costs more than the ceremony: when it does, the roles pay
 for themselves before the session ends; when it does not, skip them and say why.
 
-### An independent verify gate mirrors every BLOCKING CI job, or names what it did not run
-
-**When a reviewer's PASS lets a change move toward merge before CI has run on it (it gets folded,
-stacked or claimed on the strength of the verdict), the reviewer's gate runs every job CI will block
-on, not only lint, tests and mutants.** That always includes the secret scanner, and it includes the
-dependency and image scanners whenever dependencies or the build file change. A blocking job the
-reviewer cannot run goes into the verdict as **not run**, by name. Leaving it out turns a partial
-check into a full PASS by omission.
-
-**Why:** a verdict is trusted in proportion to what it claims, and readers read PASS as "CI will
-agree". A gate that skips a blocking job hands its consumer a failure it has already certified as
-clean. The failure surfaces one step later, at the integrator, and costs a send-back cycle plus a
-corrected verdict. Security scanners are the jobs most often skipped, because they are not part of the
-build-and-test loop a reviewer runs by habit. They are also the jobs whose findings matter most.
-
-**Scope:** this applies where a review verdict stands in for CI on the reviewer's own copy. **Where it
-is wrong:** when CI itself runs on the exact commit before anything consumes the verdict, the verdict
-may defer to CI and say so. Advisory (non-blocking) jobs need not be mirrored.
-
-**The mirror:** mirroring every job but running it over the wrong range is the same miss. Scanning
-the whole repository, or only the tip, instead of the change's own commit range, with the repository's
-own scanner configuration, can pass a finding the change introduced, or fail on one it did not.
-
 ## AVAILABILITY is a selection column, not a footnote
 
 **"Can we actually get this hardware on the day we need it?" ranks beside price and specs — a
@@ -1254,6 +1231,19 @@ someone ran the workflow's steps by hand.
   entry point holds exactly CI's steps.
 - **A step CI cannot run either** (it needs a secret CI does not hold) stays out of the entry point.
   Listed there, it makes every local run look worse than CI and teaches readers to ignore NOT RUN.
+- **The same holds for a reviewer's PASS that is consumed before CI runs** (the change is folded,
+  stacked or claimed on the verdict's strength): the reviewer's gate is a stand-in too, so it runs every
+  step CI blocks on, not only lint, tests and mutants, or names each one NOT RUN. Readers read PASS as
+  "CI will agree"; a skipped blocking step hands the integrator a failure already certified clean.
+  **Where it is wrong:** CI runs on the exact commit before anything consumes the verdict; the verdict
+  may then defer to CI and say so.
+- **The security steps are the ones most often skipped**, because they sit outside the build-and-test
+  loop a reviewer runs by habit: the secret scanner always, and the dependency and image scanners
+  whenever dependencies or the build file change.
+- **Running the right step over the wrong input is the same miss.** Scan the change's own commit range,
+  not the whole repository or only the tip, with the repository's own scanner configuration and the
+  scanner version CI pins. A different range, config or version can pass a finding the change
+  introduced, or fail on one it did not.
 
 **A green that queries a live feed ages.** Gates that consult an external, changing source — a
 dependency or vulnerability audit, a licence database — can pass and then fail on the same commit
