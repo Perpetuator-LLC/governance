@@ -46,6 +46,19 @@ someone ran the workflow's steps by hand.
   entry point holds exactly CI's steps.
 - **A step CI cannot run either** (it needs a secret CI does not hold) stays out of the entry point.
   Listed there, it makes every local run look worse than CI and teaches readers to ignore NOT RUN.
+- **The same holds for a reviewer's PASS that is consumed before CI runs** (the change is folded,
+  stacked or claimed on the verdict's strength): the reviewer's gate is a stand-in too, so it runs every
+  step CI blocks on, not only lint, tests and mutants, or names each one NOT RUN. Readers read PASS as
+  "CI will agree"; a skipped blocking step hands the integrator a failure already certified clean.
+  **Where it is wrong:** CI runs on the exact commit before anything consumes the verdict; the verdict
+  may then defer to CI and say so.
+- **The security steps are the ones most often skipped**, because they sit outside the build-and-test
+  loop a reviewer runs by habit: the secret scanner always, and the dependency and image scanners
+  whenever dependencies or the build file change.
+- **Running the right step over the wrong input is the same miss.** Scan the change's own commit range,
+  not the whole repository or only the tip, with the repository's own scanner configuration and the
+  scanner version CI pins. A different range, config or version can pass a finding the change
+  introduced, or fail on one it did not.
 
 **A green that queries a live feed ages.** Gates that consult an external, changing source — a
 dependency or vulnerability audit, a licence database — can pass and then fail on the same commit
