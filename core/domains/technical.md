@@ -3078,23 +3078,15 @@ person. **Where it is wrong:** config the tool finds by walking upward from each
 when the root moves, and deleting it breaks the nested case. Establish which resolution the tool uses
 first; guessing fails silently one way and loudly the other.
 
-## A linter's config comes from where the PROCESS started, not from the file it was handed
-
-**A tool that walks upward for its configuration starts that walk at the invoking shell's working
-directory, not at the target file's own location.** Run it from a sub-project directory and it
-silently adopts that sub-project's config for a file outside it — the same file, the same tool
-version, a different verdict depending on where the command was typed. A check that passes in CI and
-fails locally, or the reverse, is this, before it is a flake.
-
-**So: report a lint or format verdict alongside the directory it ran from, and run a check that must
-match CI from the same directory CI uses.** Where the tool offers it, ask it to print its resolved
-configuration (`--show-settings` or equivalent) rather than inferring which file it picked up.
-
-**Scope:** config-discovery tools that search upward from the cwd — most Python, JS and Go
-linters/formatters. **Where it is wrong:** a tool given an explicit `--config` path is unaffected, and
-this is not a claim that every tool resolves configuration this way. The mirror also matters: a
-verdict that differs between two files in the *same* directory is about the files, not the cwd, and
-chasing the invocation directory there sends the reader down the wrong axis entirely.
+**Resolution happens one of three ways — from the invoking shell's cwd, from the tool's declared input
+root, or per file by walking upward from the target — and the tool's own *effective* setting is the
+evidence, never the config path it prints as resolved.** Measured: ruff 0.11.12, `sub/pyproject.toml`
+at line-length 200 and the root `pyproject.toml` at line-length 60, run from `sub/` against a file
+outside it, applied **60** — the config nearest the FILE — while its own `--show-settings` named
+`sub/`'s file as the "Settings path" used, which was not the config actually applied. **The mirror:**
+the same tool, the same file, run from two different directories gave the *same* verdict both times —
+for a per-file walker, the invocation directory was never the variable, so a CI/local mismatch is not
+explained by the working directory until the tool's actual resolution mode has been checked.
 
 ## A process-memory probe names its field, and a process-name bucket is never truncated
 
