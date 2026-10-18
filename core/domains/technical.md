@@ -1822,6 +1822,31 @@ your mistakes.
 Same principle as *a probe that cannot distinguish the thing from a REFERENCE to it, or its own
 FAILURE from a negative, is not evidence* — one layer down, in the suite rather than the probe.
 
+## A test double's input matcher is exercised only by the inputs the product happens to send
+
+**Loosening the matcher INSIDE a stub or fake cannot be caught by the suite, because the product only
+ever sends the inputs it sends.** A double whose matching logic has drifted wide — a prefix match where
+an exact key was intended, a type coercion that accepts a near-miss — passes every existing assertion,
+because none of them was ever going to send the input that would expose the drift. The suite proves
+the product behaves correctly against the double; it proves nothing about whether the double still
+behaves like the thing it replaced.
+
+**So: mutation-test the DOUBLE, not only the product.** Change the double's own matching pattern and
+require a test to go red. A double is a second implementation of "how the real collaborator decides
+what to respond to," and a second implementation with no check on it drifts exactly like any other
+code with no check on it — except a passing suite is the one place nobody looks for the drift, since
+a passing suite is supposed to mean nothing is wrong.
+
+**Measured:** a stub's case label looked exact by eye. Because the product queries only its own exact
+key, a prefix-matching mutant introduced into the stub passed every existing assertion untouched — a
+false green, caught only by mutating the stub by hand and watching nothing fail.
+
+**Scope:** suites that assert behaviour through a hand-written double (a stub script, a fake server, an
+in-memory adapter) whose matching logic is part of the test fixture rather than the product under test.
+**Where it is wrong:** a double generated from a captured real response, whose matcher is the recorded
+request, is not helped by hand-mutating it — that tests the recorder, not the suite. There the control
+belongs on the capture step: re-capture and require a diff against the previous recording.
+
 ## A fixture built from a permission check depends on WHO RUNS IT
 
 **Scope:** a test makes its condition out of the operating system's access control (a `chmod 000`
@@ -3494,3 +3519,73 @@ not that the references are identical.
 above code that reads `refs/remotes/origin/<default>`. The comment and the code contradict each
 other, and the comment is the one that gets believed, because it is the one written in the language
 of the thing the reader wanted to be true.
+
+## An automation that ACTS on a git ref reads that ref from the forge, never from a local tree
+
+**The rule above is about reading: measuring against the forge instead of a stale local pointer. The
+same rule applies again, harder, when a tool does not merely read a ref but DECIDES TO ACT on its
+presence** — cut a release, start a deploy, promote a build. A tag or branch that exists only in a
+local checkout has passed no review and been published to nobody, yet a working-tree read makes it
+indistinguishable from one the team agreed on.
+
+**Scope:** automation whose trigger condition is a ref's existence, in a repository where publishing a
+ref is itself the act of agreement (a push, a merge). **Where it is wrong:** a pre-push or pre-commit
+hook, and any tool whose entire job is to inspect uncommitted or unpushed local state, must read the
+working tree — reading the remote there measures the wrong thing entirely. The boundary is whether the
+local state is the SUBJECT of the check or merely its TRIGGER for acting on something else.
+
+## Verify-then-reopen is a time-of-check gap: the bytes verified must be the bytes used
+
+**A check that hashes or validates a file by path, then REOPENS that same path to execute, load or
+trust it, has verified a different object than the one it goes on to use.** Between the verifying read
+and the later read, the path is just a name; anything with write access to it can replace what sits
+behind it, and the second open has no way to know the two reads disagree.
+
+**So: hold the opened handle across both the check and the use, or verify the content already read
+into memory — never re-resolve the path a second time to get the thing you already proved safe once.**
+
+**Scope:** any "only verified artifacts run" promise where the verifier and the consumer each resolve
+the same path independently. It is a correctness rule wherever the filesystem is shared or writable by
+another process, and a security rule wherever an attacker can write that path between the two reads.
+**Where it is wrong:** on a read-only mount, or in a directory only the verifying process can write,
+re-opening is harmless and holding a handle open across the gap may be the worse design (file-descriptor
+pressure, a lock held longer than it needs to be). State the writability assumption the rule depends on,
+rather than applying it by reflex.
+
+## A working copy with no dependency environment of its own silently borrows another's
+
+**When several checkouts of one project share a machine, a checkout whose dependency environment is
+absent does not fail — the toolchain's own interpreter-discovery falls back to another environment
+found on the path, so gates run against versions that checkout never declared.** Nothing announces the
+substitution; the gate reports green or red as if it had run against what the checkout actually pins.
+
+**So: a checkout that runs gates installs its own locked environment first, and the gate reports which
+environment it used** — the interpreter path and the dependency lockfile's own identity, not just a
+pass/fail.
+
+**Scope:** per-project (not per-system) dependency managers with an interpreter-discovery fallback —
+virtualenv-style Python, per-directory Node, per-checkout Ruby — in setups with multiple working copies,
+worktrees or container mounts of the same repository. **Where it is wrong:** where the dependency set
+is deliberately global and single-versioned (a system package manager, a monorepo with one toolchain
+pinned at the root), demanding a per-checkout environment adds drift rather than removing it. The rule
+targets SILENT substitution, not shared environments as such.
+
+## A requirement naming distinct REQUIRED CATEGORIES is never satisfied by a count
+
+**When a rule says "A and B" — two independent legs, locations, approvers, signals — a check that
+counts items satisfies it falsely the moment two items land in one category.** "At least two copies"
+and "one copy in each of two places" are different requirements, and a count-based check cannot tell
+them apart: it reports healthy the moment the number is reached, whichever category supplied it.
+
+**So: the check asserts ONE PER NAMED CATEGORY, and its known-answer test is the case with N items and
+a missing category** — not just the case with too few items overall, which a count-based check would
+also catch and which therefore proves nothing about this specific bug.
+
+**Measured:** a durability rule stated as "one copy in object storage AND one off-site" was implemented
+as a bare copy count, so a file with two copies in one store and none off-site was reported healthy.
+
+**Scope:** any invariant whose statement enumerates categories — redundancy across distinct failure
+domains, two-party approval from distinct roles, corroboration from independent sources. **Where it is
+wrong:** where the requirement genuinely is a quantity ("at least three replicas," "any two of five"),
+per-category assertion over-constrains and refuses valid states. The tell is whether the written rule
+names the categories or only the number.
