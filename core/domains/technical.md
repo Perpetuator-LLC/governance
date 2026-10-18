@@ -3078,6 +3078,64 @@ person. **Where it is wrong:** config the tool finds by walking upward from each
 when the root moves, and deleting it breaks the nested case. Establish which resolution the tool uses
 first; guessing fails silently one way and loudly the other.
 
+## A linter's config comes from where the PROCESS started, not from the file it was handed
+
+**A tool that walks upward for its configuration starts that walk at the invoking shell's working
+directory, not at the target file's own location.** Run it from a sub-project directory and it
+silently adopts that sub-project's config for a file outside it — the same file, the same tool
+version, a different verdict depending on where the command was typed. A check that passes in CI and
+fails locally, or the reverse, is this, before it is a flake.
+
+**So: report a lint or format verdict alongside the directory it ran from, and run a check that must
+match CI from the same directory CI uses.** Where the tool offers it, ask it to print its resolved
+configuration (`--show-settings` or equivalent) rather than inferring which file it picked up.
+
+**Scope:** config-discovery tools that search upward from the cwd — most Python, JS and Go
+linters/formatters. **Where it is wrong:** a tool given an explicit `--config` path is unaffected, and
+this is not a claim that every tool resolves configuration this way. The mirror also matters: a
+verdict that differs between two files in the *same* directory is about the files, not the cwd, and
+chasing the invocation directory there sends the reader down the wrong axis entirely.
+
+## A process-memory probe names its field, and a process-name bucket is never truncated
+
+**Resident-set size is not the OS's own physical-footprint accounting, and the gap between them can be
+several-fold for a process fronting a virtual machine or a helper subsystem.** A monitoring probe that
+reports "memory" without naming which field it read is unfalsifiable — two probes on the same host can
+disagree while both are technically right.
+
+A second, unrelated way the same class of probe lies: a process listing that truncates the command
+name to a fixed width (16 characters is a common default) buckets several distinct processes under one
+label. Join against the untruncated name before bucketing, and give a process that exits mid-join its
+own bucket rather than silently dropping it.
+
+**So: a memory probe states which field it read, and a bucketing probe states how it obtained the
+untruncated name.** **Scope:** host-level process accounting whose number feeds an alert or a capacity
+decision. **Where it is wrong:** a rough "is it huge" eyeball check needs neither — either field
+answers that question well enough, and naming the field is overhead with nothing downstream to use it.
+Comparing one process against *itself* over time is also an exception: one field applied consistently
+beats switching to a "more correct" one mid-series, since changing the field is itself a break in the
+series — this rule names which field to report, never licenses re-basing a live trend.
+
+## A lock held across the action is held across the action's own verification too
+
+**Do-then-verify means the actor checks its own work; when the action is guarded by a mutex and the
+verification path re-enters the same guard, the verify step waits on a lock the actor is still
+holding.** The symptom shows up at the last step, so the diagnosis lands on the verification rather
+than on the lock — and the action itself usually did succeed, which makes the wrong diagnosis
+comfortable to accept.
+
+**So: when an operation holds a lock, its verification either runs inside the same critical section or
+runs after the lock is released — never as a fresh acquisition of the same guard.** A self-verifying
+script with a mutex is exercised by exactly one run: the one where the mutex is held throughout.
+
+**Scope:** non-reentrant, process-level guards — lock files, single-flight directories, advisory file
+locks. **Where it is wrong:** a reentrant lock held by the same thread is exempt, and so is a
+verification that reads a separate durable surface (a log, an API) rather than re-entering the guarded
+resource. The mirror matters too: releasing the lock *before* verifying lets a competing writer land
+between the action and the check, so the verification then describes someone else's state — where that
+race matters, checking inside the critical section is correct and "release first" is the bug. The rule
+permits both placements and forbids only the third, a fresh acquisition of the same non-reentrant lock.
+
 ## A price or cost table in code goes stale silently, then reports confident wrong money
 
 **An estimate of money, quota or capacity embedded as constants needs a source of truth before it
@@ -3242,6 +3300,26 @@ harvest when it is not. On a long extraction you should expect to meet several o
   total is what catches silently-missing rows; without it, an export that skipped a whole class of
   items still looks finished.
 - **A tool-call timeout does not mean the work stopped.** Poll the store; do not restart the loop.
+
+## Any long unattended run checkpoints per unit of work and resumes by difference
+
+**The browser-harvest rule above is the specific case of a general one: a run expected to exceed a few
+minutes writes a durable record per completed unit, and on restart computes what is left as the
+difference between the plan and what is recorded.** The fragile part varies — a browser session, a
+host under memory pressure, a scheduler slot, an upstream rate limit — but a run whose only write is
+its final one loses everything to whichever fragile part gives out first. One measured case lost
+2 h 37 m of work this way.
+
+A timeout then stops being a lost run and becomes a resumable one, and progress is readable while the
+run is still going — the same property that makes the browser-harvest rule work, generalised past
+browsers.
+
+**Scope:** runs whose units are independent and whose partial output is useful. **Where it is wrong:**
+an operation that must be atomic — a transaction, a migration, a signing ceremony — is the opposite
+case: a half-written result there is worse than no result, and the correct shape is all-or-nothing
+with a clean abort, never a checkpoint. A short run (seconds) with expensive per-unit persistence is
+also an exception: the test is the ratio between the checkpoint's cost and the re-run it would save,
+not the ambition of the run.
 
 ## Reading a file at a ref must not WRITE the working tree
 
