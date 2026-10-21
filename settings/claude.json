@@ -56,6 +56,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/handoff-layout-gate.py",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
