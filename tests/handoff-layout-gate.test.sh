@@ -36,6 +36,10 @@ for k in a b c; do bao kv put secret/x/\$k v=1; done
 ${F}"
 
 check "exhibit (bare for-loop, 2026-10-20) is refused"       1 "R1" "$EXHIBIT"
+check "a console fence is a shell block too (refused without layout)" 1 "R1" "Run this:
+${F}console
+for k in a b; do echo \$k; done
+${F}"
 check "correct layout passes"                                0 "ok" "$GOOD"
 check "no shell block at all: nothing to check"              0 "ok" "## Notes
 plain text, and a ${F}python
