@@ -193,6 +193,46 @@ open('$ADAPTER2/seed/map.md', 'w').writelines(lines[:-1])
 rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme)"
 check "…and reverting the finding lets the render succeed again (the control)" "[ '$rc' = '0' ]"
 
+# --- cos findings on r3 (real render on the render host), item 1: bundle.json's `sources` must be
+# host-independent (label · relpath, never the render host's absolute filesystem path, which would
+# bake a home directory — and on macOS, the account name inside it — into a file that ships to
+# clients), and item "cover bundle.json too": the redaction scan must actually read bundle.json, not
+# silently skip it as a non-Markdown file inside a directory argument.
+BJ2="$SEED2/$H2/bundle.json"
+check "r4 item 1: bundle.json's sources are label-keyed, never the render host's absolute path" \
+  "! grep -q \"$TMP\" '$BJ2' && ! grep -qE '\"/[A-Za-z]' '$BJ2'"
+
+SEED3="$TMP/seed3-elsewhere"; CORE3="$TMP/elsewhere/core3"; ADAPTER3="$TMP/elsewhere/adapter3"
+mkdir -p "$(dirname "$CORE3")"
+cp -r "$CORE2" "$CORE3"
+cp -r "$ADAPTER2" "$ADAPTER3"
+# instructions-core.md was restored to its original content above; this copy carries that, not the
+# over-budget or redaction-tainted intermediate states.
+rc="$(gov render --target seed --out "$SEED3" --core "$CORE3" --adapter "$ADAPTER3" --engagement acme)"
+check "r4 KAT: rendering the SAME content from a DIFFERENT directory location exits 0" "[ '$rc' = '0' ]"
+H3="$(bundle_dirs "$SEED3")"
+check "r4 KAT: …and lands at the SAME content-addressed hash as the original location" "[ \"\$H3\" = \"\$H2\" ]"
+check "r4 KAT: …and bundle.json is IDENTICAL across the two locations (sources/files/hash/engagements — rendered_at excepted, which always varies by invocation time on any single host too)" \
+  "python3 -c \"
+import json
+a = json.load(open('$BJ2'))
+b = json.load(open('$SEED3/\$H3/bundle.json'))
+for k in ('bundle_hash', 'engagements', 'files', 'sources'):
+    assert a[k] == b[k], (k, a[k], b[k])
+\""
+
+# r4 KAT: bundle.json is now actually scanned, proven by a shape that reaches it through a path NO
+# OTHER bundle file carries: an --engagement name with no matching engagements/<name>/ directory in
+# the adapter at all (confirmed below). seed_layers() and seed_source_layers() both guard every
+# inclusion on the directory/file actually existing (already proven by the earlier "does NOT carry
+# the OUT-OF-SET engagement's row" checks), so governance.md and map.md cannot contain this name —
+# only bundle.json's own `"engagements": [...]` list does, generated regardless of whether anything
+# on disk matches it. A refusal here is therefore bundle.json being read, not any other file.
+check "r4 setup: no engagements/proj#99 directory exists in the fixture" "[ ! -d '$ADAPTER2/engagements/proj#99' ]"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement 'proj#99')"
+check "r4 KAT: an engagement name shaped like a ticket-ref, with no matching directory, is still caught (exit 2)" \
+  "[ '$rc' = '2' ] && grep -qi 'redaction-check found' '$TMP/stderr'"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
