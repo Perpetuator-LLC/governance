@@ -97,6 +97,17 @@ done
 check_allowed "app/.ENV.EXAMPLE" "a template stays allowed in any case"
 check_allowed "app/Environment.md" "a file merely containing 'Env' is not an env file, in any case"
 
+echo " · Windows backslash paths (#288): every directory rule matches them too"
+# Written JSON-escaped (\\) because payload() drops the path into a JSON string; the gate sees one
+# backslash per separator, as a Windows harness sends it. Each name below is caught ONLY by a directory
+# rule, so a gate that matches `/` alone lets it through.
+for p in 'C:\\Users\\x\\.ssh\\authorized_keys' 'C:\\Users\\x\\.aws\\config' 'C:\\Users\\x\\.gcloud\\adc.json' \
+         'C:\\Users\\x\\.gnupg\\pubring.kbx' 'C:\\Users\\x\\.docker\\config.json' 'C:\\Users\\x\\.kube\\config'; do
+  check_blocked "$p" "backslash path $p"
+done
+check_allowed 'C:\\Users\\x\\project\\README.md' "an ordinary backslash path"
+check_allowed 'C:\\Users\\x\\docker\\config.json' "docker\\config.json outside a dot-directory (as with /)"
+
 echo " · controls: ordinary files are never blocked"
 check_allowed "app/README.md" "an ordinary markdown file"
 check_allowed "app/src/main.py" "an ordinary source file"

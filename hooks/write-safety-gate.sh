@@ -67,6 +67,10 @@ if [[ -z "$input" && -z "${CLAUDE_TOOL_INPUT:-}" ]]; then
 fi
 path=$(tool_field "$input" .tool_input.file_path .tool_input.path .toolInput.file_path .toolInput.path)
 [[ -z "$path" && -n "${CLAUDE_TOOL_INPUT:-}" ]] && path=$(tool_field "$CLAUDE_TOOL_INPUT" .file_path .path)
+# A harness on Windows passes native paths (`C:\Users\x\.ssh\config`). Every directory rule below
+# matches `/`, so a backslash path slipped past `.ssh/`, `.aws/`, `.gnupg/`, `.kube/config` and the
+# rest (#288). Match on one separator: backslashes become slashes before any rule reads the path.
+path=${path//\\//}
 tool=$(tool_field "$input" .tool_name .toolName)   # once, for deny()'s event
 
 if [[ -z "$path" ]]; then
