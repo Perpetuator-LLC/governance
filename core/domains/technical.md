@@ -190,6 +190,24 @@ this*. Read the refusal as a routing signal before you report it upward as a blo
 the command/script instead. Verification counts as interaction — "check how many rows are expired" is
 a management command, not a paste-block of SQL. Ad-hoc commands are for read-only diagnosis only.
 
+## An upgrade is a redeploy that runs without your change
+
+**When you change how a vendor component behaves — a config it regenerates at start, a file inside
+its image, an option its own installer rewrites — the change has two homes: the deploy code that
+applies it, and a PROBE that asserts the behaviour and runs after every upgrade or redeploy.** Without
+the probe, an upgrade that resets the file shows up as nothing at all: the component still works, only
+differently, so nothing alerts. IaC-first, followed correctly, does not close this gap by itself — a
+one-shot apply and an image upgrade that silently resets a file both evade IaC written exactly as the
+rule above asks, because IaC with no drift probe cannot tell "still configured" from "quietly
+reverted."
+
+**Scope:** a behaviour layered on top of a vendor default, where the vendor does not itself promise to
+preserve it across versions. **Where it is wrong:** a setting the vendor exposes as supported
+configuration, and itself preserves across upgrades, needs only the deploy code — there is nothing
+drifting to probe for. And where the change can be dropped in favour of a mechanism the vendor
+supports natively, prefer that over adding a probe: a probe is the ongoing cost of keeping a patch,
+and the cheapest one to run is the one the removed patch no longer needs.
+
 ## A done-when names the COMMITTED SURFACE that takes its receipt
 
 **IaC-first's constructive half.** IaC-first says *don't verify by hand-poking prod*. Stated alone,
