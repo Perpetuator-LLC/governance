@@ -48,7 +48,7 @@ DOC
 SEED="$TMP/seed"
 CORE="$TMP/core"; ADAPTER="$TMP/adapter"
 
-rc="$(gov render --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme)"
+rc="$(gov render --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme --audience public)"
 check "render exits 0" "[ '$rc' = '0' ]"
 H_ACME="$(bundle_dirs "$SEED")"
 # BSD wc -l right-pads its count ("       1"), so a bare `wc -l` compared with `=` to '1' is false on
@@ -64,7 +64,7 @@ check "map.md, README and prompts are present as their own bundle files" \
 check "bundle.json names the engagement set, sorted, and nothing else" \
   "python3 -c \"import json; d=json.load(open('$SEED/$H_ACME/bundle.json')); assert d['engagements']==['acme'], d['engagements']\""
 
-rc="$(gov render --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement other)"
+rc="$(gov render --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement other --audience public)"
 check "a DIFFERENT engagement set renders without error" "[ '$rc' = '0' ]"
 H_OTHER="$(bundle_dirs "$SEED" | grep -v "^$H_ACME\$")"
 check "KAT: a different engagement set hashes DIFFERENTLY (new directory, not reused)" \
@@ -72,13 +72,13 @@ check "KAT: a different engagement set hashes DIFFERENTLY (new directory, not re
 check "…and the other bundle carries ITS canary, not acme's" \
   "grep -q 'CANARY-OTHER' '$SEED/$H_OTHER/governance.md' && ! grep -q 'CANARY-ACME' '$SEED/$H_OTHER/governance.md'"
 
-rc="$(gov render --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme)"
+rc="$(gov render --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme --audience public)"
 N_DIRS_BEFORE=2
 N_DIRS_AFTER="$(bundle_dirs "$SEED" | wc -l | tr -d ' ')"
 check "KAT: re-rendering the SAME engagement set with unchanged layers reuses the same hash (no 3rd dir)" \
   "[ \"\$N_DIRS_AFTER\" = \"\$N_DIRS_BEFORE\" ]"
 
-rc="$(gov render --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER")"
+rc="$(gov render --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --audience public)"
 H_EMPTY="$(bundle_dirs "$SEED" | grep -v -e "^$H_ACME\$" -e "^$H_OTHER\$")"
 check "an EMPTY engagement set renders org-wide content only" "[ -n \"\$H_EMPTY\" ]"
 check "…with NEITHER engagement's canary present" \
@@ -92,11 +92,11 @@ check "…and NEVER leaks engagements/ content into a plain render (the reserved
   "! grep -q 'CANARY-ACME' '$TMP/plain.md' && ! grep -q 'CANARY-OTHER' '$TMP/plain.md'"
 check "…while still carrying the adapter's org-wide rule" "grep -q 'Org-wide rule' '$TMP/plain.md'"
 
-rc="$(gov check --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme)"
+rc="$(gov check --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme --audience public)"
 check "check --target seed: in sync right after render (exit 0)" "[ '$rc' = '0' ] && grep -q 'in sync' '$TMP/stdout'"
 
 echo "extra line" >> "$ADAPTER/AGENTS.md"
-rc="$(gov check --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme)"
+rc="$(gov check --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme --audience public)"
 check "KAT: check --target seed flags a STALE bundle after a source changes (exit 1, LAYERS CHANGED)" \
   "[ '$rc' = '1' ] && grep -q 'LAYERS CHANGED' '$TMP/stdout'"
 # control: reverting the mutation clears the staleness, proving the check is live and not a fixed
@@ -109,13 +109,13 @@ with open(p) as fh:
 with open(p, 'w') as fh:
     fh.writelines(lines[:-1])
 "
-rc="$(gov check --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme)"
+rc="$(gov check --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme --audience public)"
 check "…and reverting the source clears the staleness (exit 0 again, the control)" "[ '$rc' = '0' ]"
 
-rc="$(gov render --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme --local "$TMP/core/AGENTS.md")"
+rc="$(gov render --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme --local "$TMP/core/AGENTS.md" --audience public)"
 check "--local is refused for --target seed (LOCAL never leaves the machine), not silently dropped" "[ '$rc' = '2' ]"
 
-rc="$(gov render --target seed --out "$SEED" --core "$TMP/no-such-core" --adapter "$ADAPTER" --engagement acme)"
+rc="$(gov render --target seed --out "$SEED" --core "$TMP/no-such-core" --adapter "$ADAPTER" --engagement acme --audience public)"
 check "a missing core/adapter path refuses (exit 2), same as an ordinary render" "[ '$rc' = '2' ]"
 
 # --- CTA send-back c104640, items 2-5: map.md is an authored map, not provenance; canary coverage
@@ -153,7 +153,7 @@ cat > "$ADAPTER2/engagements/acme/prompts/boot.md" <<'DOC'
 PROMPT-ACME-CANARY
 DOC
 
-rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme)"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme --audience public)"
 check "item 2/5: render with seed/ sources and no secret shapes exits 0 (redaction-clean)" "[ '$rc' = '0' ]"
 H2="$(bundle_dirs "$SEED2")"
 
@@ -172,7 +172,7 @@ check "item 4: instructions-core.md is well under its 1 KB budget" \
 
 # item 4 KAT: an over-budget instructions-core.md REFUSES the render rather than shipping it anyway.
 python3 -c "open('$ADAPTER2/seed/instructions-core.md', 'w').write('x' * 2000)"
-rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme)"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme --audience public)"
 check "item 4 KAT: an over-budget instructions-core.md is REFUSED (exit 2), not truncated or shipped" \
   "[ '$rc' = '2' ] && grep -qi 'budget' '$TMP/stderr'"
 python3 -c "open('$ADAPTER2/seed/instructions-core.md', 'w').write('INSTR-CORE-OK\n')"  # restore
@@ -181,7 +181,7 @@ python3 -c "open('$ADAPTER2/seed/instructions-core.md', 'w').write('INSTR-CORE-O
 # ticket-reference shape (bin/redaction-check's own SHAPE_PATTERNS) is enough to trigger it and
 # needs no real secret.
 echo "see acme#42 for details" >> "$ADAPTER2/seed/map.md"
-rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme)"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme --audience public)"
 check "item 5 KAT: a redaction finding in the rendered bundle REFUSES the render (exit 2)" \
   "[ '$rc' = '2' ] && grep -qi 'redaction-check found' '$TMP/stderr'"
 check "…and no bundle directory is left behind for a refused render" \
@@ -190,7 +190,7 @@ python3 -c "
 lines = open('$ADAPTER2/seed/map.md').readlines()
 open('$ADAPTER2/seed/map.md', 'w').writelines(lines[:-1])
 "
-rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme)"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme --audience public)"
 check "…and reverting the finding lets the render succeed again (the control)" "[ '$rc' = '0' ]"
 
 # --- cos findings on r3 (real render on the render host), item 1: bundle.json's `sources` must be
@@ -208,7 +208,7 @@ cp -r "$CORE2" "$CORE3"
 cp -r "$ADAPTER2" "$ADAPTER3"
 # instructions-core.md was restored to its original content above; this copy carries that, not the
 # over-budget or redaction-tainted intermediate states.
-rc="$(gov render --target seed --out "$SEED3" --core "$CORE3" --adapter "$ADAPTER3" --engagement acme)"
+rc="$(gov render --target seed --out "$SEED3" --core "$CORE3" --adapter "$ADAPTER3" --engagement acme --audience public)"
 check "r4 KAT: rendering the SAME content from a DIFFERENT directory location exits 0" "[ '$rc' = '0' ]"
 H3="$(bundle_dirs "$SEED3")"
 check "r4 KAT: …and lands at the SAME content-addressed hash as the original location" "[ \"\$H3\" = \"\$H2\" ]"
@@ -229,9 +229,66 @@ for k in ('bundle_hash', 'engagements', 'files', 'sources'):
 # only bundle.json's own `"engagements": [...]` list does, generated regardless of whether anything
 # on disk matches it. A refusal here is therefore bundle.json being read, not any other file.
 check "r4 setup: no engagements/proj#99 directory exists in the fixture" "[ ! -d '$ADAPTER2/engagements/proj#99' ]"
-rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement 'proj#99')"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement 'proj#99' --audience public)"
 check "r4 KAT: an engagement name shaped like a ticket-ref, with no matching directory, is still caught (exit 2)" \
   "[ '$rc' = '2' ] && grep -qi 'redaction-check found' '$TMP/stderr'"
+
+# --- CTA ruling c104786, governance#283: AUDIENCE gates who a bundle is for. public keeps the
+# unconditional gate; org:<id> allows instance names (the audience IS the organisation) but still
+# refuses any SHAPE finding (a credential shape is a defect whatever the audience). Audience is part
+# of the bundle hash. Reuses CORE2/ADAPTER2, restored to their clean post-item-5 state above.
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme)"
+check "KAT: an adapter render with NO --audience is refused (exit 2), never defaults silently" \
+  "[ '$rc' = '2' ] && grep -qi 'audience' '$TMP/stderr'"
+
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme --audience public)"
+# H2 was itself rendered with --audience public (added to the earlier call by the same global
+# transform that added --audience to every pre-existing call in this file) from content that has
+# since been fully restored, so this re-render reuses H2's own hash exactly — it is NOT a new
+# directory, which is correct and is the "same inputs -> same hash" property, not a bug to work
+# around. H_ORG, by contrast, WILL be new: same layers, different audience.
+H_PUB="$H2"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme --audience 'org:acme-corp')"
+H_ORG="$(bundle_dirs "$SEED2" | grep -v "^$H2\$")"
+check "KAT: same inputs, different audience, renders both without error" "[ -n \"\$H_PUB\" ] && [ -n \"\$H_ORG\" ]"
+check "KAT: …and lands at a DIFFERENT hash (audience is part of the hash input)" "[ \"\$H_PUB\" != \"\$H_ORG\" ]"
+check "…and bundle.json records which audience each one is" \
+  "python3 -c \"import json; assert json.load(open('$SEED2/\$H_PUB/bundle.json'))['audience'] == 'public'\" && \
+   python3 -c \"import json; assert json.load(open('$SEED2/\$H_ORG/bundle.json'))['audience'] == 'org:acme-corp'\""
+
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --audience 'not-a-real-audience')"
+check "an invalid --audience value (not public or org:<id>) is refused (exit 2)" "[ '$rc' = '2' ]"
+
+# A private-patterns fixture: one literal instance name. Set via the env var redaction-check itself
+# documents as its fallback (GOVERNANCE_PRIVATE_PATTERNS) — bin/governance's subprocess call passes
+# no --private-patterns of its own, so this only reaches redaction-check if the environment actually
+# propagates through the two-level call, which is exactly what a real server's environment would do.
+PRIVATE="$TMP/private-patterns.md"
+cat > "$PRIVATE" <<'DOC'
+```redaction-instances
+literal:Acme Corp
+```
+DOC
+echo "Acme Corp is the contracting party." >> "$ADAPTER2/seed/map.md"
+export GOVERNANCE_PRIVATE_PATTERNS="$PRIVATE"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme --audience public)"
+check "KAT: a PUBLIC bundle refuses on an instance-name match (exit 2) — the full gate, unchanged" \
+  "[ '$rc' = '2' ]"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme --audience 'org:acme-corp')"
+check "KAT: an ORG bundle ALLOWS the same instance-name match (exit 0) — the audience is the organisation" \
+  "[ '$rc' = '0' ]"
+
+# …but a SHAPE finding still refuses an org bundle — instance names are allowed, shapes are not.
+echo "see acme#42 for details" >> "$ADAPTER2/seed/map.md"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme --audience 'org:acme-corp')"
+check "KAT: an ORG bundle with a SHAPE finding is still refused (exit 2)" \
+  "[ '$rc' = '2' ] && grep -qi 'shape finding' '$TMP/stderr'"
+unset GOVERNANCE_PRIVATE_PATTERNS
+# restore map.md to its pre-audience-block state (drop the two appended lines)
+python3 -c "
+lines = open('$ADAPTER2/seed/map.md').readlines()
+open('$ADAPTER2/seed/map.md', 'w').writelines(lines[:-2])
+"
 
 echo
 echo "  $pass passed, $fail failed"

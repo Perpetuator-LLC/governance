@@ -4,7 +4,9 @@
   governance render   --out FILE [--core DIR] [--adapter DIR ...] [--local FILE]
   governance check    --out FILE [--core DIR] [--adapter DIR ...] [--local FILE]
   governance render   --target seed --out DIR [--core DIR] [--adapter DIR ...] [--engagement NAME ...]
+                      [--audience public|org:ID]
   governance check    --target seed --out DIR [--core DIR] [--adapter DIR ...] [--engagement NAME ...]
+                      [--audience public|org:ID]
   governance install  --home DIR --adapter DIR [--adapter DIR ...] [--local FILE]
                       [--harness claude|codex|grok ...] [--repo DIR] [--dry-run]
   governance check    --home DIR
@@ -36,11 +38,24 @@ home — and a seed bundle opts a name back in only when it is given on --engage
 name the adapter happens to carry. --local is refused for --target seed: LOCAL never leaves the
 machine, by the same rule that keeps it out of a harness install's shared parts.
 
-Written to --out/<bundle-hash>/ with a bundle.json index (bundle_hash, core_tag from `git describe`,
-the engagement set, a sha256 per bundle file, and a sha256 per SOURCE file the bundle was built
-from). The hash is a sha256 over the bundle's own {path: sha256} manifest, never over a timestamp or
-a path on disk, so identical layers and engagement set hash identically every time, and two different
-engagement sets — or the same set after a source changes — hash differently. `check --target seed`
+AUDIENCE gates who the bundle is for, and who reads it never guesses: --audience public (the
+default with no --adapter) or --audience org:<id> (required the moment any --adapter is given — an
+adapter render with no --audience refuses outright). public keeps the unconditional redaction gate
+exactly as a core-only bundle always had it: any finding at all refuses the render. org:<id> is
+narrower but still blocking — zero SHAPE findings (a credential shape, a ticket reference, a home
+path… is a defect whatever the audience), while an INSTANCE-NAME match is allowed, because the
+audience IS the organisation whose names those are. Audience is part of the bundle hash, so a public
+and an org:<id> bundle built from identical layers never collide on one directory.
+
+Written to --out/<bundle-hash>/ with a bundle.json index (bundle_hash, audience, core_tag from
+`git describe`, the engagement set, a sha256 per bundle file, and a sha256 per SOURCE file the
+bundle was built from — every source keyed by its OWN layer label and the path relative to that
+layer, never the render host's absolute filesystem path, so two renders of the same layers from two
+different checkouts produce an identical bundle.json). The hash is a sha256 over the bundle's own
+{path: sha256} manifest plus the audience, never over a timestamp or a path on disk, so identical
+layers, engagement set AND audience hash identically every time, and two different engagement sets,
+two different audiences, or the same set after a source changes, all hash differently. `check
+--target seed`
 recomputes the current bundle from the layers given and reports:
   LAYERS CHANGED   no bundle exists yet for the current layers + engagement set, or a recorded
                    source's hash no longer matches → re-render
@@ -151,6 +166,12 @@ SEED_SOURCES_DIR = "seed"              # a layer's own authored seed content: se
 SEED_MAP_FILE = "map.md"
 SEED_INSTRUCTIONS_FILE = "instructions-core.md"
 SEED_INSTRUCTIONS_BUDGET = 1024        # bytes — a server embeds this file verbatim; keep it small
+SEED_AUDIENCE_RX = re.compile(r"^(public|org:[A-Za-z0-9_.-]+)$")
+SEED_INSTANCE_KIND_PREFIX = "instance-name:"  # redaction-check's own tag for every --private-patterns
+                                               # match ("instance-name:<line>"); every SHAPE_PATTERNS
+                                               # kind is a fixed name (e.g. "ticket-ref") that never
+                                               # starts with it — confirmed against bin/redaction-check's
+                                               # own load_private(), not assumed
 GOV_MD, CLAUDE_MD, IMPORT_LINE = "GOVERNANCE.md", "CLAUDE.md", "@GOVERNANCE.md"
 MARK_BEGIN, MARK_END = "<!-- governance:begin -->", "<!-- governance:end -->"
 # HARNESS (the per-harness registry) and HARNESSES (its name order) are defined below, just above
@@ -364,24 +385,43 @@ def core_tag(core):
     return tag if r.returncode == 0 and tag else "unknown"
 
 
-def seed_redaction_clean(bdir):
-    """(ok, output) — runs bin/redaction-check --enforce over the RENDERED bundle directory. The
-    bundle ships to clients, so its own text is what must be checked, not only the sources it was
-    built from: a source clean in isolation can still compose into a line that reads as a finding
-    once concatenated. exit 3 (the instance-name leg not checked — no --private-patterns here) is
-    not a finding and does not refuse.
+def seed_redaction_clean(bdir, audience):
+    """(ok, output) for the RENDERED bundle directory, gated by CTA's audience ruling:
+    - `public`: the full gate, unchanged — ANY finding at all refuses. exit 3 (the instance-name leg
+      not checked — no --private-patterns here) is not a finding and does not refuse.
+    - `org:<id>`: a narrower gate that still blocks — zero SHAPE findings (a credential shape, a
+      ticket reference, a home path… is a defect whatever the audience), but an INSTANCE-NAME match
+      (kind "instance-name:<n>", from --private-patterns) is ALLOWED: the audience is the organisation
+      itself, so its own names in its own bundle are not a leak.
 
-    bundle.json is passed as its own explicit path, not folded into the `bdir` scan: a bare directory
-    argument to redaction-check walks Markdown files only (its own documented contract), so a plain
-    `redaction-check bdir` call silently never reads bundle.json at all — a non-.md index file is
-    exactly the kind of thing a shape scan is for, and skipping it by omission is how a prior cut of
-    this bundle shipped a host's absolute paths in bundle.json's own `sources` field unnoticed."""
+    bundle.json is passed as its own explicit path in both cases, not folded into the `bdir` scan: a
+    bare directory argument to redaction-check walks Markdown files only (its own documented
+    contract), so a plain `redaction-check bdir` call silently never reads bundle.json at all — a
+    non-.md index file is exactly the kind of thing a shape scan is for, and skipping it by omission
+    is how a prior cut of this bundle shipped a host's absolute paths in bundle.json's own `sources`
+    field unnoticed."""
     import subprocess
     bundle_json = os.path.join(bdir, "bundle.json")
     paths = [bdir] + ([bundle_json] if os.path.isfile(bundle_json) else [])
-    r = subprocess.run([sys.executable, os.path.join(ROOT, "bin", "redaction-check"), "--enforce", *paths],
-                       capture_output=True, text=True)
-    return r.returncode in (0, 3), (r.stdout + r.stderr).strip()
+    checker = os.path.join(ROOT, "bin", "redaction-check")
+
+    if audience == "public":
+        r = subprocess.run([sys.executable, checker, "--enforce", *paths], capture_output=True, text=True)
+        return r.returncode in (0, 3), (r.stdout + r.stderr).strip()
+
+    r = subprocess.run([sys.executable, checker, "--json", *paths], capture_output=True, text=True)
+    if r.returncode not in (0, 3):
+        return False, (r.stdout + r.stderr).strip()
+    try:
+        report = json.loads(r.stdout)
+    except ValueError:
+        return False, f"redaction-check --json produced unparseable output:\n{r.stdout}{r.stderr}"
+    shape_findings = [f for f in report.get("findings", [])
+                      if not str(f.get("kind", "")).startswith(SEED_INSTANCE_KIND_PREFIX)]
+    if shape_findings:
+        lines = "\n".join(f"{f['file']}:{f['line']}  {f['kind']}  {f['match']}" for f in shape_findings)
+        return False, f"shape finding(s) in an org bundle (instance names are allowed, shapes are not):\n{lines}"
+    return True, ""
 
 
 def build_seed_bundle(core, adapters, engagements):
@@ -415,11 +455,13 @@ def build_seed_bundle(core, adapters, engagements):
     return files, sources
 
 
-def bundle_hash(files):
-    """Content-addressed: a sha256 over a sorted {relpath: sha256} manifest, never over anything
-    that varies run to run (a timestamp, a path) — the one property the ticket's own KAT needs:
-    identical layers and engagement set hash identically, every time."""
-    manifest = {rel: sha(text) for rel, text in files.items()}
+def bundle_hash(files, audience):
+    """Content-addressed: a sha256 over a sorted {relpath: sha256} manifest PLUS the audience, never
+    over anything that varies run to run (a timestamp, a path) — the one property the ticket's own
+    KAT needs: identical layers, engagement set AND audience hash identically, every time. Audience
+    is part of the hash input (CTA's audience ruling) so a `public` and an `org:<id>` bundle of
+    the same layers never land at the same directory — the cache key the audience gate depends on."""
+    manifest = {"audience": audience, "files": {rel: sha(text) for rel, text in files.items()}}
     return sha(json.dumps(manifest, sort_keys=True, separators=(",", ":")))
 
 
@@ -433,12 +475,26 @@ def cmd_render_or_check_seed(a):
             print(f"error: {name} layer not found: {path}", file=sys.stderr)
             return 2
 
+    # CTA's audience ruling: an adapter render with no declared audience is refused — nobody
+    # gets a private bundle by accident. A core-only render has nothing of an organisation's own to
+    # expose, so it defaults to public rather than demanding a flag for the common case.
+    audience = a.audience
+    if audience is None:
+        if adapters:
+            print("error: an adapter render needs --audience public or --audience org:<id> — nobody "
+                  "gets a private bundle by accident", file=sys.stderr)
+            return 2
+        audience = "public"
+    elif not SEED_AUDIENCE_RX.match(audience):
+        print(f"error: --audience must be `public` or `org:<id>`, got {audience!r}", file=sys.stderr)
+        return 2
+
     try:
         files, sources = build_seed_bundle(core, adapters, engagements)
     except Refusal as e:
         print(f"refused: {e}", file=sys.stderr)
         return 2
-    h = bundle_hash(files)
+    h = bundle_hash(files, audience)
     bdir = os.path.join(a.out, h)
 
     if a.command == "render":
@@ -453,6 +509,7 @@ def cmd_render_or_check_seed(a):
         # that ships, index included, and a file that does not exist yet cannot be scanned.
         index = {
             "bundle_hash": h,
+            "audience": audience,
             "core_tag": core_tag(core),
             "engagements": sorted(engagements),
             "files": {rel: sha(text) for rel, text in files.items()},
@@ -460,13 +517,14 @@ def cmd_render_or_check_seed(a):
             "rendered_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
         write_json(os.path.join(bdir, "bundle.json"), index)
-        clean, output = seed_redaction_clean(bdir)
+        clean, output = seed_redaction_clean(bdir, audience)
         if not clean:
             shutil.rmtree(bdir, ignore_errors=True)
             print(f"refused: redaction-check found something in the rendered bundle — it ships to "
                   f"clients, so this is a build failure, not a notice:\n{output}", file=sys.stderr)
             return 2
-        print(f"rendered seed bundle {h} ({len(files)} file(s), {len(engagements)} engagement(s)) → {bdir}")
+        print(f"rendered seed bundle {h} (audience {audience}, {len(files)} file(s), "
+              f"{len(engagements)} engagement(s)) → {bdir}")
         return 0
 
     # check: a bundle for the CURRENT layers and engagement set is content-addressed by
@@ -1757,6 +1815,12 @@ def main():
                        help="repeatable; --target seed only. Bundle content depends ONLY on this "
                             "set (G8) — omit it entirely for organisation-wide content with no "
                             "client engagement content at all")
+        p.add_argument("--audience",
+                       help="--target seed only: `public` or `org:<id>`. Required with --adapter — "
+                            "an adapter render with no --audience is refused. public keeps the full "
+                            "redaction gate; org:<id> allows instance names but still refuses any "
+                            "shape finding. Part of the bundle hash: public and org:<id> never share "
+                            "one. A core-only render defaults to public")
     p = sub.add_parser("install")
     p.add_argument("--home", required=True, help="the home directory to install into; never defaulted")
     p.add_argument("--adapter", action="append", required=True, help="repeatable; later adapters win")
