@@ -30,6 +30,21 @@ logged() { grep -qF "$2" "$1/.claude/audit/scripts.log" 2>/dev/null; }  # logged
 
 echo "script-audit"
 
+# --- bash 3.2 compatibility (governance#284) -----------------------------------------------------
+# This hook runs on macOS, whose /bin/bash is 3.2 (frozen there since the GPLv3 relicense) — not just
+# on the Linux CI runner. No bash 3.2 binary is installable in THIS sandbox (no root, no network to
+# fetch one), so this is a STATIC check of the hook's own source, not a literal run under bash 3.2
+# semantics: documented here rather than silently passed off as full verification. `declare -A`
+# (associative arrays) is bash-4.0-only; on bash 3.2 it is a hard "invalid option" error, and every
+# candidate reached after that line in the script was never captured — the measured symptom
+# (interpreter forms "NOT captured" on macOS) for every form, because the broken line runs once,
+# before the per-candidate loop, regardless of which interpreter triggered it.
+if grep -vE '^[[:space:]]*#' "$HOOK" | grep -qE '\bdeclare[[:space:]]+-A\b'; then
+  bad "no bash-4-only construct in the hook (found \`declare -A\` — bash 3.2 cannot run this line at all)"
+else
+  ok "no bash-4-only construct in the hook (\`declare -A\`, bash 3.2's one hard blocker here, is absent)"
+fi
+
 # --- every interpreter form individually, not just bash -----------------------------------------
 n=0
 for interp in bash sh zsh dash python python2 python3 node; do

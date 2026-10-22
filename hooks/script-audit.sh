@@ -103,10 +103,18 @@ if [[ -f "$LOG" ]] && [[ "$(wc -c <"$LOG" 2>/dev/null || echo 0)" -gt 5242880 ]]
 fi
 
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
-declare -A seen=()
+# Dedup by a space-delimited string, not `declare -A`: associative arrays are bash 4+ only, and the
+# agent hosts this hook actually runs on include macOS, whose /bin/bash is 3.2 (frozen there by
+# Apple over the GPLv3 relicense). `declare -A` on bash 3.2 is a hard "invalid option" error, and
+# every candidate after it was never captured — the whole point of this hook, on the platform that
+# needed it. A leading/trailing space on `seen` makes every membership test exact: a bare substring
+# match would treat "a.sh" as already seen because of "scripts/a.sh".
+seen=" "
 for f in "${candidates[@]}"; do
-  [[ -n "${seen[$f]}" ]] && continue    # dedup within a single command
-  seen[$f]=1
+  case "$seen" in
+    *" $f "*) continue ;;   # dedup within a single command
+  esac
+  seen="$seen$f "
   [[ -f "$f" && -r "$f" ]] || continue   # unresolved ($VAR, missing, cd'd-away) → skip silently
   sha=$(shasum -a 256 "$f" 2>/dev/null | awk '{print $1}')
   {
