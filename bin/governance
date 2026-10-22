@@ -3,6 +3,8 @@
 
   governance render   --out FILE [--core DIR] [--adapter DIR ...] [--local FILE]
   governance check    --out FILE [--core DIR] [--adapter DIR ...] [--local FILE]
+  governance render   --target seed --out DIR [--core DIR] [--adapter DIR ...] [--engagement NAME ...]
+  governance check    --target seed --out DIR [--core DIR] [--adapter DIR ...] [--engagement NAME ...]
   governance install  --home DIR --adapter DIR [--adapter DIR ...] [--local FILE]
                       [--harness claude|codex|grok ...] [--repo DIR] [--dry-run]
   governance check    --home DIR
@@ -23,6 +25,28 @@ The rendered file begins with a header carrying the sha256 of its body. `check` 
 ways a rendered file goes wrong, because they have different fixes:
   LAYERS CHANGED   a layer was edited after rendering      → re-render
   EDITED BY HAND   the rendered file itself was edited      → move the edit into a layer, re-render
+
+RENDER --target seed builds a content-addressed SEED BUNDLE for an MCP server to hand a fresh
+connection: governance.md (CORE + each ADAPTER's own content, concatenated like an ordinary render),
+map.md (which layer each rule came from), one README per layer that carries its own README.md, and
+every *.md under a layer's own prompts/. Bundle content depends ONLY on the --engagement set (G8):
+an adapter's <adapter>/engagements/<name>/ directory is reserved — layer_files never walks into it
+during an ordinary render or install, so engagement-scoped content cannot bleed into anyone's general
+home — and a seed bundle opts a name back in only when it is given on --engagement, never any other
+name the adapter happens to carry. --local is refused for --target seed: LOCAL never leaves the
+machine, by the same rule that keeps it out of a harness install's shared parts.
+
+Written to --out/<bundle-hash>/ with a bundle.json index (bundle_hash, core_tag from `git describe`,
+the engagement set, a sha256 per bundle file, and a sha256 per SOURCE file the bundle was built
+from). The hash is a sha256 over the bundle's own {path: sha256} manifest, never over a timestamp or
+a path on disk, so identical layers and engagement set hash identically every time, and two different
+engagement sets — or the same set after a source changes — hash differently. `check --target seed`
+recomputes the current bundle from the layers given and reports:
+  LAYERS CHANGED   no bundle exists yet for the current layers + engagement set, or a recorded
+                   source's hash no longer matches → re-render
+  EDITED BY HAND   a bundle file on disk differs from what render would produce → move the edit into
+                   a layer, re-render
+  MISSING          a bundle file render would produce is absent from the directory → re-render
 
 INSTALL builds a harness home from CORE (--repo, default this repository) and each ADAPTER directory.
 --home is required and never defaults: pass --home "$HOME" to install for real. For --harness claude
@@ -122,6 +146,7 @@ BACKUP_RX = re.compile(r"\A\d{8}T\d{6}-\d{6}Z\Z")
 MANIFEST = os.path.join(".governance", "manifest.json")
 ADAPTER_DIR = ".governance"          # the organisation layer, inside its vault
 ADAPTER_PARTS = ("skills", "hooks", "agents", "bin", "domains", "settings", "scheduled-tasks")
+SEED_ENGAGEMENTS_DIR = "engagements"   # reserved top-level name inside a layer; see layer_files
 GOV_MD, CLAUDE_MD, IMPORT_LINE = "GOVERNANCE.md", "CLAUDE.md", "@GOVERNANCE.md"
 MARK_BEGIN, MARK_END = "<!-- governance:begin -->", "<!-- governance:end -->"
 # HARNESS (the per-harness registry) and HARNESSES (its name order) are defined below, just above
@@ -147,7 +172,15 @@ def layer_files(path):
     if os.path.isfile(path):
         return [(os.path.basename(path), path)]
     found = []
-    for d, _, fs in os.walk(path):
+    top = True
+    for d, dirs, fs in os.walk(path):
+        if top:
+            # engagements/ is reserved: an ordinary walk of a layer's own directory never descends
+            # into it, so a client's engagement-scoped content cannot bleed into anyone's general
+            # render — the operator's own harness home included. A seed bundle opts a name back in
+            # explicitly, by walking that one subdirectory directly (see seed_layers).
+            dirs[:] = [x for x in dirs if x != SEED_ENGAGEMENTS_DIR]
+            top = False
         for f in fs:
             if f.endswith(".md"):
                 full = os.path.join(d, f)
@@ -224,6 +257,145 @@ def cmd_render_or_check_out(a):
         print(f"LAYERS CHANGED  {a.out} is stale — re-render")
         return 1
     print(f"in sync  {a.out}")
+    return 0
+
+
+# --- seed bundles: a content-addressed, engagement-filtered render for an MCP server to serve ------
+
+def seed_layers(core, adapters, engagements):
+    """Ordered (label, path) layer pairs for a seed bundle: CORE org-wide, each ADAPTER's own
+    org-wide content (engagements/ excluded by layer_files), then — for each name actually in
+    `engagements` — that ADAPTER's engagements/<name>/ directory, if it has one. An adapter's
+    engagements/<other>/ is never named, so it is never walked and cannot reach a bundle that did
+    not ask for `other` (G8): the exclusion is by construction, not by a filter applied afterward."""
+    n = len(adapters)
+    layers = [("core", core)] + [(adapter_label(i, n), p) for i, p in enumerate(adapters, 1)]
+    for name in sorted(engagements):
+        for i, adapter in enumerate(adapters, 1):
+            eng_dir = os.path.join(adapter, SEED_ENGAGEMENTS_DIR, name)
+            if os.path.isdir(eng_dir):
+                layers.append((f"{adapter_label(i, n)} · engagement:{name}", eng_dir))
+    return layers
+
+
+def seed_map(layers):
+    lines = ["# Map — where this bundle's rules come from", ""]
+    for name, path in layers:
+        for rel, _ in layer_files(path):
+            lines.append(f"- **{name}** → `{rel}`")
+    return "\n".join(lines) + "\n"
+
+
+def _seed_slug(name):
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def seed_readmes(layers):
+    """{relpath-in-bundle: text}, one per layer that carries its own top-level README.md."""
+    out = {}
+    for name, path in layers:
+        src = os.path.join(path, "README.md") if os.path.isdir(path) else None
+        if src and os.path.isfile(src):
+            with open(src, encoding="utf-8") as fh:
+                out[f"README-{_seed_slug(name)}.md"] = fh.read()
+    return out
+
+
+def seed_prompts(layers):
+    """{relpath-in-bundle: text} for every *.md under each layer's own prompts/ directory."""
+    out = {}
+    for name, path in layers:
+        pdir = os.path.join(path, "prompts") if os.path.isdir(path) else None
+        if pdir and os.path.isdir(pdir):
+            for rel, full in layer_files(pdir):
+                with open(full, encoding="utf-8") as fh:
+                    out[os.path.join("prompts", _seed_slug(name), rel)] = fh.read()
+    return out
+
+
+def core_tag(core):
+    r = _git(core, "describe", "--tags", "--always", "--dirty")
+    tag = r.stdout.strip()
+    return tag if r.returncode == 0 and tag else "unknown"
+
+
+def build_seed_bundle(core, adapters, engagements):
+    """(files, sources): files is {relpath-in-bundle: text} — governance.md, map.md, and whatever
+    README/prompts the layers carry; sources is {abspath: sha256} of every file that fed the
+    bundle, recorded so `check` can tell a stale bundle from a current one without re-reading the
+    bundle itself."""
+    layers = seed_layers(core, adapters, engagements)
+    sources = {full: file_sha(full) for _, path in layers for _, full in layer_files(path)}
+    files = {"governance.md": build_body(layers), "map.md": seed_map(layers)}
+    files.update(seed_readmes(layers))
+    files.update(seed_prompts(layers))
+    return files, sources
+
+
+def bundle_hash(files):
+    """Content-addressed: a sha256 over a sorted {relpath: sha256} manifest, never over anything
+    that varies run to run (a timestamp, a path) — the one property the ticket's own KAT needs:
+    identical layers and engagement set hash identically, every time."""
+    manifest = {rel: sha(text) for rel, text in files.items()}
+    return sha(json.dumps(manifest, sort_keys=True, separators=(",", ":")))
+
+
+def cmd_render_or_check_seed(a):
+    core = a.core or os.path.join(ROOT, "core")
+    adapters = list(a.adapter)
+    engagements = set(a.engagement or [])
+    named = [("core", core)] + [(adapter_label(i, len(adapters)), p) for i, p in enumerate(adapters, 1)]
+    for name, path in named:
+        if not os.path.exists(path):
+            print(f"error: {name} layer not found: {path}", file=sys.stderr)
+            return 2
+
+    files, sources = build_seed_bundle(core, adapters, engagements)
+    h = bundle_hash(files)
+    bdir = os.path.join(a.out, h)
+
+    if a.command == "render":
+        for rel, text in files.items():
+            dest = os.path.join(bdir, rel)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            tmp = dest + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            os.replace(tmp, dest)
+        index = {
+            "bundle_hash": h,
+            "core_tag": core_tag(core),
+            "engagements": sorted(engagements),
+            "files": {rel: sha(text) for rel, text in files.items()},
+            "sources": sources,
+            "rendered_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        write_json(os.path.join(bdir, "bundle.json"), index)
+        print(f"rendered seed bundle {h} ({len(files)} file(s), {len(engagements)} engagement(s)) → {bdir}")
+        return 0
+
+    # check: a bundle for the CURRENT layers and engagement set is content-addressed by
+    # construction, so staleness shows up as the expected directory simply not existing yet.
+    idx_path = os.path.join(bdir, "bundle.json")
+    if not os.path.isfile(idx_path):
+        print(f"LAYERS CHANGED  no bundle at {bdir} for the current layers and engagement set — re-render")
+        return 1
+    with open(idx_path, encoding="utf-8") as fh:
+        index = json.load(fh)
+    if index.get("sources") != sources:
+        print(f"LAYERS CHANGED  {bdir} — a source changed since this bundle was rendered — re-render")
+        return 1
+    for rel, text in files.items():
+        dest = os.path.join(bdir, rel)
+        if not os.path.isfile(dest):
+            print(f"MISSING  {dest} — re-render")
+            return 1
+        with open(dest, encoding="utf-8") as fh:
+            on_disk = fh.read()
+        if on_disk != text:
+            print(f"EDITED BY HAND  {dest} — move the change into a layer, then re-render")
+            return 1
+    print(f"in sync  {bdir}")
     return 0
 
 
@@ -1476,11 +1648,20 @@ def main():
             p.add_argument("--out", required=True)
         else:
             target = p.add_mutually_exclusive_group(required=True)
-            target.add_argument("--out", help="check one rendered file against the layers given")
+            target.add_argument("--out", help="check one rendered file, or (--target seed) one seed root, "
+                                              "against the layers given")
             target.add_argument("--home", help="check every output of an install against its recorded sources")
         p.add_argument("--core", help="default: this repository's core/")
         p.add_argument("--adapter", action="append", default=[], help="repeatable; later adapters win")
         p.add_argument("--local")
+        p.add_argument("--target", choices=("file", "seed"), default="file",
+                       help="file (default): one rendered instruction file at --out. "
+                            "seed: a content-addressed bundle (governance.md, map.md, READMEs, "
+                            "prompts) under --out/<bundle-hash>/, filtered to --engagement")
+        p.add_argument("--engagement", action="append", default=[],
+                       help="repeatable; --target seed only. Bundle content depends ONLY on this "
+                            "set (G8) — omit it entirely for organisation-wide content with no "
+                            "client engagement content at all")
     p = sub.add_parser("install")
     p.add_argument("--home", required=True, help="the home directory to install into; never defaulted")
     p.add_argument("--adapter", action="append", required=True, help="repeatable; later adapters win")
@@ -1521,6 +1702,11 @@ def main():
             print("error: check --home re-derives from the recorded install; do not pass layers", file=sys.stderr)
             return 2
         return cmd_check_home(a)
+    if a.command in ("render", "check") and a.target == "seed":
+        if getattr(a, "local", None):
+            print("error: --target seed never takes --local — LOCAL never leaves the machine", file=sys.stderr)
+            return 2
+        return cmd_render_or_check_seed(a)
     if a.command in ("render", "check"):
         return cmd_render_or_check_out(a)
     return {"install": cmd_install, "restore": cmd_restore, "discover": cmd_discover,
