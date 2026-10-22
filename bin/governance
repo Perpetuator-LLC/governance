@@ -286,6 +286,19 @@ def _seed_slug(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
+def seed_sources(layers):
+    """{"label · relpath": sha256} for every file under each (label, path) layer. Keyed by LABEL and
+    the path relative to that layer's own root — never the render host's absolute filesystem path,
+    which would bake that host's directory layout (and anything it reveals: a username in a home
+    path, a checkout location) into bundle.json, a file that ships to clients. Two renders of the
+    same layers from two different checkouts on two different machines produce the same keys."""
+    out = {}
+    for label, path in layers:
+        for rel, full in layer_files(path):
+            out[f"{label} · {rel}"] = file_sha(full)
+    return out
+
+
 def seed_source_layers(core, adapters, engagements, filename):
     """[(label, filepath), ...] for CORE's and each ADAPTER's seed/<filename>, then — for each name
     actually in `engagements` — each ADAPTER's engagements/<name>/seed/<filename>, skipping any that
@@ -356,9 +369,17 @@ def seed_redaction_clean(bdir):
     bundle ships to clients, so its own text is what must be checked, not only the sources it was
     built from: a source clean in isolation can still compose into a line that reads as a finding
     once concatenated. exit 3 (the instance-name leg not checked — no --private-patterns here) is
-    not a finding and does not refuse."""
+    not a finding and does not refuse.
+
+    bundle.json is passed as its own explicit path, not folded into the `bdir` scan: a bare directory
+    argument to redaction-check walks Markdown files only (its own documented contract), so a plain
+    `redaction-check bdir` call silently never reads bundle.json at all — a non-.md index file is
+    exactly the kind of thing a shape scan is for, and skipping it by omission is how a prior cut of
+    this bundle shipped a host's absolute paths in bundle.json's own `sources` field unnoticed."""
     import subprocess
-    r = subprocess.run([sys.executable, os.path.join(ROOT, "bin", "redaction-check"), "--enforce", bdir],
+    bundle_json = os.path.join(bdir, "bundle.json")
+    paths = [bdir] + ([bundle_json] if os.path.isfile(bundle_json) else [])
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "bin", "redaction-check"), "--enforce", *paths],
                        capture_output=True, text=True)
     return r.returncode in (0, 3), (r.stdout + r.stderr).strip()
 
@@ -366,17 +387,18 @@ def seed_redaction_clean(bdir):
 def build_seed_bundle(core, adapters, engagements):
     """(files, sources): files is {relpath-in-bundle: text} — governance.md, map.md,
     instructions-core.md (if any seed/instructions-core.md exists), and whatever README/prompts the
-    layers carry; sources is {abspath: sha256} of every file that fed the bundle, recorded so `check`
-    can tell a stale bundle from a current one without re-reading the bundle itself.
+    layers carry; sources is {"label · relpath": sha256} of every file that fed the bundle (see
+    seed_sources — never an absolute path), recorded so `check` can tell a stale bundle from a
+    current one without re-reading the bundle itself, and so bundle.json stays identical across two
+    renders of the same layers from two different checkouts.
 
     Raises Refusal if instructions-core.md would exceed its budget — a server embeds it verbatim, so
     an over-budget file is not something to ship and silently ignore."""
     layers = seed_layers(core, adapters, engagements)
-    sources = {full: file_sha(full) for _, path in layers for _, full in layer_files(path)}
+    sources = seed_sources(layers)
 
     files = {"governance.md": build_body(layers), "map.md": seed_map(core, adapters, engagements)}
-    for _, p in seed_source_layers(core, adapters, engagements, SEED_MAP_FILE):
-        sources[p] = file_sha(p)
+    sources.update(seed_sources(seed_source_layers(core, adapters, engagements, SEED_MAP_FILE)))
 
     instructions = seed_instructions_core(core, adapters)
     if instructions:
@@ -386,8 +408,7 @@ def build_seed_bundle(core, adapters, engagements):
                           "budget — trim the seed/instructions-core.md source(s), or raise the budget in "
                           "the same change")
         files["instructions-core.md"] = instructions
-        for _, p in seed_source_layers(core, adapters, set(), SEED_INSTRUCTIONS_FILE):
-            sources[p] = file_sha(p)
+        sources.update(seed_sources(seed_source_layers(core, adapters, set(), SEED_INSTRUCTIONS_FILE)))
 
     files.update(seed_readmes(layers))
     files.update(seed_prompts(layers))
@@ -428,12 +449,8 @@ def cmd_render_or_check_seed(a):
             with open(tmp, "w", encoding="utf-8") as fh:
                 fh.write(text)
             os.replace(tmp, dest)
-        clean, output = seed_redaction_clean(bdir)
-        if not clean:
-            shutil.rmtree(bdir, ignore_errors=True)
-            print(f"refused: redaction-check found something in the rendered bundle — it ships to "
-                  f"clients, so this is a build failure, not a notice:\n{output}", file=sys.stderr)
-            return 2
+        # bundle.json is written BEFORE the redaction scan, not after: the scan must cover every file
+        # that ships, index included, and a file that does not exist yet cannot be scanned.
         index = {
             "bundle_hash": h,
             "core_tag": core_tag(core),
@@ -443,6 +460,12 @@ def cmd_render_or_check_seed(a):
             "rendered_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
         write_json(os.path.join(bdir, "bundle.json"), index)
+        clean, output = seed_redaction_clean(bdir)
+        if not clean:
+            shutil.rmtree(bdir, ignore_errors=True)
+            print(f"refused: redaction-check found something in the rendered bundle — it ships to "
+                  f"clients, so this is a build failure, not a notice:\n{output}", file=sys.stderr)
+            return 2
         print(f"rendered seed bundle {h} ({len(files)} file(s), {len(engagements)} engagement(s)) → {bdir}")
         return 0
 
