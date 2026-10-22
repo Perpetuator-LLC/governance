@@ -894,6 +894,28 @@ some agent's working directory, and a move it did not make leaves that agent wor
 no longer exists. So a move is that agent's own step, recorded where its working directory is
 declared, never a bulk tidy-up.
 
+## A repository runs lean: a branch or worktree lives exactly as long as its ticket
+
+**Each dead branch and worktree is harmless on its own, which is why none is ever removed.** A hand
+sweep clears them, and without a standing count the pile is back within weeks.
+- **Branches that may exist on the remote:** the default branch; the rolling integration branches
+  (`merge/*`, `stack/*`); `release/*` while a release is open; the head and base of every open pull
+  request; working branches with a commit in the last 14 days. Anything else is archived to
+  `refs/archive/<date>/<branch>` on the same remote, then deleted. Restore is one push of the archive
+  ref back to `refs/heads/<branch>`; archive refs are purged on a schedule after their soak.
+- **A worktree is removed by its lane when its branch merges or its pull request closes**, with
+  `git worktree remove`, never forced. A dirty one is kept and listed. A clean, merged worktree can still
+  be a folder something runs from (a service, an app config, a scheduled job), so check that first.
+- **Logs and scratch never go in a worktree directory**, and a run removes what it made on every exit
+  path.
+- **Gate it at the moment of change, on the machine that accumulates it:** `bin/hygiene-check` refuses
+  when the remote's branch count, the repository's worktree count or its stale-branch count is over
+  budget (budgets set per repository), and prints the archive-then-delete pair for each stale branch.
+  Its pre-push hook is installed by `governance scaffold` (or `hygiene-check --install-hook`), because a
+  CI clone always has one worktree and a hook nobody installs is no gate. A push that only deletes refs
+  or writes `refs/archive/*` always passes: the gate never refuses its own cleanup.
+- **Receipts:** a sweep records its before and after with the same tool (`hygiene-check --receipt`).
+
 ## Environment facts are STATED in a registry, never inferred
 
 **Which systems exist, which hosts are production, and which merges deploy are facts to look up,

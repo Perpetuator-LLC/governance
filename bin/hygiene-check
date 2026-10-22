@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# hygiene-check — refuse when a repository holds more remote branches, worktrees or stale branches than
+# its budget. The standing gate after a hand sweep: a repo cleared to a lean set of branches drifts back
+# to hundreds within weeks if nothing counts them, because each dead branch or worktree is harmless on
+# its own, which is exactly why none of them is ever cleaned. This counts; it never deletes anything.
+#
+# THREE BUDGETS, each refused independently (all env-overridable, defaults are headroom, not targets):
+#   branches   live heads on the remote                       HYGIENE_BRANCH_BUDGET    (default 100)
+#   worktrees  `git worktree list` of this repository         HYGIENE_WORKTREE_BUDGET  (default 10)
+#   stale      remote branches that should already be gone    HYGIENE_STALE_BUDGET     (default 10)
+# Tighten them once a sweep has run (the lane-hygiene standard targets about 30 branches per repo and 5
+# worktrees per lane); a budget set below today's count turns every push red before the sweep lands.
+#
+# STALE, per remote branch that is not protected:
+#   LANDED  its tip is already in origin/<default>: nothing on it is unreachable, so it can go now;
+#   IDLE    no commit in HYGIENE_STALE_DAYS (default 14) and its tip is no pull request's head.
+# PROTECTED, never stale: the default branch, `merge/*`, `stack/*`, `release/*`, and every glob in
+# HYGIENE_KEEP (space-separated). A tip that is a PR head (refs/pull/<n>/head, refs/merge-requests/<n>/head)
+# is HELD: forges publish those refs for closed PRs too, so this errs toward keeping. Each stale row
+# prints the archive-then-delete pair, never runs it:
+#   git push origin <sha>:refs/archive/<date>/<branch> && git push origin --delete <branch>
+# Restore: git push origin refs/archive/<date>/<branch>:refs/heads/<branch>
+#
+# WORKTREES over budget are listed with clean/dirty and whether HEAD is in the default branch. The
+# suggestion is `git worktree remove <path>`, never --force; a clean, landed worktree can still be a
+# folder something RUNS from (a service, an app config, a scheduled job), so check before removing.
+#
+# WHERE IT RUNS: the pre-push hook (lib/git-hooks/pre-push), installed into a repository's git hooks
+# directory by `governance scaffold` and by `hygiene-check --install-hook`. A CI clone always has exactly
+# one worktree, so only a hook on the machine where worktrees accumulate can see that budget at all.
+# The hook lets a push through untouched when it only deletes refs or writes refs/archive/*: a cleanup
+# push must never be refused by the gate it is cleaning up for.
+#
+# RECEIPTS: --receipt FILE appends one tab-separated row per run (UTC time, repo, each count against
+# its budget, verdict), so a sweep's before and after are measured by the same tool that gates it.
+#
+# Usage
+#   bin/hygiene-check                    # the current repo: fetch, count, refuse over budget
+#   bin/hygiene-check --repo DIR         # another repo
+#   bin/hygiene-check --no-fetch         # skip `git fetch --prune` (reads cached refs; no PR heads)
+#   bin/hygiene-check --receipt FILE     # also append a receipt row to FILE
+#   bin/hygiene-check --install-hook     # install the pre-push hook into the repo's git hooks dir
+#
+# Exit: 0 under every budget (or hook installed) · 1 over a budget (or hook refused) · 2 cannot run
+set -uo pipefail
+GOV_ROOT="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
+source "$GOV_ROOT/lib/forge-tip.sh"
+HOOK_SRC="$GOV_ROOT/lib/git-hooks/pre-push"
+HOOK_MARK="governance hygiene pre-push"
+
+REPO="$PWD"; FETCH=1; RECEIPT=""; INSTALL=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)         REPO="${2:?--repo needs a path}"; shift 2 ;;
+    --no-fetch)     FETCH=0; shift ;;
+    --receipt)      RECEIPT="${2:?--receipt needs a file}"; shift 2 ;;
+    --install-hook) INSTALL=1; shift ;;
+    -h|--help)      sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "hygiene-check: unknown argument '$1'" >&2; exit 2 ;;
+  esac
+done
+
+git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || { echo "hygiene-check: not a git repo: $REPO" >&2; exit 2; }
+
+if [ "$INSTALL" = 1 ]; then
+  # The COMMON dir's hooks/: one install covers every worktree of the repository. core.hooksPath is
+  # left alone (setting it would stop `pre-commit install` working); when it is already set, that is
+  # where git looks, so the hook goes there instead.
+  hp="$(git -C "$REPO" config --get core.hooksPath)"
+  if [ -n "$hp" ]; then
+    case "$hp" in /*|[A-Za-z]:*) dir="$hp" ;; *) dir="$(git -C "$REPO" rev-parse --show-toplevel)/$hp" ;; esac
+  else
+    dir="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)/hooks"
+  fi
+  dst="$dir/pre-push"
+  [ -r "$HOOK_SRC" ] || { echo "hygiene-check: hook source missing: $HOOK_SRC" >&2; exit 2; }
+  if [ -e "$dst" ] && cmp -s "$HOOK_SRC" "$dst"; then
+    echo "ok        $dst"; exit 0
+  fi
+  if [ -e "$dst" ] && ! grep -q "$HOOK_MARK" "$dst"; then
+    echo "refused   $dst — a different pre-push hook is installed; chain it by hand: call" >&2
+    echo "          '$HOOK_SRC' from it, passing its stdin and arguments" >&2
+    exit 1
+  fi
+  mkdir -p "$dir" && cp "$HOOK_SRC" "$dst" && chmod +x "$dst" || { echo "hygiene-check: could not write $dst" >&2; exit 2; }
+  echo "installed $dst"; exit 0
+fi
+
+BRANCH_BUDGET="${HYGIENE_BRANCH_BUDGET:-100}"
+WORKTREE_BUDGET="${HYGIENE_WORKTREE_BUDGET:-10}"
+STALE_BUDGET="${HYGIENE_STALE_BUDGET:-10}"
+STALE_DAYS="${HYGIENE_STALE_DAYS:-14}"
+for v in "$BRANCH_BUDGET" "$WORKTREE_BUDGET" "$STALE_BUDGET" "$STALE_DAYS"; do
+  case "$v" in ''|*[!0-9]*) echo "hygiene-check: budgets and HYGIENE_STALE_DAYS must be whole numbers, got '$v'" >&2; exit 2 ;; esac
+done
+
+if [ "$FETCH" = 1 ]; then
+  git -C "$REPO" fetch origin --prune --quiet ||
+    { echo "hygiene-check: fetch failed — refusing to count stale refs (use --no-fetch to accept them)" >&2; exit 2; }
+fi
+D="$(forge_default_branch "$REPO")"
+[ -n "$D" ] || { echo "hygiene-check: cannot resolve origin's default branch" >&2; exit 2; }
+git -C "$REPO" rev-parse --verify --quiet "origin/$D" >/dev/null ||
+  { echo "hygiene-check: origin/$D missing locally — fetch first" >&2; exit 2; }
+# The repository's name from its COMMON dir, so every worktree of one repo reports the same name.
+common="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+case "$common" in */.git) name="$(basename "$(dirname "$common")")" ;; *) name="$(basename "$common" .git)" ;; esac
+
+PRS=""
+[ "$FETCH" = 1 ] && PRS="$(git -C "$REPO" ls-remote origin 'refs/pull/*/head' 'refs/merge-requests/*/head' 2>/dev/null | cut -f1)"
+
+now="$(date +%s)"; cutoff=$((now - STALE_DAYS * 86400)); today="$(date -u +%F)"
+branch_count=0; stale=()
+while read -r b sha when; do
+  [ -n "$b" ] || continue
+  b="${b#origin/}"
+  case "$b" in origin|HEAD) continue ;; esac
+  branch_count=$((branch_count + 1))
+  [ "$b" = "$D" ] && continue
+  case "$b" in merge/*|stack/*|release/*) continue ;; esac
+  keep=0
+  for g in ${HYGIENE_KEEP:-}; do case "$b" in $g) keep=1 ;; esac; done
+  [ "$keep" = 1 ] && continue
+  if git -C "$REPO" merge-base --is-ancestor "$sha" "origin/$D" 2>/dev/null; then
+    stale+=("LANDED  $b ${sha:0:9}")
+  elif [ "$when" -lt "$cutoff" ] && ! printf '%s\n' "$PRS" | grep -qxF "$sha"; then
+    stale+=("IDLE    $b ${sha:0:9} (last commit $(( (now - when) / 86400 )) d ago)")
+  fi
+done < <(git -C "$REPO" for-each-ref --format='%(refname:short) %(objectname) %(committerdate:unix)' refs/remotes/origin/)
+
+worktree_count="$(git -C "$REPO" worktree list --porcelain | grep -c '^worktree ')"
+stale_count=${#stale[@]}
+
+echo "$name: remote branches $branch_count (budget $BRANCH_BUDGET) · worktrees $worktree_count (budget $WORKTREE_BUDGET) · stale $stale_count (budget $STALE_BUDGET, idle > $STALE_DAYS d or landed)"
+status=0
+if [ "$branch_count" -gt "$BRANCH_BUDGET" ]; then
+  echo "OVER BUDGET: $branch_count remote branches > $BRANCH_BUDGET. The stale rows below go first."
+  status=1
+fi
+if [ "$stale_count" -gt "$STALE_BUDGET" ]; then
+  echo "OVER BUDGET: $stale_count stale branches > $STALE_BUDGET."
+  status=1
+fi
+if [ "$status" = 1 ] || [ "$stale_count" -gt 0 ]; then
+  for row in ${stale[@]+"${stale[@]}"}; do
+    set -- $row
+    echo "  $row"
+    echo "      git push origin $(git -C "$REPO" rev-parse "origin/$2"):refs/archive/$today/$2 && git push origin --delete $2"
+  done
+fi
+if [ "$worktree_count" -gt "$WORKTREE_BUDGET" ]; then
+  echo "OVER BUDGET: $worktree_count worktrees > $WORKTREE_BUDGET. Remove the ones whose ticket is done:"
+  while read -r key path; do
+    [ "$key" = worktree ] || continue
+    st=clean; [ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ] && st=DIRTY
+    lnd="not in $D"; git -C "$path" merge-base --is-ancestor HEAD "origin/$D" 2>/dev/null && lnd="HEAD in $D"
+    echo "  $path  ($st, $lnd)   git worktree remove '$path'"
+  done < <(git -C "$REPO" worktree list --porcelain)
+  echo "  Never --force; a clean, landed worktree can still be a folder something runs from."
+  status=1
+fi
+
+verdict=PASS; [ "$status" = 1 ] && verdict=REFUSED
+if [ -n "$RECEIPT" ]; then
+  printf '%s\t%s\tbranches %s/%s\tworktrees %s/%s\tstale %s/%s\t%s\n' "$(date -u +%FT%TZ)" "$name" \
+    "$branch_count" "$BRANCH_BUDGET" "$worktree_count" "$WORKTREE_BUDGET" "$stale_count" "$STALE_BUDGET" \
+    "$verdict" >> "$RECEIPT" || { echo "hygiene-check: could not append the receipt to $RECEIPT" >&2; exit 2; }
+fi
+if [ "$status" = 1 ]; then
+  echo "hygiene-check: REFUSED. Clean up the rows above, or raise a budget on purpose (HYGIENE_*_BUDGET)." >&2
+fi
+exit "$status"

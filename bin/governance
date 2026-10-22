@@ -106,12 +106,15 @@ noop. --name (default: the --out directory's name) fills `{{name}}` in the templ
 README.md and AGENTS.md only; every other file is copied byte for byte, with its mode. Files named
 *.template are never rendered: they belong in a different repository (a donor's MOVED.md) and are
 copied there by hand. --dry-run reports what would be created and writes nothing.
+When --out is the top of a git repository, scaffold also installs the hygiene pre-push hook
+(bin/hygiene-check --install-hook): `hook: installed` / `ok` / `refused` (another pre-push hook is there;
+exit 1) / `pending` (not a git repository yet: `git init`, then scaffold again).
 
 Exit: 0 done / in sync · 1 drift, or reconcile or scaffold refused an item · 2 cannot run (a named layer
       or source is missing, the output is absent or has no header, the install was refused, there is
       nothing to restore, there is no manifest, or there is no such template)
 """
-import argparse, datetime, hashlib, json, os, re, shlex, shutil, sys
+import argparse, datetime, hashlib, json, os, re, shlex, shutil, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))  # realpath: bin/ is installed as a symlink
 HEADER = "<!-- rendered by governance — DO NOT EDIT: change a layer, then re-render. sha256={} -->\n"
@@ -1454,14 +1457,44 @@ def cmd_scaffold(a):
             shown = "would create" if status == "created" and a.dry_run else status
             print(f"{shown:<12} {rel}" + (f" — {detail}" if detail else ""))
 
+    hook = scaffold_hook(out, a.dry_run)
+    if not a.json:
+        print(f"hook: {hook['status']} {hook['detail']}")
     counts = {s: sum(1 for r in results if r["status"] == s) for s in ("ok", "created", "refused")}
     if a.json:
         print(json.dumps({"template": a.template, "out": out, "name": name, "dry_run": a.dry_run,
-                          "results": results}, indent=2))
+                          "results": results, "hook": hook}, indent=2))
     else:
         print(f"{'dry run: ' if a.dry_run else ''}{len(results)} file(s): {counts['ok']} ok, "
               f"{counts['created']} {'to create' if a.dry_run else 'created'}, {counts['refused']} refused")
-    return 1 if counts["refused"] else 0
+    return 1 if counts["refused"] or hook["status"] == "refused" else 0
+
+
+def scaffold_hook(out, dry_run):
+    """Install the hygiene pre-push hook (lib/git-hooks/pre-push) into OUT's git hooks directory, through
+    `bin/hygiene-check --install-hook`, the one installer. A hook nobody installs is no gate: a hook file
+    shipped in a template still needs every clone to wire it by hand, and measured, none did. Only when
+    OUT is itself the top of a git work tree: a directory INSIDE another repository must not install
+    into that parent. Not yet a repository → `pending`, with the command."""
+    later = f"run `git init`, then scaffold again (or: bin/hygiene-check --repo {shlex.quote(out)} --install-hook)"
+    if dry_run:
+        return {"status": "pending", "detail": f"dry run; the pre-push hook is installed when {out} is a git repository"}
+    try:
+        top = subprocess.run(["git", "-C", out, "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True).stdout.strip()
+    except OSError:
+        top = ""
+    same = lambda p: os.path.normcase(os.path.realpath(p))
+    if not top or same(top) != same(out):
+        return {"status": "pending", "detail": f"{out} is not the top of a git repository; {later}"}
+    bash = shutil.which("bash")
+    if not bash:
+        return {"status": "refused", "detail": "bash not found; the pre-push hook was not installed"}
+    r = subprocess.run([bash, os.path.join(ROOT, "bin", "hygiene-check"), "--repo", out, "--install-hook"],
+                       capture_output=True, text=True)
+    said = " ".join((r.stdout + r.stderr).split())
+    return {"status": "refused" if r.returncode else ("ok" if said.startswith("ok") else "installed"),
+            "detail": said}
 
 
 # --- command line -----------------------------------------------------------------------------------
