@@ -82,18 +82,27 @@ if [[ -z "$path" ]]; then
   exit 0
 fi
 
-# Block writes to environment/secrets files
-if echo "$path" | grep -qE '(\.env$|\.env\.(prod|production|staging|live)|\.env\.local$)'; then
+# Every secret-path match below is CASE-INSENSITIVE (`grep -i`). Windows and default macOS (APFS)
+# filesystems are case-insensitive, so `.ENV`, `.Env` or `ID_RSA` open the very same file as the
+# lowercase name; a case-sensitive pattern let those spellings write it unrefused.
+
+# Block writes to environment/secrets files. `.envrc` is direnv's, which exports secrets. A template
+# (`.env.example`, `.env.sample`, `.env.template`) holds no secret and stays writable.
+if echo "$path" | grep -qiE '(\.env$|\.envrc$|\.env\.(prod|production|staging|live|dev|development|test)|\.env\.local$)'; then
   deny env-file-write "Cannot write to environment files. These may contain secrets. Edit manually."
 fi
 
-# Block writes to credential/key files
-if echo "$path" | grep -qiE '(credentials|secrets|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|id_rsa|id_ed25519|\.ssh/|\.aws/|\.gcloud/)'; then
+# Block writes to credential/key files. The second line is files whose ordinary use holds a login or
+# token: `.netrc` (machine passwords), `.npmrc` (registry auth tokens), `.pgpass` (PostgreSQL
+# passwords), the Docker and Kubernetes client configs (registry auths, cluster tokens), and the GnuPG
+# home (private keys). `.git-credentials` is already caught by `credentials`.
+if echo "$path" | grep -qiE '(credentials|secrets|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|id_rsa|id_ed25519|\.ssh/|\.aws/|\.gcloud/)' \
+  || echo "$path" | grep -qiE '(\.netrc$|\.npmrc$|\.pgpass$|\.docker/config\.json$|\.kube/config$|\.gnupg/)'; then
   deny credential-file-write "Cannot write to credential or key files. Edit manually."
 fi
 
 # Block writes to CI/CD secrets
-if echo "$path" | grep -qE '(\.github/.*secret|vault\.y[a]?ml|\.vault-pass)'; then
+if echo "$path" | grep -qiE '(\.github/.*secret|vault\.y[a]?ml|\.vault-pass)'; then
   deny ci-secret-write "Cannot write to CI/CD secrets files. Edit manually."
 fi
 

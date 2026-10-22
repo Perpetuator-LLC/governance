@@ -179,7 +179,11 @@ fi
 # `.env`, `.env.local`, `.env_x`, `"$D/.env"` and `.envrc` (direnv files hold secrets too), and stops
 # matching a longer word that merely starts with the letters: `properties.environment`,
 # `sample.environment.ts`, `.envoy.yaml`. Without it, any reader verb near such a word was refused.
-SECRET_NAME='\.env([^A-Za-z]|rc|$)'
+# The NAME (only the name, not the reader verbs) is CASE-INSENSITIVE: on Windows and default macOS
+# (APFS) `.ENV` and `.Env` open the same file as `.env`. Bracket classes, not `grep -i`, because the
+# same pattern also runs in python's `re` per sub-command, and neither grep -E nor that call has a
+# scoped inline flag.
+SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
 SECRET_READ="cat\s+.*$SECRET_NAME|grep\s+.*$SECRET_NAME|rg\s+.*$SECRET_NAME|head\s+.*$SECRET_NAME|tail\s+.*$SECRET_NAME|less\s+.*$SECRET_NAME|more\s+.*$SECRET_NAME"
 
 # A heredoc BODY given to `cat` or `tee` is DATA: those two only copy their stdin, so prose in the body
@@ -293,7 +297,7 @@ if echo "$cmd" | grep -qE 'security\s+find-generic-password|security\s+find-inte
   deny keychain-read "Keychain access would expose secrets to the AI context. Keychain reads belong in runtime code only, not in development commands."
 fi
 
-if echo "$cmd" | grep -qE 'docker\s+(exec|inspect).*env|docker\s+(exec|inspect).*\.env|docker\s+(exec|inspect).*secret|docker\s+(exec|inspect).*token|docker\s+(exec|inspect).*password'; then
+if echo "$cmd" | grep -qE 'docker\s+(exec|inspect).*env|docker\s+(exec|inspect).*\.[eE][nN][vV]|docker\s+(exec|inspect).*secret|docker\s+(exec|inspect).*token|docker\s+(exec|inspect).*password'; then
   deny container-secret-read "Extracting secrets from containers would expose them to the AI context. Use Secure Handoff instead."
 fi
 

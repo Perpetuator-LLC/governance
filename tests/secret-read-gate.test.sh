@@ -82,6 +82,10 @@ cases = [
     # RIGHT BOUNDARY: the name still matches with a non-letter after it, `rc`, or the end ...
     (BLOCK, f"cat {E}"), (BLOCK, f"head -1 app/{E}rc"), (BLOCK, f'cat "$D/{E}"'),
     (BLOCK, f"tail {E}_x"), (BLOCK, f"more {E}2"), (BLOCK, f"grep KEY {E}-staging"),
+    # CASE (#271): Windows and default macOS filesystems are case-insensitive, so these open the file
+    (BLOCK, f"cat {E.upper()}"), (BLOCK, "cat .Env"), (BLOCK, "grep KEY app/.eNv.local"),
+    (BLOCK, f"head -1 {E.upper()}RC"), (BLOCK, "tail .Env.Production"), (BLOCK, f"cat {E}RC"),
+    (BLOCK, f"docker exec app od -c /srv/{E.upper()}"),   # the container-secret-read rule's name, too
     # ... and a longer word that merely STARTS with the letters is not the file. The whole-string pattern
     # no longer matches, so these are allowed on every leg, python3 or not.
     (ALLOW, "git worktree add ../wt && grep -q foo package.json && cp src/sample.environment.ts src/environment.ts"),
@@ -90,6 +94,7 @@ cases = [
     (ALLOW, "grep -c x a.txt | wc -l && test -f src/sample.environment.ts"),
     (ALLOW, f"grep -n properties{E}ironment config.py"), (ALLOW, f"cat src/sample{E}ironment.ts"),
     (ALLOW, f"head -3 proxy/{E}oy"),
+    (ALLOW, "cat src/Sample.Environment.ts"), (ALLOW, "head -3 proxy/.ENVOY.yaml"),  # boundary holds in any case
     # A heredoc BODY given to cat/tee is data. Removing it needs python3, so these fail closed without it.
     # The first is the shape that lost a hand-off: prose with an apostrophe and a parenthesis.
     (FP, "cat <<EOF > notes.md\nremember the " + E + " file\nEOF"),
