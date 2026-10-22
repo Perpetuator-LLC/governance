@@ -205,13 +205,36 @@ COMMIT_VAL = {"-m", "-F", "-c", "-C", "-t", "--message", "--file", "--author", "
               "--cleanup", "--pathspec-from-file"}
 PUSH_VAL = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 
+RESTORE_VAL = {"-s", "--source", "--conflict"}
+CHECKOUT_VAL = {"-b", "-B", "--orphan", "--conflict"}
+dirs = []                                         # `cd <dir>` seen in earlier segments; None = unknown
+restores = []                                     # discard-uncommitted checks, run by the shell below
+
+def plain(w):                                     # a path the shell passes through unchanged
+    return bool(w) and not re.search(r"[$~\t\n]", w)
+
+def restore_check(cdirs, gdirs, src, paths):
+    if cdirs is None or gdirs is None or not paths or not all(plain(x) for x in cdirs + gdirs + paths):
+        restores.append("restore\tunknown\t%s" % " ".join(p.replace("\t", " ").replace("\n", " ") for p in paths))
+    else:
+        restores.append("\t".join(["restore", "ok", "1" if src else "0", str(len(cdirs))] + cdirs
+                                  + [str(len(gdirs))] + gdirs + paths))
+
 def check(seg):
+    global dirs
     raw = [t for t in seg]
     words = [word(t) for t in raw]
     i = 0
     while i < len(words) and re.match(r"[A-Za-z_]\w*=", words[i]):
         i += 1                                    # leading VAR=value assignments
     if i == len(words):
+        return None
+    if words[i] in ("cd", "pushd", "popd"):      # a later `git checkout -- f` runs in the new directory
+        rest = words[i + 1:]
+        if dirs is not None and words[i] != "popd" and len(rest) == 1 and plain(rest[0]) and rest[0] != "-":
+            dirs = dirs + [rest[0]]
+        else:
+            dirs = None
         return None
     if not re.search(r"(^|/|\\)git(\.exe)?$", words[i]):
         # Not a git invocation. If git is named inside it anyway (`bash -c "git push ..."`,
@@ -221,11 +244,16 @@ def check(seg):
         return None
     a = words[i + 1:]
     j = 0
+    gdirs = []                                    # every `-C <dir>`, applied in order like git does
     while j < len(a) and a[j].startswith("-"):    # git's GLOBAL options
         opt, _, val = a[j].partition("=")
         if opt in GLOBAL_VAL and not _:
             j += 1
             val = a[j] if j < len(a) else ""
+        if opt == "-C" and gdirs is not None:
+            gdirs.append(val)
+        if opt in ("--git-dir", "--work-tree"):
+            gdirs = None                          # the worktree is no longer the directory: can't tell
         if opt in ("-c", "--config-env"):
             if val.split("=")[0].lower() == "core.hookspath":
                 return ("hook-bypass", "`git -c core.hooksPath=...` points git away from this repository's hooks, so they do not run.")
@@ -291,6 +319,53 @@ def check(seg):
             if p:
                 return ("push-default-branch", "`%s` pushes to `%s`, a protected default branch." % (s, p))
         return None
+    if sub == "checkout" and "--" in args:        # `checkout [<rev>] -- <paths>`; without `--` not judged
+        k = args.index("--")
+        pre, paths = args[:k], args[k + 1:]
+        if any(x.startswith("--pathspec-from-file") for x in pre):
+            restore_check(None, None, True, paths)
+            return None
+        pos, m = [], 0
+        while m < len(pre):
+            if pre[m] in CHECKOUT_VAL:
+                m += 1
+            elif not pre[m].startswith("-"):
+                pos.append(pre[m])
+            m += 1
+        restore_check(dirs, gdirs, bool(pos), paths)
+        return None
+    if sub == "restore":
+        paths, src, staged, worktree, k = [], False, False, False, 0
+        while k < len(args):
+            x = args[k]
+            if x == "--":
+                paths += args[k + 1:]
+                break
+            if x.startswith("--pathspec-from-file"):
+                restore_check(None, None, True, paths)
+                return None
+            if x.startswith("--"):
+                name = x.split("=")[0]
+                src = src or name == "--source"
+                staged = staged or name == "--staged"
+                worktree = worktree or name == "--worktree"
+                if x in RESTORE_VAL:
+                    k += 1
+            elif x.startswith("-") and len(x) > 1:
+                for n, c in enumerate(x[1:]):
+                    staged = staged or c == "S"
+                    worktree = worktree or c == "W"
+                    if c == "s":                  # -s<rev> or -s <rev>
+                        src = True
+                        if n == len(x) - 2:
+                            k += 1
+                        break
+            else:
+                paths.append(x)
+            k += 1
+        if worktree or not staged:                # `restore --staged` alone leaves the worktree alone
+            restore_check(dirs, gdirs, src, paths)
+        return None
     return None
 
 for s in segs:
@@ -298,14 +373,31 @@ for s in segs:
     if v:
         print("%s\t%s" % v)
         sys.exit(0)
+for r in restores:
+    print(r)
 print("ok")
 PY
 }
-git_hit=""
+git_hit=""; git_restores=""; restore_doubt=""
 if printf '%s' "$cmd" | grep -qE '(^|[^[:alnum:]_-])git([^[:alnum:]_-]|$)'; then
-  git_hit=$(git_verdict "$cmd")
+  git_out=$(git_verdict "$cmd")
+  git_hit=$(printf '%s\n' "$git_out" | grep -v '^restore	' | tail -n 1)
+  git_restores=$(printf '%s\n' "$git_out" | grep '^restore	')
   if [[ -z "$git_hit" ]]; then   # doubt: the patterns decide, and they over-match
     flat=$(printf '%s' "$cmd" | tr '\n\r' '  ')
+    # A doubted command that discards a path's changes (#256, below) cannot be checked path by path, so
+    # it is refused like every other doubt: `checkout ... --`, or a `restore` that is not `--staged` only.
+    if printf '%s' "$flat" | grep -qE "${GIT_SEG}checkout([[:space:]][^;&|]*)?[[:space:]]--([[:space:];&|]|\$)"; then
+      restore_doubt=1
+    else
+      while IFS= read -r rseg; do
+        [[ -n "$rseg" ]] || continue
+        if ! printf '%s' "$rseg" | grep -qE "[[:space:]](--staged|-[A-Za-z]*S[A-Za-z]*)([[:space:]]|\$)" \
+           || printf '%s' "$rseg" | grep -qE "[[:space:]](--worktree|-[A-Za-z]*W[A-Za-z]*)([[:space:]]|\$)"; then
+          restore_doubt=1
+        fi
+      done < <(printf '%s' "$flat" | grep -oE "${GIT_SEG}restore([[:space:]][^;&|]*)?")
+    fi
     PRX=$(printf '%s' "$PROTECTED_BRANCHES" | sed 's/[.]/\\./g; s/ /|/g')
     # A quote may open the word (`"--no-verify"`, `'main'`), and core.hooksPath anywhere in a command that
     # runs git is refused, since an environment variable (GIT_CONFIG_*) can carry it as well as `-c`.
@@ -327,6 +419,49 @@ case "$git_hit" in
   hook-bypass*)
     deny hook-bypass "Skipping the git hooks: ${git_hit#*$'\t'} Fix what the hook reports instead. Run this yourself if intended." ;;
 esac
+
+# Discarding UNCOMMITTED changes to a path (#256). `git checkout [<rev>] -- <paths>` and `git restore
+# [--worktree] [--source=<rev>] <paths>` overwrite the working tree with no copy kept. Used to undo one
+# deliberate mutation, they also undo every other uncommitted change in the file; measured three times,
+# up to 189 lines lost at once, and the loss is silent. So the command is refused when any named path has
+# changes against HEAD (modified, staged, deleted, or, when a <rev> is named, an untracked file the rev
+# would overwrite). The same command on clean paths runs; so do `git checkout <branch>`, `checkout -b`,
+# and `git restore --staged <path>` (index only). `git checkout <path>` with no `--` is not judged: telling
+# a path from a branch name needs the repository, and the ticket asks for the `--` forms.
+#
+# The paths are judged with `git status --porcelain` where the command would run: the hook input's `cwd`
+# (else the directory this hook runs in), then each earlier `cd <dir>` in the same command, then each `-C`.
+# The check runs before the command, so a checkpoint commit in the SAME command (`git commit -am x &&
+# git checkout -- f`) does not count: commit or stash in one call, revert in the next.
+#
+# CAN'T TELL refuses (fail closed), as every doubt in the git rules above does: the directory or a path
+# holds a variable, `~` or `$(...)`; `--git-dir`/`--work-tree`/`--pathspec-from-file`; the directory does
+# not exist; it is not a repository; git is missing. In each of those the real command either fails anyway
+# or is unusual, so a refusal costs one rewrite, while a wrong allow costs uncommitted work, silently.
+restore_dirty=""
+if [[ -n "$restore_doubt" ]]; then
+  restore_dirty="(could not be determined: the command nests or quotes in a way this gate does not read)"
+elif [[ -n "$git_restores" ]]; then
+  hook_cwd=$(tool_field "$input" .cwd)
+  while IFS=$'\t' read -r -a f; do
+    [[ "${f[1]:-}" == "ok" ]] || { restore_dirty="(could not be determined for: ${f[*]:2})"; break; }
+    src="${f[2]}"; n="${f[3]}"; cds=("${f[@]:4:n}"); k=$((4 + n))
+    n="${f[k]}"; cs=(); for c in "${f[@]:k+1:n}"; do cs+=(-C "$c"); done; paths=("${f[@]:k+1+n}")
+    st=$(
+      if [[ -n "$hook_cwd" ]]; then cd -- "$hook_cwd" 2>/dev/null || exit 3; fi
+      for d in "${cds[@]}"; do cd -- "$d" 2>/dev/null || exit 3; done
+      git "${cs[@]}" status --porcelain --untracked-files=all -- "${paths[@]}" 2>/dev/null
+    ) || { restore_dirty="(could not be determined for: ${paths[*]}; not a git repository, or git failed)"; break; }
+    [[ "$src" == 1 ]] || st=$(printf '%s\n' "$st" | grep -v '^??')   # no <rev>: an untracked file is untouched
+    if [[ -n "$st" ]]; then
+      restore_dirty=$(printf '%s\n' "$st" | cut -c4- | head -n 5 | paste -sd ' ' -)
+      break
+    fi
+  done <<<"$git_restores"
+fi
+if [[ -n "$restore_dirty" ]]; then
+  deny discard-uncommitted "This would discard uncommitted changes, silently and with no copy kept: $restore_dirty. Commit a checkpoint (git add, then git commit) or git stash push those paths in a separate call first, then revert. Run this yourself if intended."
+fi
 
 # Block database destruction
 if echo "$cmd" | grep -qiE '(DROP\s+(TABLE|DATABASE)|TRUNCATE\s+TABLE|DELETE\s+FROM\s+\w+\s*;?\s*(["'"'"']|$))'; then
