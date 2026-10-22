@@ -16,7 +16,9 @@ ok()   { echo "  ✅ $1"; pass=$((pass+1)); }
 bad()  { echo "  ❌ $1"; fail=$((fail+1)); }
 check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 gov()  { python3 "$GOV" "$@" >"$TMP/stdout" 2>"$TMP/stderr"; echo $?; }
-bundle_dirs() { find "$1" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort; }
+bundle_dirs() {  # top-level directory names under $1, one per line, sorted — no GNU-only find flag
+  for d in "$1"/*/; do [ -d "$d" ] && basename "$d"; done | sort
+}
 
 echo "governance render/check --target seed"
 check "the script is executable" "[ -x '$GOV' ]"
@@ -49,7 +51,10 @@ CORE="$TMP/core"; ADAPTER="$TMP/adapter"
 rc="$(gov render --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme)"
 check "render exits 0" "[ '$rc' = '0' ]"
 H_ACME="$(bundle_dirs "$SEED")"
-check "exactly one bundle directory exists" "[ \"\$(wc -l <<<\"\$H_ACME\")\" = '1' ]"
+# BSD wc -l right-pads its count ("       1"), so a bare `wc -l` compared with `=` to '1' is false on
+# macOS even when the count is right — pipe through `wc -l | tr -d ' '`, same as every other count
+# check in this file, never a bare `wc -l` against a string literal.
+check "exactly one bundle directory exists" "[ \"\$(bundle_dirs "$SEED" | wc -l | tr -d ' ')\" = '1' ]"
 
 GMD="$SEED/$H_ACME/governance.md"
 check "KAT: the in-set canary (acme) is present in governance.md" "grep -q 'CANARY-ACME' '$GMD'"
