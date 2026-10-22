@@ -924,6 +924,32 @@ ticket that closes when its fix lands; or have each pass file its own. **Where i
 routine that only writes its own artifact (a log, a page) and reports to no ticket has no target to
 lose.
 
+**A script never reads the file it redirects into.** The usual way to write a leg is to run the work,
+redirect it to a scratch file, then print the file — `… done > "$S/out.txt" 2>&1`, then
+`cat "$S/out.txt"`. When the redirect is still in force where the `cat` runs (the leg is
+backgrounded, or the `cat` sits inside the redirected group), the command becomes
+`cat file >> file`: an append that feeds on itself and grows without bound. Measured: one such leg
+wrote 399 GB at about 440 MB/s, and a `cp` taken to snapshot it doubled that. ⚠️ **The part a reader
+will not predict: every read of that file HANGS instead of failing.** `wc`, `grep`, `sort` and `cp`
+never reach the end of a file that grows faster than they read it, so they time out one after another
+with no error and no output. It looks like *"the tool is slow"*, and the natural response — wait, or
+retry the read — is the wrong one. What shows it is the file's size sampled twice, a second apart.
+So:
+
+- write the work to one path, and print a *bounded* verdict (counts, plus the rows that are not
+  clean) from a **different** path, or print nothing and let the caller read the file in a later,
+  separate invocation;
+- give any unbounded loop a hard cap that aborts with a stated reason, so a runaway ends as a finding
+  and not as a full disk.
+
+**Scope: scripts and backgrounded commands only.** **Where it is wrong:** at an interactive prompt,
+`cmd > f; cat f` is fine — a simple command's redirect ends with the command, and you can see that
+it has. Reading the file *before* the redirect opens, or redirecting the file *into* a loop
+(`done < f`) and then reading it, writes nothing and is fine everywhere. `bin/redirect-read-check`
+refuses a script or a fenced shell block where a compound command (`for/while … done`, `if … fi`,
+`{ … }`, `( … )`) redirects its output to a path and a `cat` of that same path follows the point
+where the compound opens.
+
 ## A context reset releases nothing — walk what the session holds before it
 
 Clearing or compacting an agent's context in place keeps the seat and destroys its memory. Every

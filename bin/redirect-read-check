@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""redirect-read-check — a script never `cat`s the file a compound command redirects into.
+
+  redirect-read-check PATH [PATH ...]
+
+A routine leg written the usual way — run a loop, redirect it to a scratch file, print the file —
+
+    for b in $branches; do probe "$b"; done > "$S/out.txt" 2>&1
+    echo done; cat "$S/out.txt"
+
+becomes `cat file >> file` when the redirect is still in force where the `cat` runs (backgrounded,
+or the `cat` inside the redirected group): a self-feeding append that grows without bound, and every
+later read of the file HANGS instead of failing, because it never reaches EOF (core operations.md →
+"Routine authoring" → "A script never reads the file it redirects into").
+
+For every shell script under PATH (a *.sh file, or any file whose shebang names bash, sh or zsh),
+and for every fenced shell block (```bash, sh, shell, zsh) in Markdown under PATH, each compound
+command — `for/while/until/select … done`, `if … fi`, `case … esac`, `{ … }`, `( … )` — whose
+stdout is redirected (`>`, `>>`, `>|`, `1>`, `&>`) to a target is recorded, and then:
+
+  REDIRECT_THEN_CAT  a `cat` of that same target appears AFTER the compound command OPENS — inside
+                     its body, or anywhere later in the same script or block
+
+Not findings, by design:
+  - a `cat` of the target BEFORE the compound opens (the read finished before the write began);
+  - an INPUT redirect (`done < "$X"`) followed by `cat "$X"` (a read, not a write);
+  - a SIMPLE command (`cmd > "$X"; cat "$X"`): its redirect ends with the command;
+  - anything inside quotes, a comment, or a heredoc body.
+Targets are compared after dropping quotes and braces, so `"${S}/out.txt"` and `$S/out.txt` match.
+
+Exit: 0 no finding · 1 at least one · 2 no script or shell block found under the paths given.
+"""
+import os
+import re
+import sys
+
+SHELL_LANGS = {"bash", "sh", "shell", "zsh"}
+FENCE = re.compile(r"^\s*(```+|~~~+)\s*([A-Za-z0-9_-]*)")
+SHEBANG = re.compile(r"^#!.*\b(bash|sh|zsh)\b")
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+CMDPOS = r"(?:^|(?<=[;&|({\n])|(?<=\bthen)|(?<=\bdo)|(?<=\belse))[ \t]*"
+KEYWORD = re.compile(CMDPOS + r"(while|until|for|select|if|case|done|fi|esac)(?=[ \t;\n)&|<>]|$)", re.M)
+BRACE_OPEN = re.compile(CMDPOS + r"(\{)(?=[ \t\n])", re.M)
+BRACE_CLOSE = re.compile(r"(?:(?<=[;&\n])|(?<=[;&\n][ \t])|^)[ \t]*(\})", re.M)
+PAREN = re.compile(r"\$\(\(|\(\(|\)\)|\$\(|\(|\)")
+REDIR = re.compile(r"[ \t]*(\d*|&)(>>|>\||>|<)[ \t]*(&\d+|\"[^\"\n]*\"|'[^'\n]*'|[^\s;&|()<>]+)")
+CAT = re.compile(CMDPOS + r"(cat)(?=[ \t])", re.M)
+OPENERS = {"while": "done", "until": "done", "for": "done", "select": "done", "if": "fi", "case": "esac"}
+
+
+def mask(text):
+    """Same length as text: quoted contents, ${…}, comments and heredoc bodies become spaces, so
+    structure is read from code only while offsets still index the original."""
+    out, i, n = list(text), 0, len(text)
+    pending = []                                  # heredoc terminators opened on the current line
+    while i < n:
+        c = text[i]
+        if c == "\n":
+            i += 1
+            if pending:                           # blank each heredoc body up to its terminator
+                for term in pending:
+                    while i < n:
+                        j = text.find("\n", i)
+                        j = n if j < 0 else j
+                        body = text[i:j]
+                        for k in range(i, j):
+                            out[k] = " "
+                        i = j + 1
+                        if body.strip() == term:
+                            break
+                pending = []
+            continue
+        if c == "\\" and i + 1 < n:
+            out[i] = " "
+            if text[i + 1] != "\n":
+                out[i + 1] = " "
+            i += 2
+            continue
+        if c == "#" and (i == 0 or text[i - 1] in " \t\n;&|("):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            for k in range(i, j):
+                out[k] = " "
+            i = j
+            continue
+        if c in "'\"":
+            j = i + 1
+            while j < n and text[j] != c:
+                j += 2 if (c == '"' and text[j] == "\\") else 1
+            for k in range(i + 1, min(j, n)):
+                if text[k] != "\n":
+                    out[k] = " "
+            i = j + 1
+            continue
+        if text.startswith("${", i):
+            j = text.find("}", i)
+            j = n if j < 0 else j
+            for k in range(i, min(j + 1, n)):
+                out[k] = " "
+            i = j + 1
+            continue
+        m = HEREDOC.match(text, i)
+        if m:
+            pending.append(m.group(2))
+            i = m.end()
+            continue
+        i += 1
+    return "".join(out)
+
+
+def norm(word):
+    w = word.strip()
+    if len(w) >= 2 and w[0] == w[-1] and w[0] in "'\"":
+        w = w[1:-1]
+    w = w.replace('"', "").replace("'", "")
+    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", r"$\1", w)
+
+
+def redirect_targets(text, at):
+    """Stdout redirect targets written directly after offset `at` (the end of a closer)."""
+    out = []
+    while True:
+        m = REDIR.match(text, at)
+        if not m:
+            return out
+        fd, op, target = m.group(1), m.group(2), m.group(3)
+        if op != "<" and fd in ("", "1", "&") and not target.startswith("&"):
+            out.append(norm(target))
+        at = m.end()
+
+
+def tokens(masked):
+    toks = []
+    for m in KEYWORD.finditer(masked):
+        toks.append((m.start(1), m.end(1), m.group(1)))
+    for m in BRACE_OPEN.finditer(masked):
+        toks.append((m.start(1), m.end(1), "{"))
+    for m in BRACE_CLOSE.finditer(masked):
+        toks.append((m.start(1), m.end(1), "}"))
+    for m in PAREN.finditer(masked):
+        toks.append((m.start(), m.end(), m.group()))
+    return sorted(toks)
+
+
+def redirected_compounds(text, masked):
+    """[(opener offset, closer end, target)] for every compound whose stdout is redirected."""
+    stack, found = [], []
+    for start, end, tok in tokens(masked):
+        if tok in OPENERS or tok in ("{", "(", "$(", "((", "$(("):
+            stack.append((tok, start))
+            continue
+        if tok == ")" and stack and stack[-1][0] == "case":
+            continue                              # a case pattern's `)`, not a subshell
+        want = {"done": set(("while", "until", "for", "select")), "fi": {"if"}, "esac": {"case"},
+                "}": {"{"}, ")": {"(", "$("}, "))": {"((", "$(("}}.get(tok)
+        if not want:
+            continue
+        idx = next((k for k in range(len(stack) - 1, -1, -1) if stack[k][0] in want), None)
+        if idx is None:
+            continue
+        opener, ostart = stack[idx]
+        del stack[idx:]
+        if opener in ("$(", "((", "$(("):
+            continue                              # a substitution or arithmetic, not a command
+        for target in redirect_targets(text, end):
+            found.append((ostart, end, target))
+    return found
+
+
+def cats(text, masked):
+    """[(offset, [normalised args])] for every `cat` at command position."""
+    out = []
+    for m in CAT.finditer(masked):
+        j = m.end(1)
+        k = j
+        while k < len(masked) and masked[k] not in ";&|)\n":
+            k += 1
+        args = re.findall(r"\"[^\"]*\"|'[^']*'|[^\s]+", text[j:k])
+        out.append((m.start(1), [norm(a) for a in args if not a.startswith("-")]))
+    return out
+
+
+def check(text):
+    """[(redirect line, cat line, target)] for one script or one shell block."""
+    masked = mask(text)
+    line = lambda off: text.count("\n", 0, off) + 1
+    found = []
+    allcats = cats(text, masked)
+    for ostart, cend, target in redirected_compounds(text, masked):
+        for coff, args in allcats:
+            if coff > ostart and target in args:
+                found.append((line(cend), line(coff), target))
+    return found
+
+
+def shell_blocks(text):
+    blocks, cur, start, lang, fence = [], None, 0, "", ""
+    for n, line in enumerate(text.splitlines(), 1):
+        m = FENCE.match(line)
+        if cur is None and m:
+            fence, lang, cur, start = m.group(1)[0] * 3, m.group(2).lower(), [], n
+        elif cur is not None and line.strip().startswith(fence):
+            if lang in SHELL_LANGS:
+                blocks.append((start, "\n".join(cur) + "\n"))
+            cur = None
+        elif cur is not None:
+            cur.append(line)
+    return blocks
+
+
+def is_script(path):
+    if path.endswith(".sh"):
+        return True
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return bool(SHEBANG.match(fh.readline()))
+    except OSError:
+        return False
+
+
+def files_under(paths):
+    out = []
+    for p in paths:
+        if os.path.isdir(p):
+            for d, dirs, files in os.walk(p):
+                dirs[:] = [x for x in dirs if not x.startswith(".git") and x not in ("node_modules", "__pycache__")]
+                out += [os.path.join(d, f) for f in sorted(files)]
+        elif os.path.isfile(p):
+            out.append(p)
+    return sorted(set(f for f in out if f.endswith(".md") or is_script(f)))
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0 if argv else 2
+    units, findings = 0, []
+    for f in files_under(argv):
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+        if f.endswith(".md"):
+            parts = [(start, body) for start, body in shell_blocks(text)]
+        else:
+            parts = [(0, text)]
+        for offset, body in parts:
+            units += 1
+            for rl, cl, target in check(body):
+                findings.append(f"REDIRECT_THEN_CAT  {f}:{offset + cl}  cat {target} — the same file a "
+                                f"compound command redirects into at line {offset + rl}")
+    if not units:
+        print("redirect-read-check: no shell script or shell block found under the paths given", file=sys.stderr)
+        return 2
+    for x in findings:
+        print(x)
+    print(f"redirect-read-check: {units} script(s)/block(s), {len(findings)} finding(s)")
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
