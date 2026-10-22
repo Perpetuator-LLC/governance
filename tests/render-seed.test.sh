@@ -94,8 +94,16 @@ echo "extra line" >> "$ADAPTER/AGENTS.md"
 rc="$(gov check --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme)"
 check "KAT: check --target seed flags a STALE bundle after a source changes (exit 1, LAYERS CHANGED)" \
   "[ '$rc' = '1' ] && grep -q 'LAYERS CHANGED' '$TMP/stdout'"
-# control: reverting the mutation clears the staleness, proving the check is live and not a fixed string
-sed -i '$ d' "$ADAPTER/AGENTS.md"
+# control: reverting the mutation clears the staleness, proving the check is live and not a fixed
+# string. Portable last-line removal (governance#283 CTA send-back c104640 item 1): `sed -i '$ d'` is
+# GNU-only and errors on BSD/macOS sed ("invalid command code"), which every agent host runs.
+python3 -c "
+p = '$ADAPTER/AGENTS.md'
+with open(p) as fh:
+    lines = fh.readlines()
+with open(p, 'w') as fh:
+    fh.writelines(lines[:-1])
+"
 rc="$(gov check --target seed --out "$SEED" --core "$CORE" --adapter "$ADAPTER" --engagement acme)"
 check "…and reverting the source clears the staleness (exit 0 again, the control)" "[ '$rc' = '0' ]"
 
@@ -104,6 +112,81 @@ check "--local is refused for --target seed (LOCAL never leaves the machine), no
 
 rc="$(gov render --target seed --out "$SEED" --core "$TMP/no-such-core" --adapter "$ADAPTER" --engagement acme)"
 check "a missing core/adapter path refuses (exit 2), same as an ordinary render" "[ '$rc' = '2' ]"
+
+# --- CTA send-back c104640, items 2-5: map.md is an authored map, not provenance; canary coverage
+# extends to map rows, README and prompts; instructions-core.md exists and is budget-enforced;
+# the RENDERED bundle itself is redaction-checked, not only its sources. Fresh fixtures: reusing the
+# first block's would mix this block's new seed/ files into earlier hash/hit counts.
+SEED2="$TMP/seed2"
+CORE2="$TMP/core2"; ADAPTER2="$TMP/adapter2"
+mkdir -p "$CORE2/seed" "$ADAPTER2/seed" "$ADAPTER2/engagements/acme/seed" "$ADAPTER2/engagements/other/seed" \
+  "$ADAPTER2/engagements/acme/prompts"
+cat > "$CORE2/AGENTS.md" <<'DOC'
+# core
+Core rule.
+DOC
+cat > "$ADAPTER2/AGENTS.md" <<'DOC'
+# adapter
+Org-wide rule.
+DOC
+cat > "$ADAPTER2/seed/map.md" <<'DOC'
+MAP-ORGWIDE-ROW
+DOC
+cat > "$ADAPTER2/seed/instructions-core.md" <<'DOC'
+INSTR-CORE-OK
+DOC
+cat > "$ADAPTER2/engagements/acme/seed/map.md" <<'DOC'
+MAP-ACME-ROW
+DOC
+cat > "$ADAPTER2/engagements/other/seed/map.md" <<'DOC'
+MAP-OTHER-ROW
+DOC
+cat > "$ADAPTER2/engagements/acme/README.md" <<'DOC'
+README-ACME-CANARY
+DOC
+cat > "$ADAPTER2/engagements/acme/prompts/boot.md" <<'DOC'
+PROMPT-ACME-CANARY
+DOC
+
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme)"
+check "item 2/5: render with seed/ sources and no secret shapes exits 0 (redaction-clean)" "[ '$rc' = '0' ]"
+H2="$(bundle_dirs "$SEED2")"
+
+check "item 2: map.md is the AUTHORED map (org-wide row present)" "grep -q 'MAP-ORGWIDE-ROW' '$SEED2/$H2/map.md'"
+check "item 2+3: map.md carries the IN-SET engagement's row" "grep -q 'MAP-ACME-ROW' '$SEED2/$H2/map.md'"
+check "item 2+3 KAT: map.md does NOT carry the OUT-OF-SET engagement's row" "! grep -q 'MAP-OTHER-ROW' '$SEED2/$H2/map.md'"
+check "item 3 KAT: the in-set engagement's own README canary made it into the bundle" \
+  "grep -rq 'README-ACME-CANARY' '$SEED2/$H2'"
+check "item 3 KAT: the in-set engagement's own prompt canary made it into the bundle" \
+  "grep -rq 'PROMPT-ACME-CANARY' '$SEED2/$H2'"
+
+check "item 4: instructions-core.md exists and carries the org-wide source" \
+  "[ -f '$SEED2/$H2/instructions-core.md' ] && grep -q 'INSTR-CORE-OK' '$SEED2/$H2/instructions-core.md'"
+check "item 4: instructions-core.md is well under its 1 KB budget" \
+  "[ \"\$(wc -c <'$SEED2/$H2/instructions-core.md')\" -le 1024 ]"
+
+# item 4 KAT: an over-budget instructions-core.md REFUSES the render rather than shipping it anyway.
+python3 -c "open('$ADAPTER2/seed/instructions-core.md', 'w').write('x' * 2000)"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme)"
+check "item 4 KAT: an over-budget instructions-core.md is REFUSED (exit 2), not truncated or shipped" \
+  "[ '$rc' = '2' ] && grep -qi 'budget' '$TMP/stderr'"
+python3 -c "open('$ADAPTER2/seed/instructions-core.md', 'w').write('INSTR-CORE-OK\n')"  # restore
+
+# item 5 KAT: a shape finding in a RENDERED bundle file (not just a source) refuses the render. A
+# ticket-reference shape (bin/redaction-check's own SHAPE_PATTERNS) is enough to trigger it and
+# needs no real secret.
+echo "see acme#42 for details" >> "$ADAPTER2/seed/map.md"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme)"
+check "item 5 KAT: a redaction finding in the rendered bundle REFUSES the render (exit 2)" \
+  "[ '$rc' = '2' ] && grep -qi 'redaction-check found' '$TMP/stderr'"
+check "…and no bundle directory is left behind for a refused render" \
+  "[ \"\$(bundle_dirs '$SEED2' | wc -l | tr -d ' ')\" = '1' ]"
+python3 -c "
+lines = open('$ADAPTER2/seed/map.md').readlines()
+open('$ADAPTER2/seed/map.md', 'w').writelines(lines[:-1])
+"
+rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme)"
+check "…and reverting the finding lets the render succeed again (the control)" "[ '$rc' = '0' ]"
 
 echo
 echo "  $pass passed, $fail failed"
