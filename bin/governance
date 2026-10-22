@@ -147,6 +147,10 @@ MANIFEST = os.path.join(".governance", "manifest.json")
 ADAPTER_DIR = ".governance"          # the organisation layer, inside its vault
 ADAPTER_PARTS = ("skills", "hooks", "agents", "bin", "domains", "settings", "scheduled-tasks")
 SEED_ENGAGEMENTS_DIR = "engagements"   # reserved top-level name inside a layer; see layer_files
+SEED_SOURCES_DIR = "seed"              # a layer's own authored seed content: seed/map.md, seed/instructions-core.md
+SEED_MAP_FILE = "map.md"
+SEED_INSTRUCTIONS_FILE = "instructions-core.md"
+SEED_INSTRUCTIONS_BUDGET = 1024        # bytes — a server embeds this file verbatim; keep it small
 GOV_MD, CLAUDE_MD, IMPORT_LINE = "GOVERNANCE.md", "CLAUDE.md", "@GOVERNANCE.md"
 MARK_BEGIN, MARK_END = "<!-- governance:begin -->", "<!-- governance:end -->"
 # HARNESS (the per-harness registry) and HARNESSES (its name order) are defined below, just above
@@ -278,16 +282,44 @@ def seed_layers(core, adapters, engagements):
     return layers
 
 
-def seed_map(layers):
-    lines = ["# Map — where this bundle's rules come from", ""]
-    for name, path in layers:
-        for rel, _ in layer_files(path):
-            lines.append(f"- **{name}** → `{rel}`")
-    return "\n".join(lines) + "\n"
-
-
 def _seed_slug(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def seed_source_layers(core, adapters, engagements, filename):
+    """[(label, filepath), ...] for CORE's and each ADAPTER's seed/<filename>, then — for each name
+    actually in `engagements` — each ADAPTER's engagements/<name>/seed/<filename>, skipping any that
+    does not exist. Same ordering and same per-engagement inclusion rule as seed_layers, so content
+    sourced this way (map.md's rows, instructions-core.md) is exactly as engagement-filtered as
+    governance.md itself — one rule, applied to every bundle file, not re-derived per file."""
+    n = len(adapters)
+    candidates = [("core", os.path.join(core, SEED_SOURCES_DIR, filename))]
+    candidates += [(adapter_label(i, n), os.path.join(p, SEED_SOURCES_DIR, filename))
+                   for i, p in enumerate(adapters, 1)]
+    for name in sorted(engagements):
+        for i, adapter in enumerate(adapters, 1):
+            candidates.append((f"{adapter_label(i, n)} · engagement:{name}",
+                               os.path.join(adapter, SEED_ENGAGEMENTS_DIR, name, SEED_SOURCES_DIR, filename)))
+    return [(label, p) for label, p in candidates if os.path.isfile(p)]
+
+
+def seed_map(core, adapters, engagements):
+    """map.md is WHERE THINGS LIVE (placement, repos, knowledge bases, landing page) — adapter-
+    authored content under seed/map.md, never the layer-provenance list that already lives in
+    bundle.json's own sources. Engagement rows come from that engagement's own seed/map.md, so an
+    out-of-set engagement's rows are excluded the same way its rules are."""
+    layers = seed_source_layers(core, adapters, engagements, SEED_MAP_FILE)
+    if not layers:
+        return "# Map — where this bundle's rules and knowledge bases live\n\n(no map sources declared)\n"
+    return build_body(layers)
+
+
+def seed_instructions_core(core, adapters):
+    """instructions-core.md: the non-negotiables a server embeds verbatim in `initialize.instructions`,
+    so they survive a client that never reads resources. Org-wide only — CORE and each ADAPTER's own
+    seed/instructions-core.md — never engagement-scoped: these are the floor, not a client's rules."""
+    layers = seed_source_layers(core, adapters, set(), SEED_INSTRUCTIONS_FILE)
+    return build_body(layers) if layers else ""
 
 
 def seed_readmes(layers):
@@ -319,14 +351,44 @@ def core_tag(core):
     return tag if r.returncode == 0 and tag else "unknown"
 
 
+def seed_redaction_clean(bdir):
+    """(ok, output) — runs bin/redaction-check --enforce over the RENDERED bundle directory. The
+    bundle ships to clients, so its own text is what must be checked, not only the sources it was
+    built from: a source clean in isolation can still compose into a line that reads as a finding
+    once concatenated. exit 3 (the instance-name leg not checked — no --private-patterns here) is
+    not a finding and does not refuse."""
+    import subprocess
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "bin", "redaction-check"), "--enforce", bdir],
+                       capture_output=True, text=True)
+    return r.returncode in (0, 3), (r.stdout + r.stderr).strip()
+
+
 def build_seed_bundle(core, adapters, engagements):
-    """(files, sources): files is {relpath-in-bundle: text} — governance.md, map.md, and whatever
-    README/prompts the layers carry; sources is {abspath: sha256} of every file that fed the
-    bundle, recorded so `check` can tell a stale bundle from a current one without re-reading the
-    bundle itself."""
+    """(files, sources): files is {relpath-in-bundle: text} — governance.md, map.md,
+    instructions-core.md (if any seed/instructions-core.md exists), and whatever README/prompts the
+    layers carry; sources is {abspath: sha256} of every file that fed the bundle, recorded so `check`
+    can tell a stale bundle from a current one without re-reading the bundle itself.
+
+    Raises Refusal if instructions-core.md would exceed its budget — a server embeds it verbatim, so
+    an over-budget file is not something to ship and silently ignore."""
     layers = seed_layers(core, adapters, engagements)
     sources = {full: file_sha(full) for _, path in layers for _, full in layer_files(path)}
-    files = {"governance.md": build_body(layers), "map.md": seed_map(layers)}
+
+    files = {"governance.md": build_body(layers), "map.md": seed_map(core, adapters, engagements)}
+    for _, p in seed_source_layers(core, adapters, engagements, SEED_MAP_FILE):
+        sources[p] = file_sha(p)
+
+    instructions = seed_instructions_core(core, adapters)
+    if instructions:
+        size = len(instructions.encode("utf-8"))
+        if size > SEED_INSTRUCTIONS_BUDGET:
+            raise Refusal(f"instructions-core.md is {size} bytes, over its {SEED_INSTRUCTIONS_BUDGET}-byte "
+                          "budget — trim the seed/instructions-core.md source(s), or raise the budget in "
+                          "the same change")
+        files["instructions-core.md"] = instructions
+        for _, p in seed_source_layers(core, adapters, set(), SEED_INSTRUCTIONS_FILE):
+            sources[p] = file_sha(p)
+
     files.update(seed_readmes(layers))
     files.update(seed_prompts(layers))
     return files, sources
@@ -350,7 +412,11 @@ def cmd_render_or_check_seed(a):
             print(f"error: {name} layer not found: {path}", file=sys.stderr)
             return 2
 
-    files, sources = build_seed_bundle(core, adapters, engagements)
+    try:
+        files, sources = build_seed_bundle(core, adapters, engagements)
+    except Refusal as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 2
     h = bundle_hash(files)
     bdir = os.path.join(a.out, h)
 
@@ -362,6 +428,12 @@ def cmd_render_or_check_seed(a):
             with open(tmp, "w", encoding="utf-8") as fh:
                 fh.write(text)
             os.replace(tmp, dest)
+        clean, output = seed_redaction_clean(bdir)
+        if not clean:
+            shutil.rmtree(bdir, ignore_errors=True)
+            print(f"refused: redaction-check found something in the rendered bundle — it ships to "
+                  f"clients, so this is a build failure, not a notice:\n{output}", file=sys.stderr)
+            return 2
         index = {
             "bundle_hash": h,
             "core_tag": core_tag(core),
