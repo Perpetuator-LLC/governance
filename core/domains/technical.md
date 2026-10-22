@@ -949,6 +949,23 @@ providers: none"* reads as *"nothing here to protect"*.
   registry is only as good as the process that writes it, so provisioning writes the row before it
   creates the resource.
 
+## A worker claims its registry row at BOOT, not at the next rotation
+
+**The row that says who currently holds a seat is only as current as the last thing that wrote it,
+and "the next rotation sweep will catch it" is a schedule, not a guarantee.** A worker that boots in
+place of a dead, restarted, or replaced seat writes its own identity into that seat's registry row as
+part of booting, in the same act, never deferred to a periodic sweep. Measured: a registry check run
+at successive rotations found the count of rows claiming "current" with nothing behind them growing
+— not shrinking — because every row's only writer was the rotation sweep itself, and any worker that
+started or restarted between sweeps left its row stale for the whole gap in between.
+
+**Scope:** any seat, worker, or process whose "who currently holds this" row a router, monitor, or
+human reads to decide where to send work or whether something is alive.
+
+**Where it is wrong:** a resource with no successor — a one-shot job, a worker being retired rather
+than replaced — has no boot-time claim to make, because nothing takes its row over. The right action
+there is to retire the row at shutdown, not leave it stale waiting on a claim that will never come.
+
 ## Deploys & health — pull-based
 
 - **Boxes deploy themselves** (webhook, HMAC-verified, + catch-up timer gated on CI-green
