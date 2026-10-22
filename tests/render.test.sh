@@ -84,6 +84,12 @@ check "THIS core renders" "[ '$rc' = '0' ]"
 rc="$(gov check --out "$TMP/SELF.md")"
 check "THIS core render is in sync" "[ '$rc' = '0' ]"
 
+# A console that cannot encode → (Windows cp1252) used to raise UnicodeEncodeError on the success
+# message, AFTER the file was written: exit 1 and a traceback for work that had succeeded.
+rc="$(PYTHONIOENCODING=cp1252 gov render --out "$TMP/CP.md")"
+check "on a cp1252 console, render exits 0 and reports without a traceback" \
+  "[ '$rc' = '0' ] && grep -q 'rendered' '$TMP/stdout' && ! grep -q Traceback '$TMP/stderr'"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
