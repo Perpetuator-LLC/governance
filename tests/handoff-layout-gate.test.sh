@@ -27,7 +27,7 @@ GOOD="## ✅ Done
 ► alice@workstation · 🔑 PROMPTS: alice · password · workstation (sudo)
 📝 LOGGED → ~/.local/state/x.log
 ${F}bash
-sudo ./rotate.sh
+sudo -p 'alice@workstation: ' ./rotate.sh
 ${F}"
 
 EXHIBIT="Run this:
@@ -53,6 +53,17 @@ check "R3 fires: 👤 You not last"                            1 "must be the LA
 - something"
 check "R4 fires alone (no LOGGED marker)"                    1 "R4" "$(printf '%s' "$GOOD" | sed '/LOGGED/d')"
 check "🚫 NOT LOGGED satisfies R4"                           0 "ok" "$(printf '%s' "$GOOD" | sed 's/📝 LOGGED → ~\/.local\/state\/x.log/🚫 NOT LOGGED (no output)/')"
+check "R5 fires: bare sudo on a remote host, no -p at all"   1 "R5" "$(printf '%s' "$GOOD" | sed "s/sudo -p 'alice@workstation: ' .\/rotate.sh/ssh app-1 'sudo systemctl restart app'/")"
+check "R5 fires: sudo -p with no owner@host in its value"    1 "R5" "$(printf '%s' "$GOOD" | sed "s/sudo -p 'alice@workstation: ' .\/rotate.sh/sudo -p 'Password:' .\/rotate.sh/")"
+check "R5 fires: a label on the PREVIOUS line does not satisfy it" 1 "R5" "## 👤 You
+**Rotate the key**
+► alice@workstation · 🔑 PROMPTS: alice · password · workstation (sudo)
+📝 LOGGED → ~/.local/state/x.log
+${F}bash
+# alice@workstation
+sudo ./rotate.sh
+${F}"
+check "R5 passes: sudo -p '<owner>@<host>: ' on the sudo line itself" 0 "ok" "$GOOD"
 
 # Stop-hook channel: a transcript whose last assistant text is the exhibit
 mk() { python3 - "$1" "$2" <<'PY'
