@@ -127,6 +127,207 @@ if echo "$cmd" | grep -qE "${GIT_SEG}reset([[:space:]][^;&|]*)?[[:space:]]--hard
   deny hard-reset "Hard reset requires manual confirmation. Run this command yourself if intended."
 fi
 
+# Push to the DEFAULT branch, and a commit or push that SKIPS THE GIT HOOKS (#269, #270).
+# Work reaches the default branch through a reviewed pull request, never a push; and the repository's
+# own hooks (a secret scan before commit, checks before push) are part of the floor, so a flag or a
+# setting that turns them off is refused like the force push above. Measured before this rule: `git push
+# origin HEAD:refs/heads/main` and `git -c core.hooksPath=/dev/null commit` both ran unchecked.
+#
+# The default branch is not looked up: the command may run in any directory (`-C`, `cd x &&`), and a
+# lookup that fails would have to allow. It is a list, `GOVERNANCE_PROTECTED_BRANCHES` (space-separated),
+# default `main master`. A destination is protected when it names one of them: `main`, `+main`,
+# `HEAD:main`, `refs/heads/main`, a glob that matches one, or `--all` / `--mirror` / `--branches`. A
+# branch whose name merely CONTAINS one (`some-main-feature`) is not.
+#
+# Two layers, as in the secret-read rule below. A python3 tokeniser reads each git invocation exactly:
+# global options, the subcommand, which arguments are options, which is the remote and which are
+# refspecs, so `git commit -m "mentions --no-verify"` is a message, not a flag, and `-n` is refused for
+# `commit` only (for `push` it is --dry-run). On any doubt (no python3, an unbalanced quote, a nested
+# command `$(...)`, `bash -c "git ..."`) the plain patterns decide instead, and they over-match: a doubt
+# never allows.
+PROTECTED_BRANCHES=""
+for b in ${GOVERNANCE_PROTECTED_BRANCHES:-main master}; do
+  [[ "$b" =~ ^[A-Za-z0-9._/-]+$ ]] && PROTECTED_BRANCHES+="${PROTECTED_BRANCHES:+ }$b"
+done
+[[ -n "$PROTECTED_BRANCHES" ]] || PROTECTED_BRANCHES="main master"
+git_verdict() {  # <cmd> -> "ok" | "push-default-branch<TAB>why" | "hook-bypass<TAB>why" | "" (doubt)
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 - "$1" "$PROTECTED_BRANCHES" <<'PY' 2>/dev/null
+import fnmatch, re, shlex, sys
+cmd, protected = sys.argv[1], sys.argv[2].split()
+def doubt():
+    sys.exit(0)                                   # print nothing: the patterns decide
+if re.search(r"[`()]|\\[;&|\n]", cmd):            # nesting; an escaped separator; a continued line
+    doubt()
+try:
+    lex = shlex.shlex(cmd, posix=False, punctuation_chars="();<>|&\n")
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    toks = list(lex)
+except ValueError:
+    doubt()
+if any(t in ("{", "}") for t in toks):
+    doubt()
+# git also reads configuration from the ENVIRONMENT: GIT_CONFIG_PARAMETERS, and the numbered
+# GIT_CONFIG_COUNT / GIT_CONFIG_KEY_<n> / GIT_CONFIG_VALUE_<n>. An assignment that carries core.hooksPath
+# there is the same bypass as `git -c core.hooksPath=...`, whether it prefixes the call or is exported.
+if re.search(r"GIT_CONFIG", cmd) and re.search(r"core\.hookspath", cmd, re.I):
+    print("hook-bypass\tsetting core.hooksPath through a GIT_CONFIG_* environment variable points git away from this repository's hooks, so they do not run.")
+    sys.exit(0)
+SEP = {"&&", "||", ";", "|", "&", "|&", "\n"}
+segs, cur = [], []
+for t in toks:
+    if t in SEP:
+        segs.append(cur); cur = []
+    else:
+        cur.append(t)
+segs.append(cur)
+
+def word(t):                                      # one token, its quotes removed
+    try:
+        w = shlex.split(t)
+    except ValueError:
+        doubt()
+    return w[0] if len(w) == 1 else (t if not w else doubt())
+
+def no_verify(a):                                 # git accepts any unambiguous prefix of a long option
+    return a.startswith("--no-ver") and "--no-verify".startswith(a.split("=")[0])
+
+def dest_protected(spec):
+    spec = spec[1:] if spec.startswith("+") else spec
+    dst = spec.rsplit(":", 1)[-1] if ":" in spec else spec
+    dst = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
+    return next((p for p in protected if fnmatch.fnmatchcase(p, dst)), None)
+
+GLOBAL_VAL = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"}
+COMMIT_VAL = {"-m", "-F", "-c", "-C", "-t", "--message", "--file", "--author", "--date",
+              "--reuse-message", "--reedit-message", "--fixup", "--squash", "--template", "--trailer",
+              "--cleanup", "--pathspec-from-file"}
+PUSH_VAL = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+
+def check(seg):
+    raw = [t for t in seg]
+    words = [word(t) for t in raw]
+    i = 0
+    while i < len(words) and re.match(r"[A-Za-z_]\w*=", words[i]):
+        i += 1                                    # leading VAR=value assignments
+    if i == len(words):
+        return None
+    if not re.search(r"(^|/|\\)git(\.exe)?$", words[i]):
+        # Not a git invocation. If git is named inside it anyway (`bash -c "git push ..."`,
+        # `xargs git ...`), this tokeniser cannot see what runs: let the patterns decide.
+        if any(re.search(r"(^|[^\w-])git([^\w-]|$)", w) for w in words[i:]):
+            doubt()
+        return None
+    a = words[i + 1:]
+    j = 0
+    while j < len(a) and a[j].startswith("-"):    # git's GLOBAL options
+        opt, _, val = a[j].partition("=")
+        if opt in GLOBAL_VAL and not _:
+            j += 1
+            val = a[j] if j < len(a) else ""
+        if opt in ("-c", "--config-env"):
+            if val.split("=")[0].lower() == "core.hookspath":
+                return ("hook-bypass", "`git -c core.hooksPath=...` points git away from this repository's hooks, so they do not run.")
+            if "!" in val or "git" in val:
+                doubt()                           # an alias that runs a shell command
+        j += 1
+    if j >= len(a):
+        return None
+    sub, args = a[j], a[j + 1:]
+    if sub == "config":
+        pos = [x for x in args if not x.startswith("-")]
+        if any(x in ("--get", "--get-all", "--get-regexp", "--unset", "--unset-all", "--list", "-l") for x in args):
+            return None
+        if pos and pos[0] in ("get", "unset", "list"):
+            return None
+        keys = [k for k, x in enumerate(pos) if x.lower() == "core.hookspath"]
+        if keys and keys[0] + 1 < len(pos):
+            return ("hook-bypass", "`git config core.hooksPath ...` points git away from this repository's hooks, so they stop running for every later commit and push.")
+        return None
+    if sub == "commit":
+        k = 0
+        while k < len(args):
+            x = args[k]
+            if x == "--":
+                break
+            if no_verify(x):
+                return ("hook-bypass", "`git commit --no-verify` skips the pre-commit hooks (the secret scan among them).")
+            if x.startswith("--"):
+                if x in COMMIT_VAL:
+                    k += 1
+            elif x.startswith("-") and len(x) > 1:
+                for c in x[1:]:
+                    if c == "n":
+                        return ("hook-bypass", "`git commit -n` is --no-verify: it skips the pre-commit hooks (the secret scan among them).")
+                    if c in "mFcCtSu":            # takes a value: the rest of the word is that value
+                        if x[1:].endswith(c) and c in "mFcCt":
+                            k += 1
+                        break
+            k += 1
+        return None
+    if sub == "push":
+        pos, repo_opt, k = [], False, 0
+        while k < len(args):
+            x = args[k]
+            if x == "--":
+                pos += args[k + 1:]
+                break
+            if no_verify(x):
+                return ("hook-bypass", "`git push --no-verify` skips the pre-push hooks.")
+            if x in ("--all", "--mirror", "--branches"):
+                return ("push-default-branch", "`git push %s` pushes the default branch too." % x)
+            if x.startswith("-"):
+                name = x.split("=")[0]
+                repo_opt = repo_opt or name == "--repo"
+                if x in PUSH_VAL:
+                    k += 1
+            else:
+                pos.append(x)
+            k += 1
+        specs = pos if repo_opt else pos[1:]
+        for s in specs:
+            p = dest_protected(s)
+            if p:
+                return ("push-default-branch", "`%s` pushes to `%s`, a protected default branch." % (s, p))
+        return None
+    return None
+
+for s in segs:
+    v = check(s)
+    if v:
+        print("%s\t%s" % v)
+        sys.exit(0)
+print("ok")
+PY
+}
+git_hit=""
+if printf '%s' "$cmd" | grep -qE '(^|[^[:alnum:]_-])git([^[:alnum:]_-]|$)'; then
+  git_hit=$(git_verdict "$cmd")
+  if [[ -z "$git_hit" ]]; then   # doubt: the patterns decide, and they over-match
+    flat=$(printf '%s' "$cmd" | tr '\n\r' '  ')
+    PRX=$(printf '%s' "$PROTECTED_BRANCHES" | sed 's/[.]/\\./g; s/ /|/g')
+    # A quote may open the word (`"--no-verify"`, `'main'`), and core.hooksPath anywhere in a command that
+    # runs git is refused, since an environment variable (GIT_CONFIG_*) can carry it as well as `-c`.
+    if printf '%s' "$flat" | grep -qi 'core\.hookspath'; then
+      git_hit=$'hook-bypass\tit sets core.hooksPath, which points git away from this repository\'s hooks.'
+    elif printf '%s' "$flat" | grep -qE "${GIT_SEG}(commit|push)([[:space:]][^;&|]*)?[[:space:]][\"']?--no-ver[a-z]*([[:space:]=\"']|\$)" \
+      || printf '%s' "$flat" | grep -qE "${GIT_SEG}commit([[:space:]][^;&|]*)?[[:space:]][\"']?-[A-Za-z]*n[A-Za-z]*([[:space:]\"']|\$)"; then
+      git_hit=$'hook-bypass\tit passes --no-verify (or `commit -n`), which skips the git hooks.'
+    elif printf '%s' "$flat" | grep -qE "${GIT_SEG}push([[:space:]][^;&|]*)?[[:space:]][\"']?(\+?([^[:space:];&|]*:)?(refs/heads/)?(${PRX})([[:space:];&|\"']|\$)|--(all|mirror|branches)([[:space:]=;&|]|\$)|[^[:space:];&|]*\*)"; then
+      git_hit=$'push-default-branch\tit pushes to a protected default branch ('"$PROTECTED_BRANCHES"')'
+    fi
+  fi
+fi
+case "$git_hit" in
+  push-default-branch*)
+    deny push-default-branch "Push to the default branch: ${git_hit#*$'\t'} Work reaches it through a reviewed pull request; push a feeder branch and open one. Run this yourself if intended." ;;
+esac
+case "$git_hit" in
+  hook-bypass*)
+    deny hook-bypass "Skipping the git hooks: ${git_hit#*$'\t'} Fix what the hook reports instead. Run this yourself if intended." ;;
+esac
+
 # Block database destruction
 if echo "$cmd" | grep -qiE '(DROP\s+(TABLE|DATABASE)|TRUNCATE\s+TABLE|DELETE\s+FROM\s+\w+\s*;?\s*(["'"'"']|$))'; then
   deny database-destroy "Destructive database operation. Requires manual confirmation."
