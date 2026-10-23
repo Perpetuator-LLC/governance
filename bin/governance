@@ -676,6 +676,17 @@ def create(p, want):
         os.replace(tmp, p)
 
 
+def symlink_refusal(home):
+    """None when a symlink can be created in HOME, else why not. Leaves nothing behind."""
+    probe = os.path.join(home, f".governance-symlink-probe-{os.getpid()}")
+    try:
+        os.symlink(os.path.join(home, "missing-target"), probe)
+    except (OSError, NotImplementedError) as e:
+        return str(e)
+    os.unlink(probe)
+    return None
+
+
 def install_home(home, invocation, dry_run=False, say=print):
     """Bring HOME to the state the invocation implies. Returns (exit code, number of changes applied
     or, on a dry run, that would be applied). A home already in state gets no backup and no write."""
@@ -698,6 +709,16 @@ def install_home(home, invocation, dry_run=False, say=print):
             say(f"would {describe(rel, cur, want)}")
         say(f"dry run: {len(changes)} change(s), nothing written")
         return 0, len(changes)
+    # Probe before the first write. Without the privilege (Windows without Developer Mode, a filesystem
+    # with no symlinks) os.symlink fails part-way through, after files were already moved into the
+    # backup: the home is left half-installed and only `restore` brings it back.
+    if any(want and want["type"] == "symlink" for _, _, want in changes):
+        reason = symlink_refusal(home)
+        if reason:
+            print(f"refused: cannot create symlinks in {home} ({reason}); nothing was written. On Windows, "
+                  "enable Developer Mode (Settings → System → For developers) or run elevated, then re-run",
+                  file=sys.stderr)
+            return 2, 0
 
     name, bdir = new_backup(home)
     entries = []
@@ -1466,7 +1487,18 @@ def cmd_scaffold(a):
 
 # --- command line -----------------------------------------------------------------------------------
 
+def utf8_console():
+    """Every message here uses → and —. A console whose code page cannot encode them (Windows cp1252)
+    raises UnicodeEncodeError on the first such print, after the work it reports was already done."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            "→—".encode(stream.encoding or "ascii")
+        except (UnicodeEncodeError, LookupError):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main():
+    utf8_console()
     ap = argparse.ArgumentParser(prog="governance", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="command", required=True)
