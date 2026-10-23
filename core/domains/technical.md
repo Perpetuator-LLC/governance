@@ -3424,3 +3424,131 @@ not that the references are identical.
 above code that reads `refs/remotes/origin/<default>`. The comment and the code contradict each
 other, and the comment is the one that gets believed, because it is the one written in the language
 of the thing the reader wanted to be true.
+
+
+## A verification that runs after a side effect must not be able to report that side effect as failed
+
+**A send, write or payment followed by a confirmation step placed inside the same error path will
+report the whole operation as failed when only the confirmation failed.** The caller then retries,
+and the retry duplicates the side effect.
+
+**Scope:** any operation with an irreversible external effect followed by a verification of that
+effect — send, publish, charge, provision.
+
+**Where it would be wrong:** when the verification *is* the commit — a two-phase write whose second
+phase is what makes the first visible — a failure there genuinely is a failure of the whole operation
+and must be reported as one. The distinction is whether the effect is already irreversible when the
+verification runs.
+
+## A retry budget counted only on returned failures never counts a hang
+
+**An attempt counter incremented after a call returns records nothing when the call is killed by a
+timeout, so an operation that always hangs retries forever while its own records show zero
+attempts.**
+
+**Scope:** retry limits, circuit breakers and give-up conditions around a call that can be terminated
+without returning.
+
+**Where it would be wrong:** for a pure, cheap, in-process computation there is nothing that can
+hang, and counting before the call costs an extra write on the happy path for no benefit. The rule
+binds on calls that cross a process, host or network boundary.
+
+## A configuration validator is not a reachability check, and the reload that follows the merge is the outage
+
+**A proxy or service configuration can validate cleanly while naming an upstream that does not exist
+yet.** Where a pull-deployer reloads that configuration automatically, merging the config is the
+deploy — and the site it names returns an error from that moment until the backend is stood up.
+
+**Scope:** configuration that names an upstream, combined with any automatic reload or pull-deploy.
+Also the ordering constraint: the backend is stood up before the config that routes to it merges.
+
+**Where it would be wrong:** in an environment with no automatic reload, merging config ahead of the
+backend is the normal and correct order — the config is inert until someone applies it. The hazard is
+created by the automation, so the rule attaches to the presence of a reloader, not to the config
+change.
+
+## One unreadable subject must not fail a whole multi-subject check
+
+**A probe that walks many subjects and exits non-zero on the first one it cannot read does two bad
+things at once: it stops reporting on every other subject, and it pins its own failure alarm
+permanently on, which is then silenced.**
+
+**Scope:** any check iterating over subjects where one subject's unreadability is a normal, recurring
+state — hosts, services, repositories, accounts.
+
+**Where it would be wrong:** a check over a closed, declared set must fail when a declared member is
+missing, because there the absence is the finding (destructive-by-omission). The distinction is
+whether the roster is discovered or declared: a discovered subject that cannot be read is reported as
+`unknown` and the walk continues; a declared one that cannot be read is a failure.
+
+## A metrics label the scrape job already sets silently renames the exporter's own label
+
+**When a scrape configuration attaches a label the exporter also emits, the collector keeps the
+scrape job's value and renames the exporter's to a prefixed form.** Every alert templated on that
+label then names the wrong subject, and the alert is syntactically fine.
+
+**Scope:** exporters whose series carry a dimension name that a scrape job, relabel rule or
+remote-write config might also set — `service`, `instance`, `job`, `env`, `host`.
+
+**Where it would be wrong:** deliberately overriding an exporter's label from the scrape config is a
+legitimate normalisation (giving a third-party exporter the fleet's own naming). The rule is not
+"never collide" but "the exporter owns a distinct name for anything an alert will name," so a
+collision is a choice rather than an accident.
+
+## A targeted apply leaves every sibling sharing that configuration on the old version, with no error state
+
+**Running a deployment limited to one subject — one host, one service, one tag — updates the shared
+configuration file but recreates only the named subject.** Every sibling reading the same file keeps
+running the previous configuration, and nothing anywhere reports an error: the run succeeded, the
+file is correct, and the drift is invisible to a file check.
+
+**Scope:** shared-configuration deployments where the apply has a narrowing flag and the subjects are
+recreated individually.
+
+**Where it would be wrong:** narrowing is exactly right for a per-subject change, and widening it
+needlessly restarts healthy services — a real cost on a serving box. The rule is therefore about the
+shared file: narrowing is safe when the change is confined to the named subject, and a change to the
+shared part obliges a full apply or an explicit follow-up for the siblings.
+
+## A role or module included twice runs its notified handler once, with the last inclusion's variables
+
+**Including the same parameterised role for two consumers registers one handler, and the
+notification fires it a single time with whichever inclusion's variables are in scope last.** The
+other consumer's half silently never happens, and the run is green.
+
+**Scope:** configuration-management systems with named, globally-registered handlers and
+parameterised includes.
+
+**Where it would be wrong:** a shared handler is the right design when the action is genuinely global
+— reloading one daemon that serves every consumer. The failure is a per-consumer action behind a
+global name, so the fix is a handler name that carries the consumer, not avoiding repeated includes.
+
+## A watch roster keyed on a bare project name is not keyed at all
+
+**A standing watch that tracks subjects by short name will, as its field grows, hold two different
+subjects under one key — and the one already in the roster suppresses the newcomer.**
+
+**Scope:** any long-lived roster, watchlist or comparison table whose subjects come from a namespace
+where names are not unique — repositories, packages, container images, model names.
+
+**Where it would be wrong:** for a one-off comparison, a fully-qualified key is noise, and the short
+name is what makes the table readable. The rule earns its place through persistence: a roster that
+will be re-read by a later run needs a key that cannot silently merge two subjects, and the display
+name can still be short.
+
+## A performance regression test with a fixed wall-clock threshold measures the machine
+
+**A test asserting "this completes within N seconds" passes on the developer's hardware and fails on
+a shared or slower runner, having measured nothing about the code.** The durable replacements are
+shape assertions — input ×4 must not cost more than about ×8 the time, which catches a complexity
+regression on any hardware — plus counting assertions on the operations whose number the change was
+supposed to reduce.
+
+**Scope:** automated regression tests for performance. A one-off local measurement with a stated
+machine is a legitimate benchmark, not a test.
+
+**Where it would be wrong:** a budget test is legitimately absolute — a timeout, an SLO, "the page
+must answer within 300 ms on the production tier" — because there the wall clock *is* the
+requirement. The distinction is whether the number is a property of the code or a promise to a user;
+a budget test belongs on representative hardware and a regression test must not depend on hardware at
+all.
