@@ -836,3 +836,53 @@ either admits everyone or locks everyone out, and nothing says which until someo
 - **Build time is not run time.** A rename or delete after the bind breaks the gate the same way, and
   the build check cannot see it. Pair the build check with a periodic report that reads each bound
   gate and resolves its names again.
+
+
+## A denial for an action your declared policy grants means the declaration was never applied
+
+**When a permission denial names an action your infrastructure code grants, the first hypothesis is
+not a wrong policy document — it is that the document was never applied.** Read the live policy's
+version or serial and compare it with the declaration's history. A declaration is a proposal until
+something applies it, and nothing in the denial says which of the two you are looking at.
+
+**Scope:** any declared-permission system with a separate apply step: cloud IAM, secret-store
+policies, database grants, forge team permissions.
+
+**Where it would be wrong:** a system that applies declarations continuously and reports drift (a
+reconciling controller) — there "never applied" is already ruled out, and the denial really is about
+the policy's content or an evaluation rule. Know which regime you are in before you choose the
+hypothesis.
+
+## Putting a validated CNAME behind a proxy replaces it with the proxy's own address records
+
+**When a provider's reverse proxy is enabled for a DNS name, queries for that name are answered with
+the proxy's address records instead of the record you published.** For a name a protocol validates —
+a mail-signing key, a domain-verification target, an ACME challenge, a service-discovery alias — this
+silently breaks the protocol: the name resolves, the proxy answers, and the validation simply fails.
+Nothing reports it, and the record looks correct in the provider's own UI.
+
+**Scope:** any DNS name consumed by a protocol rather than by a browser, on a provider that offers
+per-record proxying. It happens one record at a time, so neighbouring records being fine is no
+evidence.
+
+**Where it would be wrong:** a name that genuinely serves HTTP to users and wants the proxy's address
+records — there proxying is the feature. The discriminator is the consumer: a human's browser, or a
+verifier that must see your record.
+
+**The check.** Resolve the name from outside and require the record *type and target you published*,
+not merely a successful answer. "It resolves" is the failure mode, not the test.
+
+## A write to a secret path several services share merges, and stops when it cannot tell
+
+**When more than one service's credentials live under the same secret-store path, a provisioning run
+that writes that path replaces every sibling's key.** A write to a shared path reads the existing
+value, merges its own keys in, and writes the union — and if it cannot determine whether the value
+already exists, it stops before changing anything rather than assuming "absent".
+
+**Scope:** any automated provisioning against a shared key-value secret path; strongest where each
+service's run is independent and nobody owns the whole path.
+
+**Where it would be wrong:** a path a single provisioner genuinely owns, where merging preserves
+credentials that *should* have been removed — a stale key surviving every run is its own security
+defect. The one-writer case wants replace; the shared case wants merge; and which one you are in
+belongs in writing beside the path.
