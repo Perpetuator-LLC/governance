@@ -11,6 +11,21 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GOV="$ROOT/bin/governance"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+
+# A baseline private-patterns list at the DEFAULT path (governance#283 c106374): a public ADAPTER
+# render now refuses outright when the instance-name leg was NOT CHECKED at all, so every ordinary
+# render below needs a list to be CHECKED against — same as a real host or CI runner that has one
+# configured, which is the condition every one of these tests except the "no list anywhere" KAT
+# further down means to exercise. The pattern matches nothing in any fixture here; only that one KAT
+# overrides HOME to a directory with no list, to prove the REFUSAL this file exists to pin.
+export HOME="$TMP/home-default"
+mkdir -p "$HOME/.governance"
+cat > "$HOME/.governance/private-patterns" <<'DOC'
+```redaction-instances
+literal:Never Matches Any Fixture In This File
+```
+DOC
+
 pass=0; fail=0
 ok()   { echo "  ✅ $1"; pass=$((pass+1)); }
 bad()  { echo "  ❌ $1"; fail=$((fail+1)); }
@@ -258,6 +273,22 @@ check "…and bundle.json records which audience each one is" \
 
 rc="$(gov render --target seed --out "$SEED2" --core "$CORE2" --adapter "$ADAPTER2" --audience 'not-a-real-audience')"
 check "an invalid --audience value (not public or org:<id>) is refused (exit 2)" "[ '$rc' = '2' ]"
+
+# CISA send-back, governance#283 c106374: a PUBLIC render of an ADAPTER accepted redaction-check
+# exit 3 (the instance-name leg NOT CHECKED — no --private-patterns anywhere) as if it were clean,
+# so an adapter's own client names could ship unchecked on any host or CI runner that simply never
+# had the private list. HOME points at a fresh, empty directory so this does not depend on whether
+# THIS host happens to have one at ~/.governance/private-patterns.
+# A dedicated output directory — never $SEED2 — so these renders cannot add an extra bundle
+# directory to the shared fixture the audience-hash comparisons just above rely on counting.
+NOLIST_HOME="$TMP/home-no-list"; mkdir -p "$NOLIST_HOME"
+SEED_NOLIST="$TMP/seed-nolist"
+rc="$(HOME="$NOLIST_HOME" gov render --target seed --out "$SEED_NOLIST" --core "$CORE2" --adapter "$ADAPTER2" --engagement acme --audience public)"
+check "KAT: an ADAPTER render under public with NO private list anywhere is REFUSED (exit 2), not shipped unchecked" \
+  "[ '$rc' = '2' ] && grep -qi 'not checked' '$TMP/stderr'"
+# Control: the SAME no-list host, CORE-ONLY — core is public by construction, so it still renders.
+rc="$(HOME="$NOLIST_HOME" gov render --target seed --out "$SEED_NOLIST" --core "$CORE2" --engagement acme --audience public)"
+check "control: a CORE-ONLY render with no private list anywhere still renders (exit 0)" "[ '$rc' = '0' ]"
 
 # A private-patterns fixture: one literal instance name. Set via the env var redaction-check itself
 # documents as its fallback (GOVERNANCE_PRIVATE_PATTERNS) — bin/governance's subprocess call passes
