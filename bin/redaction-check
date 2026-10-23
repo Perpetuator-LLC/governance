@@ -46,7 +46,17 @@ SHAPE_PATTERNS = [
      "a vendor tool call name — describe it (\"the per-run detail call\")"),
     ("mcp-tool-path", re.compile(r"\bmcp__[a-z0-9_-]+__[a-z_]+\b"),
      "a fully-qualified tool path from one installation"),
-    ("ticket-ref", re.compile(r"(?<![\w/#-])[a-z][a-z0-9-]{1,14}#\d{1,6}\b"),
+    # A ticket reference: `owner/repo#N`, or a bare `repo#N`. The ALLOW-LIST is by CONTEXT, never by name:
+    #  - a URL or a deeper path (`…/a/b#N`, `host.example/a/b#N`): the owner may not follow `/`, `.` or
+    #    `#`, and has no dots, so only the first two segments of a path can form the shape;
+    #  - a heading anchor (`file.md#3-steps`, `wiki/Page#2-install`): a `.` before the repo word, or a
+    #    slug after the digits (`(?![\w-])`);
+    #  - shell code (`${ver#1}`, `${#items[@]}`): a `{` before the word; prose `#5` / `PR #5` has no word;
+    #  - the placeholders `owner/repo#N` and `org/repo#N`, any case, as reference-syntax docs write them.
+    ("ticket-ref", re.compile(
+        r"(?<![\w/#.{-])"
+        r"(?:(?!(?i:owner|org)/(?i:repo)#)[A-Za-z0-9][\w-]{0,38}/[A-Za-z0-9][\w-]{0,99}|[a-z][a-z0-9-]{1,14})"
+        r"#\d{1,6}(?![\w-])"),
      "an internal ticket reference — the rule must stand without it"),
     ("workflow-filename", re.compile(r"\b[a-z][a-z0-9._-]*\.ya?ml\b(?!\s*(?:schema|spec))"),
      "a concrete workflow/config filename — say \"the gate workflow\""),

@@ -48,6 +48,31 @@ rc="$(run --json "$TMP/c/clean.md")"
 check "noreply / example domains / git@ / ~ paths / dates / a bare 'SSN' produce no findings" \
   "grep -q '\"findings\": \[\]' '$TMP/out'"
 
+# --- ticket references: the qualified owner/repo#N shape, and its allow-list by CONTEXT --------------
+# Positive controls: each line carries exactly the one ref written after it. Expected count derived by
+# hand: 4 lines, 4 findings. (Before the qualified form, `repo#N` after a `/` was skipped, so lines 1-3
+# passed: a cited exhibit reached the public core.)
+mkdir -p "$TMP/t"
+cat > "$TMP/t/refs.md" <<'EOF'
+The exhibit was acme/widget#12 on the old forge.
+Seen again as Acme-Corp/Widget_2#7, recorded later.
+Inline code is no exemption: `acme/widget#12`.
+The bare form still counts: widget#9.
+EOF
+rc="$(run --json "$TMP/t/refs.md")"
+check "planted owner/repo#N refs are caught: 4 ticket-ref findings, one per line" \
+  "[ \"\$(grep -c '\"kind\": \"ticket-ref\"' '$TMP/out')\" = 4 ] && grep -q '\"match\": \"acme/widget#12\"' '$TMP/out'"
+# Negative controls, one file per allow-listed context, each of which must yield NO finding.
+printf 'See https://forge.example/acme/widget#12 and forge.example/acme/widget#3 and docs/guide/setup#4.\n' > "$TMP/t/url.md"
+printf 'Read [verify](technical.md#3-verify), [steps](#12-steps) and [install](wiki/Setup#2-install).\n' > "$TMP/t/anchor.md"
+printf 'n=${#items[@]}; v=${ver#1}; style color:#123456 in the sample.\n' > "$TMP/t/code.md"
+printf 'Fixed in #5, see PR #294 and issue #12.\n' > "$TMP/t/prose.md"
+printf 'A cross-repo ref is written `owner/repo#12`, ORG/REPO#3 or org/repo#9.\n' > "$TMP/t/placeholder.md"
+for form in url anchor code prose placeholder; do
+  rc="$(run --json "$TMP/t/$form.md")"
+  check "allow-listed context '$form' produces no finding" "grep -q '\"findings\": \[\]' '$TMP/out'"
+done
+
 # --- ⚠️ absence-as-health: no private list must NOT read as clean ---------------
 rc="$(run "$TMP/c/clean.md")"
 check "no private list ⇒ exit 3, not 0" "[ '$rc' = '3' ]"
