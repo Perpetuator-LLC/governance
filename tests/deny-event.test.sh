@@ -177,6 +177,27 @@ rc=$(run "$RO/sub/deny.jsonl" bash-safety-gate R1 Bash x y)
   || pass "a logging failure prints nothing to stderr"
 chmod 0700 "$RO"  # so the trap can clean it up
 
+# --- 9. os.fchmod missing (Windows Python < 3.13, governance#286): the trail is still written. A bare
+# `except OSError` around os.fchmod does not catch the AttributeError raised when the attribute does
+# not exist at all, so the write that follows it never ran and no event was recorded — on any OS, not
+# just Windows, once os.fchmod is unavailable. Deleting the attribute from this process's own os module
+# before running the hook's code reproduces that exact shape without needing a Windows host.
+LOG9="$TMP/d9/deny.jsonl"
+printf 'y' | GOVERNANCE_DENY_LOG="$LOG9" python3 -c "
+import os, sys
+if hasattr(os, 'fchmod'):
+    del os.fchmod
+sys.argv = ['deny-event.py', '--gate', 'bash-safety-gate', '--rule', 'R1', '--tool', 'Bash', '--reason', 'x']
+with open('$HOOK') as f:
+    code = f.read()
+exec(compile(code, '$HOOK', 'exec'), {'__name__': '__main__'})
+" >/dev/null 2>"$TMP/stderr9"
+rc9=$?
+[[ "$rc9" == "0" ]] && pass "os.fchmod missing: still exits 0" || fail "os.fchmod missing made the hook exit $rc9, not 0"
+[[ -f "$LOG9" ]] && python3 -c "import json,sys; json.load(open('$LOG9'))" 2>/dev/null \
+  && pass "os.fchmod missing: the deny event is still written and parses as JSON" \
+  || fail "os.fchmod missing: no trail was written (the AttributeError silently dropped the whole event)"
+
 echo
 if [[ $fails -eq 0 ]]; then echo "  ✅ all checks passed"; exit 0
 else echo "  ❌ $fails failed"; exit 1

@@ -109,10 +109,16 @@ def main():
     line = json.dumps(event(a.gate, a.rule, a.tool, a.reason, digest), separators=(",", ":")) + "\n"
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
-        try:
-            os.fchmod(fd, 0o600)
-        except OSError:
-            pass
+        # os.fchmod does not exist on Windows before Python 3.13 (AttributeError, not OSError) — a
+        # bare `except OSError` here does not catch it, so the write below never ran and no trail
+        # was left. os.open's own mode already asked for 0600 at creation; fchmod only re-asserts it
+        # on a pre-existing file (see the makedirs comment above for why that distinction matters), so
+        # skipping it where it is unavailable loses that reassertion, never the event itself.
+        if hasattr(os, "fchmod"):
+            try:
+                os.fchmod(fd, 0o600)
+            except OSError:
+                pass
         os.write(fd, line.encode())
     finally:
         os.close(fd)
