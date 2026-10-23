@@ -1852,6 +1852,36 @@ a sandbox), a double defeats the purpose; use the privilege drop. **The mirror:*
 root (`chown`, binding a low port) and is skipped for non-root developers is the same defect from the
 other side. It must run where it gates.
 
+## A suite written on one OS and gated on another drops the exec bit and can lose its fixtures
+
+**Scope:** a change authored on a host that does not record file modes or does not share POSIX path
+semantics (Git for Windows defaults to `core.fileMode=false`; its shell is a POSIX layer over native
+programs), and gated on a POSIX runner. Two defects pass at the author's desk and surface only in CI,
+or never.
+
+- **A NEW script is committed `100644`, whatever the author meant.** With modes ignored, a new path
+  enters the index non-executable, and every direct invocation (`./x`, `exec "$path"`, a hook or
+  workflow step that names the file) fails on Linux with "permission denied". Set the bit in the index:
+  `git update-index --chmod=+x -- <file>`. ⚠️ **A pathspec commit (`git commit -- <file>`) can drop a
+  mode-only change** without an error, because it rebuilds that path from the working tree; commit a
+  mode change from the staged index. **The check:** `git ls-tree HEAD -- <file>` reads `100755` after
+  the commit, not the index and not the working tree.
+- **A fixture path can name a different place for the writer and the reader.** The shell rewrites a
+  POSIX path it passes as an ARGUMENT to a native interpreter, but not one inside code, config, an
+  environment variable or stdin. So a test that writes `/tmp/x` from inside a native interpreter and
+  reads it from the shell (or the reverse) writes somewhere else, and the case takes its "nothing
+  there" branch and passes having tested nothing. **The check:** before the case counts, the test
+  proves the fixture exists from the READER's side, and fails as NOT CHECKED when it does not. Make
+  the path once (`mktemp -d`) and hand it to every process as an argument.
+
+**Where it is wrong:** a file that is only ever run through its interpreter (`bash t.sh`,
+`python3 x.py`) or imported as a module needs no exec bit, so a lint of the form *"every file with a
+shebang is `100755`"* flags correct files; key a mechanical check on the files something invokes by
+path. A checkout with `core.fileMode=true` (Linux, macOS, WSL on its own filesystem) records the bit
+from the filesystem, and this rule adds nothing there. **The mirror:** removing the bit is invisible
+the same way; a script that must stop being executable needs `--chmod=-x`, checked with the same
+`ls-tree`.
+
 ## Prove a job you just kicked RAN by the output's IDENTITY, not by its timestamp
 
 **Scope:** you start a job and then poll a status or output file it writes, to decide whether this
