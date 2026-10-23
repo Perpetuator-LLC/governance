@@ -140,11 +140,17 @@ fi
 # branch whose name merely CONTAINS one (`some-main-feature`) is not.
 #
 # Two layers, as in the secret-read rule below. A python3 tokeniser reads each git invocation exactly:
-# global options, the subcommand, which arguments are options, which is the remote and which are
-# refspecs, so `git commit -m "mentions --no-verify"` is a message, not a flag, and `-n` is refused for
-# `commit` only (for `push` it is --dry-run). On any doubt (no python3, an unbalanced quote, a nested
-# command `$(...)`, `bash -c "git ..."`) the plain patterns decide instead, and they over-match: a doubt
-# never allows.
+# each word as bash will build it (quotes joined and removed, `$'...'`, `\x`), global options, the
+# subcommand, which arguments are options, which is the remote and which are refspecs, so `git commit -m
+# "mentions --no-verify"` is a message, not a flag, and `-n` is refused for `commit` only (for `push` it
+# is --dry-run). An EXPANSION (`$X`, `$'...'`, an unquoted brace) is a value this gate cannot know, so it
+# refuses where it could change the verdict: a push destination or remote, an option's name, the
+# subcommand or the command name, and anywhere unquoted, where bash may split it into more words. An
+# alias or push refspec defined in the command (`-c alias.*`, `--config-env`, GIT_CONFIG_*, `git config
+# alias.* ...`) is refused too: it hides what git runs. Not covered: an alias already in the repository's
+# or the user's config. On any other doubt (no python3, an unbalanced quote, a nested command `$(...)`,
+# `bash -c "git ..."`) the plain patterns decide instead, and they over-match: a push whose arguments hold
+# a quote, `$`, a backtick, a backslash or a brace is refused there. A doubt never allows.
 PROTECTED_BRANCHES=""
 for b in ${GOVERNANCE_PROTECTED_BRANCHES:-main master}; do
   [[ "$b" =~ ^[A-Za-z0-9._/-]+$ ]] && PROTECTED_BRANCHES+="${PROTECTED_BRANCHES:+ }$b"
@@ -153,52 +159,139 @@ done
 git_verdict() {  # <cmd> -> "ok" | "push-default-branch<TAB>why" | "hook-bypass<TAB>why" | "" (doubt)
   command -v python3 >/dev/null 2>&1 || return 0
   python3 - "$1" "$PROTECTED_BRANCHES" <<'PY' 2>/dev/null
-import fnmatch, re, shlex, sys
+import fnmatch, re, sys
 cmd, protected = sys.argv[1], sys.argv[2].split()
 def doubt():
     sys.exit(0)                                   # print nothing: the patterns decide
 if re.search(r"[`()]|\\[;&|\n]", cmd):            # nesting; an escaped separator; a continued line
     doubt()
-try:
-    lex = shlex.shlex(cmd, posix=False, punctuation_chars="();<>|&\n")
-    lex.whitespace = " \t\r"
-    lex.whitespace_split = True
-    toks = list(lex)
-except ValueError:
-    doubt()
-if any(t in ("{", "}") for t in toks):
-    doubt()
+
+# A word as BASH will build it, not as it is typed. shlex read `"ma""in"` as two words, `$'main'` as
+# text and `$BR` as a name, while bash joins the first into `main`, decodes the second and expands the
+# third: each of them pushed to main past an earlier version of this gate. So quotes are removed the way
+# bash removes them, and every EXPANSION is marked: `dyn` is the index of the first one in the word (its
+# value is unknown here), `unq` says one is unquoted (bash may split it into several words, or none). An
+# unquoted brace (`HEAD:{main,x}`) is brace expansion, so it counts as an unquoted expansion too.
+class W:
+    def __init__(self):
+        self.text, self.dyn, self.unq, self.end = "", None, False, 0
+    def mark(self, unq, text):                    # append an expansion; `end` is where the last one ends
+        if self.dyn is None:
+            self.dyn = len(self.text)
+        self.unq = self.unq or unq
+        self.text += text
+        self.end = len(self.text)
+NAME = re.compile(r"\{[^}]*\}|[A-Za-z_]\w*|[0-9@*#?$!-]")
+def lex(s):
+    out, cur, i, n = [], None, 0, len(s)
+    def flush():
+        nonlocal cur
+        if cur is not None:
+            out.append(cur)
+        cur = None
+    while i < n:
+        c = s[i]
+        if c in " \t\r":
+            flush(); i += 1; continue
+        if c == "#" and cur is None:              # a comment runs to the end of the line
+            while i < n and s[i] != "\n":
+                i += 1
+            continue
+        if c in "\n;&|":
+            flush()
+            op = s[i:i + 2] if s[i:i + 2] in ("&&", "||", "|&", ";;") else c
+            out.append(op); i += len(op); continue
+        if c in "<>":                             # a redirection operator is a word of its own
+            flush()
+            j = i
+            while j < n and s[j] in "<>&":
+                j += 1
+            w = W(); w.text = s[i:j]; out.append(w); i = j; continue
+        if cur is None:
+            cur = W()
+        if c == "\\":
+            cur.text += s[i + 1:i + 2]; i += 2; continue
+        if c == "'":
+            j = s.find("'", i + 1)
+            if j < 0:
+                doubt()
+            cur.text += s[i + 1:j]; i = j + 1; continue
+        if c == "$" and s[i + 1:i + 2] in ("'", '"'):   # $'...' decodes escapes; $"..." translates
+            q = s[i + 1]; j = i + 2
+            while j < n and s[j] != q:
+                j += 2 if s[j] == "\\" else 1
+            if j >= n:
+                doubt()
+            cur.mark(False, s[i:j + 1]); i = j + 1; continue
+        if c == "$":
+            m = NAME.match(s, i + 1)
+            if m:
+                cur.mark(True, "$" + m.group(0)); i = m.end(); continue
+            cur.text += c; i += 1; continue
+        if c == '"':
+            j = i + 1
+            while j < n and s[j] != '"':
+                if s[j] == "\\" and s[j + 1:j + 2] in ('$', '"', "\\", "`", "\n"):
+                    cur.text += s[j + 1]; j += 2; continue
+                m = NAME.match(s, j + 1) if s[j] == "$" else None
+                if m:
+                    cur.mark(False, "$" + m.group(0)); j = m.end(); continue
+                cur.text += s[j]; j += 1
+            if j >= n:
+                doubt()
+            i = j + 1; continue
+        if c in "{}":
+            cur.mark(True, c); i += 1; continue
+        cur.text += c; i += 1
+    flush()
+    return out
+toks = lex(cmd)
+if any(isinstance(t, W) and t.text in ("{", "}") and t.unq for t in toks):
+    doubt()                                       # a { ...; } group
 # git also reads configuration from the ENVIRONMENT: GIT_CONFIG_PARAMETERS, and the numbered
 # GIT_CONFIG_COUNT / GIT_CONFIG_KEY_<n> / GIT_CONFIG_VALUE_<n>. An assignment that carries core.hooksPath
-# there is the same bypass as `git -c core.hooksPath=...`, whether it prefixes the call or is exported.
+# there is the same bypass as `git -c core.hooksPath=...`, whether it prefixes the call or is exported;
+# one that carries an alias or a push refspec is the same as `git -c alias.*` below.
+RUNS = r"alias\.|remote\.[^\s=]*\.(push|mirror)\b|push\.default\b"
 if re.search(r"GIT_CONFIG", cmd) and re.search(r"core\.hookspath", cmd, re.I):
     print("hook-bypass\tsetting core.hooksPath through a GIT_CONFIG_* environment variable points git away from this repository's hooks, so they do not run.")
     sys.exit(0)
-SEP = {"&&", "||", ";", "|", "&", "|&", "\n"}
+if re.search(r"GIT_CONFIG", cmd) and re.search(RUNS, cmd, re.I):
+    print("git-config\ta GIT_CONFIG_* environment variable defines an alias or a push refspec, so this gate cannot see what git will run or where it pushes.")
+    sys.exit(0)
+SEP = {"&&", "||", ";", ";;", "|", "&", "|&", "\n"}
 segs, cur = [], []
 for t in toks:
-    if t in SEP:
+    if isinstance(t, str) and t in SEP:
         segs.append(cur); cur = []
     else:
         cur.append(t)
 segs.append(cur)
 
-def word(t):                                      # one token, its quotes removed
-    try:
-        w = shlex.split(t)
-    except ValueError:
-        doubt()
-    return w[0] if len(w) == 1 else (t if not w else doubt())
-
 def no_verify(a):                                 # git accepts any unambiguous prefix of a long option
     return a.startswith("--no-ver") and "--no-verify".startswith(a.split("=")[0])
+
+def runs_key(key):                                # a config key that changes what git runs or pushes
+    return re.match(RUNS, key, re.I) is not None
 
 def dest_protected(spec):
     spec = spec[1:] if spec.startswith("+") else spec
     dst = spec.rsplit(":", 1)[-1] if ":" in spec else spec
-    dst = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
-    return next((p for p in protected if fnmatch.fnmatchcase(p, dst)), None)
+    # git completes a partial destination against the remote's refs: `heads/main` is refs/heads/main.
+    dst = re.sub(r"^(refs/)?heads/", "", dst)
+    # Both sides lower-cased: a remote on a case-insensitive filesystem stores `Main` as `main`.
+    return next((p for p in protected if fnmatch.fnmatchcase(p.lower(), dst.lower())), None)
 
+def lit_dst(w):                                   # `"$SRC:refs/heads/x"`: git splits a refspec at
+    return ":" in w.text[w.end:]                  # its LAST colon, so a literal tail names the destination
+
+def name_dyn(w):                                  # an expansion in an option's NAME, not its `=value`
+    if w.dyn is None or not w.text.startswith("-"):
+        return False
+    eq = w.text.find("=") if w.text.startswith("--") else -1
+    return eq < 0 or w.dyn < eq
+
+UNREAD = "cannot tell what this git command does: `%s` is an expansion %s, whose value this gate does not know. Write it literally (quote it, where it is an option's value)."
 GLOBAL_VAL = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"}
 COMMIT_VAL = {"-m", "-F", "-c", "-C", "-t", "--message", "--file", "--author", "--date",
               "--reuse-message", "--reedit-message", "--fixup", "--squash", "--template", "--trailer",
@@ -211,6 +304,10 @@ dirs = []                                         # `cd <dir>` seen in earlier s
 restores = []                                     # discard-uncommitted checks, run by the shell below
 
 def plain(w):                                     # a path the shell passes through unchanged
+    if isinstance(w, W):
+        if w.dyn is not None:                     # an expansion: its value is unknown here
+            return False
+        w = w.text
     return bool(w) and not re.search(r"[$~\t\n]", w)
 
 def restore_check(cdirs, gdirs, src, paths):
@@ -222,85 +319,123 @@ def restore_check(cdirs, gdirs, src, paths):
 
 def check(seg):
     global dirs
-    raw = [t for t in seg]
-    words = [word(t) for t in raw]
+    seg = [w for w in seg if isinstance(w, W)]
     i = 0
-    while i < len(words) and re.match(r"[A-Za-z_]\w*=", words[i]):
+    while i < len(seg) and re.match(r"[A-Za-z_]\w*=", seg[i].text):
         i += 1                                    # leading VAR=value assignments
-    if i == len(words):
+    if i == len(seg):
         return None
-    if words[i] in ("cd", "pushd", "popd"):      # a later `git checkout -- f` runs in the new directory
-        rest = words[i + 1:]
-        if dirs is not None and words[i] != "popd" and len(rest) == 1 and plain(rest[0]) and rest[0] != "-":
-            dirs = dirs + [rest[0]]
+    head = seg[i]
+    if head.dyn is not None:
+        # `G=git; $G push origin main`: the command NAME is an expansion, so what runs is unknown.
+        if any(w.text in ("push", "commit", "config") or re.search(r"git", w.text, re.I) for w in seg[i + 1:]):
+            return ("git-unreadable", UNREAD % (head.text, "in the command name"))
+        return None
+    if head.text in ("cd", "pushd", "popd"):      # a later `git checkout -- f` runs in the new directory
+        rest = seg[i + 1:]
+        if dirs is not None and head.text != "popd" and len(rest) == 1 and plain(rest[0]) and rest[0].text != "-":
+            dirs = dirs + [rest[0].text]
         else:
             dirs = None
         return None
-    if not re.search(r"(^|/|\\)git(\.exe)?$", words[i]):
+    if not re.search(r"(^|/|\\)git(\.exe)?$", head.text, re.I):
         # Not a git invocation. If git is named inside it anyway (`bash -c "git push ..."`,
-        # `xargs git ...`), this tokeniser cannot see what runs: let the patterns decide.
-        if any(re.search(r"(^|[^\w-])git([^\w-]|$)", w) for w in words[i:]):
+        # `xargs git ...`, `env git ...`), this tokeniser cannot see what runs: let the patterns decide.
+        if any(re.search(r"(^|[^\w-])git([^\w-]|$)", w.text, re.I) for w in seg[i:]):
             doubt()
         return None
-    a = words[i + 1:]
+    a = seg[i + 1:]
     j = 0
     gdirs = []                                    # every `-C <dir>`, applied in order like git does
-    while j < len(a) and a[j].startswith("-"):    # git's GLOBAL options
-        opt, _, val = a[j].partition("=")
-        if opt in GLOBAL_VAL and not _:
+    while j < len(a) and (a[j].text.startswith("-") or a[j].unq):   # git's GLOBAL options
+        w = a[j]
+        if (w.unq and not w.text.startswith("-")) or name_dyn(w):
+            return ("git-unreadable", UNREAD % (w.text, "where git's options or subcommand go"))
+        opt, eq, val = w.text.partition("=")
+        vw, off = w, len(opt) + 1
+        if opt in GLOBAL_VAL and not eq:
             j += 1
-            val = a[j] if j < len(a) else ""
+            vw, off = (a[j] if j < len(a) else W()), 0
+            val = vw.text
+            if vw.unq:
+                return ("git-unreadable", UNREAD % (vw.text, "unquoted, so the shell may split it into more options"))
         if opt == "-C" and gdirs is not None:
-            gdirs.append(val)
+            gdirs = gdirs + [vw.text] if plain(vw) else None
         if opt in ("--git-dir", "--work-tree"):
             gdirs = None                          # the worktree is no longer the directory: can't tell
         if opt in ("-c", "--config-env"):
-            if val.split("=")[0].lower() == "core.hookspath":
+            keyend = val.find("=")
+            if vw.dyn is not None and (keyend < 0 or vw.dyn - off < keyend):
+                return ("git-unreadable", UNREAD % (val, "in the name of a `%s` setting" % opt))
+            key = val.split("=")[0]
+            if key.lower() == "core.hookspath":
                 return ("hook-bypass", "`git -c core.hooksPath=...` points git away from this repository's hooks, so they do not run.")
+            if runs_key(key):
+                return ("git-config", "`git %s %s` defines an alias or a push refspec on the command line, so this gate cannot see what git will run or where it pushes." % (opt, val))
             if "!" in val or "git" in val:
-                doubt()                           # an alias that runs a shell command
+                doubt()                           # a value that runs a shell command
         j += 1
     if j >= len(a):
         return None
-    sub, args = a[j], a[j + 1:]
+    if a[j].dyn is not None:
+        return ("git-unreadable", UNREAD % (a[j].text, "where git's subcommand goes"))
+    sub, args = a[j].text, a[j + 1:]
     if sub == "config":
-        pos = [x for x in args if not x.startswith("-")]
-        if any(x in ("--get", "--get-all", "--get-regexp", "--unset", "--unset-all", "--list", "-l") for x in args):
+        if any(x.unq for x in args):
+            return ("git-unreadable", UNREAD % (next(x.text for x in args if x.unq), "unquoted, in a `git config` call"))
+        t = [x.text for x in args]
+        pos = [x for x in t if not x.startswith("-")]
+        if any(x in ("--get", "--get-all", "--get-regexp", "--unset", "--unset-all", "--list", "-l") for x in t):
             return None
         if pos and pos[0] in ("get", "unset", "list"):
             return None
-        keys = [k for k, x in enumerate(pos) if x.lower() == "core.hookspath"]
-        if keys and keys[0] + 1 < len(pos):
-            return ("hook-bypass", "`git config core.hooksPath ...` points git away from this repository's hooks, so they stop running for every later commit and push.")
+        for k, x in enumerate(pos[:-1]):          # a key followed by a value: a SET
+            if x.lower() == "core.hookspath":
+                return ("hook-bypass", "`git config core.hooksPath ...` points git away from this repository's hooks, so they stop running for every later commit and push.")
+            if runs_key(x):
+                return ("git-config", "`git config %s ...` defines an alias or a push refspec, which every later git call obeys out of this gate's sight." % x)
         return None
     if sub == "commit":
         k = 0
         while k < len(args):
-            x = args[k]
+            w = args[k]; x = w.text
             if x == "--":
                 break
+            # An expansion where an option could stand might be `--no-verify` or `-n`.
+            if w.unq or w.dyn == 0 or (x.startswith("--") and name_dyn(w)):
+                return ("hook-bypass", "this gate cannot tell whether `%s` (an expansion) is --no-verify. Quote it as an option's value, or put paths after `--`." % x)
             if no_verify(x):
                 return ("hook-bypass", "`git commit --no-verify` skips the pre-commit hooks (the secret scan among them).")
             if x.startswith("--"):
                 if x in COMMIT_VAL:
                     k += 1
+                    if k < len(args) and args[k].unq:   # split, its words could hold --no-verify
+                        return ("hook-bypass", "this gate cannot tell whether the unquoted `%s` holds --no-verify. Quote it." % args[k].text)
             elif x.startswith("-") and len(x) > 1:
-                for c in x[1:]:
+                for p, c in enumerate(x[1:], 1):
+                    if w.dyn is not None and p >= w.dyn:   # the cluster continues into an expansion
+                        return ("hook-bypass", "this gate cannot tell whether `%s` (an expansion) is --no-verify. Quote it as an option's value, or put paths after `--`." % x)
                     if c == "n":
                         return ("hook-bypass", "`git commit -n` is --no-verify: it skips the pre-commit hooks (the secret scan among them).")
                     if c in "mFcCtSu":            # takes a value: the rest of the word is that value
                         if x[1:].endswith(c) and c in "mFcCt":
                             k += 1
+                            if k < len(args) and args[k].unq:
+                                return ("hook-bypass", "this gate cannot tell whether the unquoted `%s` holds --no-verify. Quote it." % args[k].text)
                         break
             k += 1
         return None
     if sub == "push":
         pos, repo_opt, k = [], False, 0
         while k < len(args):
-            x = args[k]
+            w = args[k]; x = w.text
+            if w.unq:
+                return ("push-default-branch", "this gate cannot tell where it pushes: `%s` is an unquoted expansion, and it may name a protected default branch." % x)
             if x == "--":
                 pos += args[k + 1:]
                 break
+            if (w.dyn == 0 and not lit_dst(w)) or name_dyn(w):
+                return ("push-default-branch", "this gate cannot tell where it pushes: `%s` is an expansion where an option or a destination goes, and it may name a protected default branch." % x)
             if no_verify(x):
                 return ("hook-bypass", "`git push --no-verify` skips the pre-push hooks.")
             if x in ("--all", "--mirror", "--branches"):
@@ -310,15 +445,21 @@ def check(seg):
                 repo_opt = repo_opt or name == "--repo"
                 if x in PUSH_VAL:
                     k += 1
+                    if k < len(args) and args[k].unq:
+                        return ("push-default-branch", "this gate cannot tell where it pushes: `%s` is an unquoted expansion, and it may name a protected default branch." % args[k].text)
             else:
-                pos.append(x)
+                pos.append(w)
             k += 1
         specs = pos if repo_opt else pos[1:]
-        for s in specs:
-            p = dest_protected(s)
+        for w in specs:
+            if w.dyn is not None and not lit_dst(w):
+                return ("push-default-branch", "this gate cannot tell where `%s` pushes: it holds an expansion, which may name a protected default branch." % w.text)
+            p = dest_protected(w.text)
             if p:
-                return ("push-default-branch", "`%s` pushes to `%s`, a protected default branch." % (s, p))
+                return ("push-default-branch", "`%s` pushes to `%s`, a protected default branch." % (w.text, p))
         return None
+    # The discard checks below read plain strings; an expansion keeps a `$`, so plain() refuses it.
+    args = [x.text if x.dyn is None else "$" + x.text for x in args]
     if sub == "checkout" and "--" in args:        # `checkout [<rev>] -- <paths>`; without `--` not judged
         k = args.index("--")
         pre, paths = args[:k], args[k + 1:]
@@ -379,10 +520,13 @@ print("ok")
 PY
 }
 git_hit=""; git_restores=""; restore_doubt=""
-if printf '%s' "$cmd" | grep -qE '(^|[^[:alnum:]_-])git([^[:alnum:]_-]|$)'; then
+# Case-insensitive: on a case-insensitive filesystem (Windows, macOS) `GIT push` runs git.
+if printf '%s' "$cmd" | grep -qiE '(^|[^[:alnum:]_-])git([^[:alnum:]_-]|$)'; then
   git_out=$(git_verdict "$cmd")
-  git_hit=$(printf '%s\n' "$git_out" | grep -v '^restore	' | tail -n 1)
-  git_restores=$(printf '%s\n' "$git_out" | grep '^restore	')
+  git_hit=$(printf '%s
+' "$git_out" | grep -v '^restore	' | tail -n 1)
+  git_restores=$(printf '%s
+' "$git_out" | grep '^restore	')
   if [[ -z "$git_hit" ]]; then   # doubt: the patterns decide, and they over-match
     flat=$(printf '%s' "$cmd" | tr '\n\r' '  ')
     # A doubted command that discards a path's changes (#256, below) cannot be checked path by path, so
@@ -401,13 +545,27 @@ if printf '%s' "$cmd" | grep -qE '(^|[^[:alnum:]_-])git([^[:alnum:]_-]|$)'; then
     PRX=$(printf '%s' "$PROTECTED_BRANCHES" | sed 's/[.]/\\./g; s/ /|/g')
     # A quote may open the word (`"--no-verify"`, `'main'`), and core.hooksPath anywhere in a command that
     # runs git is refused, since an environment variable (GIT_CONFIG_*) can carry it as well as `-c`.
+    # A push here is refused when its arguments hold anything the shell rewrites (a quote, `$`, a
+    # backtick, a backslash, a brace): what the shell makes of them is what this layer cannot read.
     if printf '%s' "$flat" | grep -qi 'core\.hookspath'; then
       git_hit=$'hook-bypass\tit sets core.hooksPath, which points git away from this repository\'s hooks.'
-    elif printf '%s' "$flat" | grep -qE "${GIT_SEG}(commit|push)([[:space:]][^;&|]*)?[[:space:]][\"']?--no-ver[a-z]*([[:space:]=\"']|\$)" \
-      || printf '%s' "$flat" | grep -qE "${GIT_SEG}commit([[:space:]][^;&|]*)?[[:space:]][\"']?-[A-Za-z]*n[A-Za-z]*([[:space:]\"']|\$)"; then
+    elif printf '%s' "$flat" | grep -qiE "${GIT_SEG}(commit|push)([[:space:]][^;&|]*)?[[:space:]][\"']?--no-ver[a-z]*([[:space:]=\"']|\$)" \
+      || printf '%s' "$flat" | grep -qiE "${GIT_SEG}commit([[:space:]][^;&|]*)?[[:space:]][\"']?-[A-Za-z]*n[A-Za-z]*([[:space:]\"']|\$)"; then
       git_hit=$'hook-bypass\tit passes --no-verify (or `commit -n`), which skips the git hooks.'
-    elif printf '%s' "$flat" | grep -qE "${GIT_SEG}push([[:space:]][^;&|]*)?[[:space:]][\"']?(\+?([^[:space:];&|]*:)?(refs/heads/)?(${PRX})([[:space:];&|\"']|\$)|--(all|mirror|branches)([[:space:]=;&|]|\$)|[^[:space:];&|]*\*)"; then
-      git_hit=$'push-default-branch\tit pushes to a protected default branch ('"$PROTECTED_BRANCHES"')'
+    elif printf '%s' "$flat" | grep -qiE "(--config-env|(^|[[:space:]])-c)[[:space:]=]*[\"']?(alias\.|remote\.[^[:space:]=]*\.(push|mirror)|push\.default)" \
+      || { printf '%s' "$flat" | grep -q 'GIT_CONFIG' && printf '%s' "$flat" | grep -qiE 'alias\.|remote\.[^[:space:]=]*\.(push|mirror)|push\.default'; }; then
+      git_hit=$'git-config\tit defines a git alias or a push refspec in the command, so this gate cannot see what git will run or where it pushes.'
+    elif printf '%s' "$flat" | grep -qiE "${GIT_SEG}config([[:space:]][^;&|]*)?[[:space:]][\"']?(alias\.|remote\.[^[:space:]=]*\.(push|mirror)|push\.default)"; then
+      git_hit=$'git-config\tit sets a git alias or a push refspec, which every later git call obeys out of this gate\'s sight.'
+    elif printf '%s' "$flat" | grep -qiE "(^|[^[:alnum:]_-])git[[:space:]]+(-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?[[:space:]]+)*-?[\"']?[\$\`]"; then
+      git_hit=$'git-unreadable\tcannot tell what this git command does: an expansion stands where git\'s options or subcommand go. Write it literally.'
+    elif printf '%s' "$flat" | sed -E "s/(-m|-F|--message|--file)[[:space:]=]*(\"[^\"]*\"|'[^']*')//g" \
+      | grep -qiE "${GIT_SEG}commit([[:space:]][^;&|]*)?[[:space:]]-?[\"']?[\$\`]"; then
+      git_hit=$'hook-bypass\tthis gate cannot tell whether an expansion in the commit\'s options is --no-verify. Quote it as an option\'s value, or put paths after `--`.'
+    elif printf '%s' "$flat" | grep -qiE "${GIT_SEG}push([[:space:]][^;&|]*)?[[:space:]][\"']?(\+?([^[:space:];&|]*:)?((refs/)?heads/)?(${PRX})([[:space:];&|\"']|\$)|--(all|mirror|branches)([[:space:]=;&|]|\$)|[^[:space:];&|]*\*)" \
+      || printf '%s' "$flat" | grep -qiE "${GIT_SEG}push([[:space:]][^;&|]*)?[\$\`\\\\\"'{}]" \
+      || printf '%s' "$flat" | grep -qiE "(^|[;&|[:space:]])[\"']?[\$\`][^[:space:];&|]*[[:space:]]+([^;&|]*[[:space:]])?push([[:space:]]|\$)"; then
+      git_hit=$'push-default-branch\tit pushes to a protected default branch ('"$PROTECTED_BRANCHES"'), or this gate cannot tell where it pushes'
     fi
   fi
 fi
@@ -418,6 +576,12 @@ esac
 case "$git_hit" in
   hook-bypass*)
     deny hook-bypass "Skipping the git hooks: ${git_hit#*$'\t'} Fix what the hook reports instead. Run this yourself if intended." ;;
+esac
+case "$git_hit" in
+  git-config*)
+    deny git-config "Changing what git runs: ${git_hit#*$'\t'} Run the git command you mean directly. Run this yourself if intended." ;;
+  git-unreadable*)
+    deny git-unreadable "Unreadable git command: this gate ${git_hit#*$'\t'} Run this yourself if intended." ;;
 esac
 
 # Discarding UNCOMMITTED changes to a path (#256). `git checkout [<rev>] -- <paths>` and `git restore

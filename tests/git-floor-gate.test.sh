@@ -67,12 +67,65 @@ hook_blocked=(
   'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x'
 )
 
+# CISA c106327 on PR #285: five shapes reached main past the first version, which tokenised with shlex
+# and so did not see what bash makes of quotes, `$'...'` and expansions. Each row below exited 0 at
+# a5228c2. The rest of each list is the neighbourhood of the same causes: an unquoted brace, a backslash,
+# a case-folded name, a partial ref, an expansion in a remote or an option, an alias or push refspec from
+# `--config-env`, the environment or `git config`.
+push_shapes=(
+  'BR=$(git branch --show-current); git push origin HEAD:$BR'
+  'git push origin "HEAD:ma""in"'
+  "git push origin HEAD:\$'main'"
+  'git push origin HEAD:heads/main'
+  'git push origin HEAD:$BR'
+  'git push origin "HEAD:$BR"'
+  'git push origin HEAD:{main,x}'
+  'git push origin HEAD:refs/heads/Main'
+  'git push $R feeder/x'
+  'git push "$R" feeder/x'
+  'git push -o $X origin feeder/x'
+  'GIT push origin main'
+)
+alias_shapes=(
+  'git -c alias.p=push p origin main'
+  'git -c Alias.P=push P origin main'
+  'git --config-env=alias.p=X p origin main'
+  'git -c remote.origin.push=HEAD:main push'
+  'git -c push.default=matching push'
+  'GIT_CONFIG_PARAMETERS="'"'alias.p=push'"'" git p origin main'
+  'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p origin main'
+  'git config alias.p push'
+  'git config --global remote.origin.push HEAD:main'
+)
+# An expansion where the command, an option or the subcommand goes. The tokeniser names the doubt; the
+# pattern layer refuses it as a push or a hook bypass, so only the exit code is shared.
+unreadable_shapes=(
+  'G=git; $G push origin main'
+  'git $SUB origin main'
+  'git -C $D push origin feeder/x'
+  'git -c "$K"=push p origin main'
+  'F=--no-verify; git commit $F -m x'
+  'git commit "$F" -m x'
+  'git commit -m $MSG'
+  'git commit -m x -"$F"'
+)
+
 for layer in tokeniser patterns; do
   pre=""; [[ "$layer" == patterns ]] && pre="$NEST"
   echo "── push to the default branch (#269), $layer layer"
   for c in "${push_blocked[@]}"; do blocked_as "$pre$c" "$PUSH"; done
   echo "── skipping the git hooks (#270), $layer layer"
   for c in "${hook_blocked[@]}"; do blocked_as "$pre$c" "$HOOK"; done
+  echo "── what bash makes of the words (CISA c106327), $layer layer"
+  for c in "${push_shapes[@]}"; do blocked_as "$pre$c" "$PUSH"; done
+  echo "── an alias or push refspec defined in the command, $layer layer"
+  for c in "${alias_shapes[@]}"; do blocked_as "$pre$c" "Changing what git runs"; done
+  echo "── an expansion where git's command, options or subcommand go, $layer layer"
+  for c in "${unreadable_shapes[@]}"; do
+    if [[ "$layer" == tokeniser && "$c" != *commit* ]]; then blocked_as "$c" "cannot tell"
+    elif [[ "$layer" == tokeniser ]]; then blocked_as "$c" "$HOOK"
+    else rc=$(run "$pre$c"); [[ "$rc" == 2 ]] && pass "blocked: $pre$c" || fail "exit $rc, not 2 — $pre$c"; fi
+  done
 done
 
 echo "── GOVERNANCE_PROTECTED_BRANCHES replaces the default list"
@@ -95,6 +148,20 @@ allowed 'git fetch origin main'
 allowed 'git pull origin main'
 allowed "${NEST}git push origin feeder/x"
 allowed "${NEST}git commit -m x"
+allowed 'git -C "$D" push origin feeder/x'
+allowed 'git push -o "$X" origin feeder/x'
+allowed 'git commit -m "$MSG"'
+allowed 'git commit -m "$MSG" -- "$f"'
+allowed 'git -c user.name=x commit -m y'
+allowed 'git config --get alias.p'
+allowed 'git log stash@{0}'
+allowed 'git push origin feeder/heads-main'
+allowed 'git push origin "$H:refs/heads/feeder-x"'   # git splits at the LAST colon: a literal destination
+blocked_as 'git push origin "$H:main"' "$PUSH"
+allowed "git commit -m \"\$(cat <<'MSG'
+subject with \"quotes\"
+MSG
+)\""
 
 echo
 if [[ $fails -eq 0 ]]; then echo "  ✅ all checks passed"; exit 0
