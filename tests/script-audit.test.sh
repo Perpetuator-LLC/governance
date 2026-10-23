@@ -180,9 +180,18 @@ dmode=$(stat -c '%a' "$h/.claude/audit" 2>/dev/null || stat -f '%Lp' "$h/.claude
 [ "$dmode" = "700" ] && ok "the audit directory is created 0700" || bad "audit dir is $dmode, not 700"
 
 # --- rotation at ~5MB: a log already over the threshold is rotated to .1, and a fresh line starts ---
+# Each fixture opens with a FRESH, parseable entry header, so only the SIZE rule can fire: a log with no
+# parseable first timestamp rotates fail-closed, which made the boundary control below rotate on Linux.
+# Built by the shell, not python3: a native Windows python cannot open a POSIX /tmp path, so there the
+# fixture silently never existed and the boundary control passed without testing anything.
+fill_log() {  # fill_log <path> <exact-bytes>: a fresh header line, padded with 'x' to exactly N bytes
+  local hdr; hdr="===== $(date -u +%Y-%m-%dT%H:%M:%SZ) | cwd=/ | script=/fixture.sh | sha256=0 ====="
+  { printf '%s\n' "$hdr"; head -c "$(( $2 - ${#hdr} - 1 ))" /dev/zero | tr '\0' x; } > "$1"
+  [ "$(wc -c < "$1" | tr -d ' ')" = "$2" ] || { echo "fixture $1 is not $2 bytes" >&2; exit 1; }
+}
 h="$TMP/home-rotate"; mkdir -p "$h/.claude/audit"
 LOG="$h/.claude/audit/scripts.log"
-python3 -c "open('$LOG','wb').write(b'x' * (5242880 + 1))"
+fill_log "$LOG" $((5242880 + 1))
 f="$TMP/rotate.sh"; echo 'marker-rotate' > "$f"
 rc=$(run "$h" "bash $f")
 [ "$rc" = 0 ] && [ -f "$LOG.1" ] && [ "$(wc -c < "$LOG.1" | tr -d ' ')" = "$((5242880 + 1))" ] && logged "$h" "marker-rotate" \
@@ -191,10 +200,11 @@ rc=$(run "$h" "bash $f")
 # control: just AT the threshold (not over it) does NOT rotate
 h="$TMP/home-norotate"; mkdir -p "$h/.claude/audit"
 LOG2="$h/.claude/audit/scripts.log"
-python3 -c "open('$LOG2','wb').write(b'x' * 5242880)"
+fill_log "$LOG2" 5242880
 f="$TMP/norotate.sh"; echo 'marker-norotate' > "$f"
 run "$h" "bash $f" >/dev/null
-[ ! -f "$LOG2.1" ] \
+# not rotated AND appended to: the at-threshold log is still there, grown by the new entry
+[ ! -f "$LOG2.1" ] && [ "$(wc -c < "$LOG2" | tr -d ' ')" -gt 5242880 ] && logged "$h" "marker-norotate" \
   && ok "a log exactly AT 5MB (not over) does not rotate (boundary control)" \
   || bad "rotated at exactly the threshold, not just over it"
 
