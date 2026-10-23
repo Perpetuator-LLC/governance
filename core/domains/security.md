@@ -629,6 +629,31 @@ either way.
   Outside it: a client set never to follow redirects, and a credential the protocol binds to the
   destination (mutual TLS, a request signature over the host).
 
+## A new key-exchange or public-key-encryption surface ships hybrid post-quantum from day one
+
+**A classical key exchange or public-key encryption recorded today can be broken later, once it's
+already been captured.** Anything that negotiates a key (TLS, SSH, VPN, service-to-service) or
+encrypts to a public key (a backup, an export) uses a **hybrid** scheme from day one: classical +
+a post-quantum key-encapsulation mechanism, never PQ-only and never classical-only — PQ-only trades
+a known-good classical scheme for a newer one with less scrutiny, and classical-only is exactly the
+gap this rule exists to close. Symmetric encryption at 256 bits is unaffected; it's the key
+exchange and the public-key step that a recording captures for later decryption, not the bulk
+cipher. Prove the choice, don't assume it: a probe that offers *only* the hybrid group to each
+declared endpoint and fails on a classical result is the check, run in CI or at deploy time, not a
+one-time manual confirmation.
+
+**Scope:** key exchange and public-key encryption of data at rest. It does not require replacing a
+working classical **signature** (a certificate, a token, a host key) — signatures bind an identity
+to data already in hand, not a secret an adversary could be recording to break later, and the
+post-quantum signature schemes they'd need are exempt until the platforms they depend on ship them
+by default. It also does not bind a hardware key that cannot do post-quantum, or a peer you do not
+control (a third-party mail server, an upstream federation partner): record those as known
+exceptions with a revisit date, rather than silently non-compliant.
+
+**Where it is wrong:** a short-lived, non-sensitive, same-host channel with no network hop needs no
+key exchange at all, hybrid or otherwise — the rule binds a surface that negotiates a key over a
+path an adversary could record, not every use of cryptography.
+
 ## Security review: identify → ticket → hand off
 
 **A security reviewer's deliverable is a triaged, verified finding that has REACHED THE WORK
