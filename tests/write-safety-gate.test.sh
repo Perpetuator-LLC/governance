@@ -108,6 +108,38 @@ done
 check_allowed 'C:\\Users\\x\\project\\README.md' "an ordinary backslash path"
 check_allowed 'C:\\Users\\x\\docker\\config.json' "docker\\config.json outside a dot-directory (as with /)"
 
+echo " · Windows path forms (#300): every spelling Windows opens as the same file"
+# Each path below was allowed at 7d0ce13. `$DATA` sits in single quotes: escaping it (`\$`) would put an
+# invalid JSON escape in the payload, and the gate's unparseable-input refusal would pass the check for
+# the wrong reason.
+check_blocked 'C:\\r\\.env.' "trailing dot (Windows strips it)"
+check_blocked 'C:\\r\\.env  ' "trailing spaces (Windows strips them)"
+check_blocked 'C:.npmrc.' "drive-relative C: with a trailing dot"
+check_blocked 'C:\\r\\.env::$DATA' "NTFS default stream ::\$DATA"
+check_blocked 'C:\\Users\\x\\.npmrc:$DATA' "NTFS stream :\$DATA"
+check_blocked 'C:\\r\\.env:foo:$DATA' "NTFS named stream :foo:\$DATA"
+check_blocked 'C:\\r\\.env:foo' "NTFS named stream :foo"
+check_blocked 'C:.env:$DATA' "drive-relative C: with a stream (the drive colon is not the stream colon)"
+check_blocked 'C:\\Users\\x\\.kube.\\config' "trailing dot on a directory component"
+check_blocked 'C:\\Users\\x\\.docker \\config.json' "trailing space on a directory component"
+check_blocked 'C:\\Users\\x\\.gnupg..\\pubring.kbx' "trailing dots on a directory component"
+check_blocked 'C:\\Users\\x\\.kube\\/config' "mixed separators \\/ (one separator to Windows)"
+check_blocked 'C:/Users/x/.kube//config' "doubled separator //"
+if command -v cygpath >/dev/null 2>&1; then
+  mkdir "$TMP/.kube"
+  short=$(cygpath -s -m "$TMP/.kube" 2>/dev/null)
+  if [[ "${short##*/}" == *"~"* ]]; then
+    check_blocked "$short/config" "8.3 short name ${short##*/} for .kube"
+  else
+    echo "  SKIP  8.3 short name: this volume generates none"
+  fi
+else
+  echo "  SKIP  8.3 short name: no cygpath (not a Windows host)"
+fi
+check_allowed 'C:\\r\\.env.example.' "a template with a trailing dot stays a template"
+check_allowed 'C:\\r\\notes:2026.md' "a colon in an ordinary name"
+check_allowed 'C:\\Users\\x\\project\\.\\README.md' "a . component stays an ordinary path"
+
 echo " · controls: ordinary files are never blocked"
 check_allowed "app/README.md" "an ordinary markdown file"
 check_allowed "app/src/main.py" "an ordinary source file"

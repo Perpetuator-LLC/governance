@@ -73,6 +73,43 @@ path=$(tool_field "$input" .tool_input.file_path .tool_input.path .toolInput.fil
 path=${path//\\//}
 tool=$(tool_field "$input" .tool_name .toolName)   # once, for deny()'s event
 
+# Windows opens one file under many spellings, and every `$`-anchored or `dir/` rule below missed them
+# (#300): a trailing dot or space on any component (`.env.`, `.kube.\config`), an NTFS stream suffix
+# (`.env::$DATA`, `.npmrc:$DATA`, `.env:name`), a doubled separator (`.kube\/config`), and an 8.3 short
+# name (`KUBE~1\config`). win_canon spells the path the way Windows resolves it, ONCE; every rule then
+# runs on BOTH spellings and refuses if either matches. The original spelling stays a candidate because
+# on Linux/macOS `notes:x.env` or `.env.` is a real, distinct name: the union only ever adds refusals.
+# (`\\?\`, `\\.\`, UNC and `C:` drive-relative prefixes need no rewrite: no rule anchors the start.)
+win_canon() {  # win_canon <slash-separated path> -> the path Windows would open
+  local p="$1" lead="" drive="" out="" c i n
+  [[ "$p" == //* ]] && lead=/                    # keep a UNC / device prefix's double slash
+  p="$lead$(printf '%s' "$p" | tr -s '/')"       # a separator run is one separator
+  local IFS=/
+  local -a parts
+  read -r -a parts <<< "$p"
+  n=${#parts[@]}
+  for ((i = 0; i < n; i++)); do
+    c=${parts[i]}
+    drive=""
+    if (( i == 0 )) && [[ "$c" == [A-Za-z]:* ]]; then drive=${c:0:2}; c=${c:2}; fi
+    (( i == n - 1 )) && c=${c%%:*}               # the last component's stream suffix (`:x`, `::$DATA`)
+    [[ "$c" == *[!.\ ]* ]] && c=${c%"${c##*[!.\ ]}"}   # trailing dots/spaces; `.` and `..` stay
+    parts[i]="$drive$c"
+  done
+  out="${parts[*]}"
+  # 8.3 short names (`PROGRA~1`) resolve only against the disk: expand the longest existing prefix.
+  if [[ "$out" == *"~"* ]] && command -v cygpath >/dev/null 2>&1; then
+    local head="$out" tail=""
+    while [[ -n "$head" && "$head" == */* && ! -e "$head" ]]; do
+      tail="/${head##*/}$tail"; head=${head%/*}
+    done
+    [[ -n "$head" && -e "$head" ]] && out="$(cygpath -l -m "$head" 2>/dev/null || printf '%s' "$head")$tail"
+  fi
+  printf '%s' "$out"
+}
+wpath=$(win_canon "$path")
+hit() { printf '%s\n%s\n' "$path" "$wpath" | grep -qiE "$1"; }   # a rule matches either spelling
+
 if [[ -z "$path" ]]; then
   # A write payload with no path this gate can read is a BLIND gate, not a pathless write: refuse.
   # `write` and `search_replace` are Grok's names for Write and Edit (captured 2026-09-25).
@@ -92,7 +129,7 @@ fi
 
 # Block writes to environment/secrets files. `.envrc` is direnv's, which exports secrets. A template
 # (`.env.example`, `.env.sample`, `.env.template`) holds no secret and stays writable.
-if echo "$path" | grep -qiE '(\.env$|\.envrc$|\.env\.(prod|production|staging|live|dev|development|test)|\.env\.local$)'; then
+if hit '(\.env$|\.envrc$|\.env\.(prod|production|staging|live|dev|development|test)|\.env\.local$)'; then
   deny env-file-write "Cannot write to environment files. These may contain secrets. Edit manually."
 fi
 
@@ -100,13 +137,13 @@ fi
 # token: `.netrc` (machine passwords), `.npmrc` (registry auth tokens), `.pgpass` (PostgreSQL
 # passwords), the Docker and Kubernetes client configs (registry auths, cluster tokens), and the GnuPG
 # home (private keys). `.git-credentials` is already caught by `credentials`.
-if echo "$path" | grep -qiE '(credentials|secrets|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|id_rsa|id_ed25519|\.ssh/|\.aws/|\.gcloud/)' \
-  || echo "$path" | grep -qiE '(\.netrc$|\.npmrc$|\.pgpass$|\.docker/config\.json$|\.kube/config$|\.gnupg/)'; then
+if hit '(credentials|secrets|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|id_rsa|id_ed25519|\.ssh/|\.aws/|\.gcloud/)' \
+  || hit '(\.netrc$|\.npmrc$|\.pgpass$|\.docker/config\.json$|\.kube/config$|\.gnupg/)'; then
   deny credential-file-write "Cannot write to credential or key files. Edit manually."
 fi
 
 # Block writes to CI/CD secrets
-if echo "$path" | grep -qiE '(\.github/.*secret|vault\.y[a]?ml|\.vault-pass)'; then
+if hit '(\.github/.*secret|vault\.y[a]?ml|\.vault-pass)'; then
   deny ci-secret-write "Cannot write to CI/CD secrets files. Edit manually."
 fi
 
