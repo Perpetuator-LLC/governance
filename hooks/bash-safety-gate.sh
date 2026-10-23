@@ -178,7 +178,7 @@ fi
 # The name has a RIGHT BOUNDARY: `.env` followed by a non-letter, `rc`, or the end. That still matches
 # `.env`, `.env.local`, `.env_x`, `"$D/.env"` and `.envrc` (direnv files hold secrets too), and stops
 # matching a longer word that merely starts with the letters: `properties.environment`,
-# `sample.environment.ts`, `.envoy.yaml`. Without it, any reader verb near such a word was refused.
+# `sample.environment.ts`, `.envoy`. Without it, any reader verb near such a word was refused.
 SECRET_NAME='\.env([^A-Za-z]|rc|$)'
 SECRET_READ="cat\s+.*$SECRET_NAME|grep\s+.*$SECRET_NAME|rg\s+.*$SECRET_NAME|head\s+.*$SECRET_NAME|tail\s+.*$SECRET_NAME|less\s+.*$SECRET_NAME|more\s+.*$SECRET_NAME"
 

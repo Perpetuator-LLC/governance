@@ -89,7 +89,7 @@ def check_branch(repo, base, b):
         if not added and not removed:
             # Only short lines changed. The filter exists so that a `}` cannot fake a match, but a short
             # line can be the whole change: a version bump, a flag, a new file holding one word. Judge
-            # those too, and fail toward CANNOT-TELL, never toward LANDED (governance#59).
+            # those too, and fail toward CANNOT-TELL, never toward LANDED.
             short_add, short_rem = changed_lines(repo, mb, b, path, old, keep_trivial=True)
             rc, cur = git(repo, "show", f"{base}:{path}")
             if not short_add and not short_rem:

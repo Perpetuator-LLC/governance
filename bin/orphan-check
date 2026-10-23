@@ -25,7 +25,7 @@
 #   bin/orphan-check --no-fetch          # skip `git fetch` (fast, but reads stale refs)
 #   bin/orphan-check --known FILE        # verdicts already given, one `<tip-sha> <reason>` per line
 #
-# Adjudicated by CONTENT, not ancestry (governance#59). A branch ahead of the default branch by commit
+# Adjudicated by CONTENT, not ancestry. A branch ahead of the default branch by commit
 # is then asked whether its CONTENT landed (bin/landed-check): a squash, rebase or cherry-pick lands the
 # work under other commits, and an ancestry count reports it as stranded forever. LANDED is not a
 # candidate; MISSING is; CANNOT-TELL stays a candidate, never a clean result. A verdict in --known is
@@ -117,7 +117,7 @@ $url"
   fi
 
   # The default branch as origin sees it, not as this checkout is parked — asked of the forge
-  # directly when the local cache is unset, never guessed (governance#228 Finding 3).
+  # directly when the local cache is unset, never guessed.
   default="$(forge_default_branch "$repo")"
   [ -z "$default" ] && { echo "⚠️  $(basename "$repo"): no default branch on origin — skipped"; continue; }
 

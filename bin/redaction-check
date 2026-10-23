@@ -74,16 +74,22 @@ SHAPE_PATTERNS = [
      "a government/registration identifier — personal or entity data"),
 ]
 
-# Comment lines, shell-prompt lines and fence markers legitimately carry shapes; a checker that flags
-# its own explanation trains people to ignore it.
-SKIP_LINE = re.compile(r"^\s*(?:#|//)|^\s{4,}[$>]|^\s*```")
-# A test's own FIXTURE data is not live rule text: a mutation-coverage suite asserting "vault.yml is
-# blocked, deploy.yml is not" needs the concrete filename on the line the assertion reads, the same way
-# a known-bad control needs the real shape to prove the gate fires on it. Scoped to tests/*.test.sh only
-# (not every *.sh, not nested subdirectories) — widening it further would exempt hook scripts that
-# ARE live rule text. The private-name leg is NOT part of this exemption: a real instance name is just
-# as public inside a fixture as inside prose, so every line of every file still gets it (the same split
-# SKIP_LINE already makes per line, here made per file instead).
+# Shell-prompt lines and fence markers are exempt from the SHAPES. Comment lines and headings are NOT:
+# a `#`/`//` comment or a `## ` heading is exactly where someone pastes "context", so skipping every
+# line that starts with `#` or `//` lets a private reference through unseen. Allowed shapes stay
+# allowed by CONTEXT (URL fragments, anchor slugs, placeholders, `${…}`), which the patterns
+# themselves encode, never by which kind of line holds them. A comment that needs a ticket for
+# traceability does without it: the commit message is the record that cites the ticket, and git blame
+# leads from the line to it.
+SKIP_LINE = re.compile(r"^\s{4,}[$>]|^\s*```")
+# A test's own FIXTURE data is not live rule text: a mutation-coverage suite asserting "the secrets
+# config file is blocked, the deploy config is not" needs the concrete filename on the line the
+# assertion reads, the same way a known-bad control needs the real shape to prove the gate fires on
+# it. Scoped to tests/*.test.sh only (not every *.sh, not nested subdirectories) — widening it further
+# would exempt hook scripts that ARE live rule text. The private-name leg is NOT part of this
+# exemption: a real instance name is just as public inside a fixture as inside prose, so every line of
+# every file still gets it (the same split SKIP_LINE already makes per line, here made per file
+# instead).
 TEST_FIXTURE_FILE = re.compile(r"(^|/)tests/[^/]+\.test\.sh$")
 # A commit message is a RECORD, not a rule: it cites its ticket (tracing up) and may name a workflow
 # file it changed. Only the shapes that are personal or identifying data apply to it.
@@ -165,8 +171,8 @@ def expand(paths):
 
 
 def scan_lines(name, lines, shapes, private):
-    """SKIP_LINE exempts a line from the SHAPES only. A private name in a comment or a prompt line is
-    exactly as public as one in prose, so the name leg reads every line."""
+    """SKIP_LINE exempts a line from the SHAPES only. A private name in a prompt line or a fence marker
+    is exactly as public as one in prose, so the name leg reads every line."""
     findings = []
     for n, line in enumerate(lines, 1):
         patterns = list(private) if SKIP_LINE.match(line) else list(shapes) + list(private)

@@ -116,14 +116,61 @@ check "a nonexistent path ⇒ exit 2" "[ '$rc' = '2' ]"
 mkdir -p "$TMP/cm"; printf '#!/bin/sh\n# deploys to acme-fe after the gate\necho ok\n' > "$TMP/cm/commented.sh"
 printf 'literal:acme-fe\n' > "$TMP/mpriv"
 rc="$(run --json --private-patterns "$TMP/mpriv" "$TMP/cm/commented.sh")"
-check "a private name on a '#' comment line is caught (comment lines skip SHAPES only)" "kind 'instance-name:1'"
+check "a private name on a '#' comment line is caught" "kind 'instance-name:1'"
+
+# --- comment lines and headings get the SHAPES too -----------------------------------
+# A `#`/`//` comment or a `## ` heading is where people paste context, so it is scanned like prose.
+# Positive controls: one file per line kind, each carrying exactly one planted ref. Expected by hand:
+# 1 ticket-ref finding per file, 4 files, 4 findings.
+mkdir -p "$TMP/cl"
+printf '#!/bin/sh
+# exhibit: acme/widget#12 broke the gate
+echo ok
+' > "$TMP/cl/shell.sh"
+printf 'jobs:
+  suite:
+    # see acme/widget#12 for why
+    runs-on: x
+' > "$TMP/cl/conf.yaml"
+printf '# Gate
+
+## Exhibit acme/widget#12
+
+Body text.
+' > "$TMP/cl/heading.md"
+printf 'const x = 1;
+// tracked as acme/widget#12
+  // and indented: widget#9 too
+' > "$TMP/cl/code.js"
+for f in shell.sh conf.yaml heading.md; do
+  rc="$(run --json "$TMP/cl/$f")"
+  check "a planted ref on a '#' line is caught ($f): exactly 1 ticket-ref" \
+    "[ \"\$(grep -c '\"kind\"' '$TMP/out')\" = 1 ] && grep -q '\"match\": \"acme/widget#12\"' '$TMP/out'"
+done
+rc="$(run --json "$TMP/cl/code.js")"
+check "planted refs on '//' lines are caught (code.js): 2 ticket-refs, the indented one too" \
+  "[ \"\$(grep -c '\"kind\": \"ticket-ref\"' '$TMP/out')\" = 2 ] && grep -q '\"match\": \"widget#9\"' '$TMP/out'"
+# Negative controls: plain-title headings, and comments whose shapes are allowed by CONTEXT.
+printf '# Redaction gate
+
+## 3. Install the gate
+
+### Why #5 matters
+' > "$TMP/cl/titles.md"
+printf '#!/bin/sh
+# see https://forge.example/acme/widget#12 and [steps](#12-steps)
+# n=${#items[@]}; written owner/repo#12
+// Fixed in #5, see PR #294
+' > "$TMP/cl/allowed.sh"
+for f in titles.md allowed.sh; do
+  rc="$(run --json "$TMP/cl/$f")"
+  check "no finding on plain titles / context-allowed comments ($f)" "grep -q '\"findings\": \[\]' '$TMP/out'"
+done
 
 # --- a test fixture's own SHAPE-matching data is not live rule text (cos decision, 2026-10-14) -----
 # tests/*.test.sh files are exempt from the SHAPE legs only, because a mutation-coverage suite needs
 # the concrete filename/ticket-ref/etc. its assertion reads. The private-name leg must still see every
-# line of a test file — the exemption must never widen into hiding a real instance name. Neither
-# fixture line starts with '#': that would hit the pre-existing per-LINE comment skip and confound it
-# with the new per-FILE exemption being tested here.
+# line of a test file — the exemption must never widen into hiding a real instance name.
 mkdir -p "$TMP/tests"
 printf 'check_blocked "repo/vault.yml" "the gate config"\nassert mcp__gw__deploy_status seen for widget#412\nacme-fe is checked via the private list, not a SHAPE\n' \
   > "$TMP/tests/sample.test.sh"

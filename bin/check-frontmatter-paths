@@ -460,7 +460,7 @@ def main():
     print("  of which CROSS-VAULT (resolved via an --alias): %d" % len(r["cross_vault"]))
     print("baselined known-bad : %d%s" % (r["baselined"],
           ("  ⚠️ %d of the baseline is UNEXPLAINED" % unexplained) if unexplained else ""))
-    # governance#60 c73664: these two are NOT in r["failing"] (that's the path-value residual
+    # These two are NOT in r["failing"] (that's the path-value residual
     # only) — they reach only the exit code, below. The old labels claimed "counted as FAILING",
     # which the FAILING number then contradicted by not moving when one was fixed. Say what's
     # actually true instead of what would be tidier.

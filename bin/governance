@@ -128,7 +128,7 @@ MARK_BEGIN, MARK_END = "<!-- governance:begin -->", "<!-- governance:end -->"
 # build_plan() — after the per-harness plan/hook_configs functions they reference.
 LINKED_PARTS = ("skills", "hooks", "agents", "bin")
 # Grok's names for the tools a Claude matcher names: its documented alias table, checked against a captured
-# payload (governance#119). Grok aliases `Bash` itself, but its file-CREATE tool is `write`, lowercase and
+# payload. Grok aliases `Bash` itself, but its file-CREATE tool is `write`, lowercase and
 # absent from that table, so a `Write` matcher left to the alias would miss every new file. Map explicitly.
 GROK_TOOLS = {"Bash": ("run_terminal_command",), "Write": ("write", "search_replace"),
               "Edit": ("search_replace",), "MultiEdit": ("search_replace",)}
@@ -470,7 +470,7 @@ def _hook_configs_grok(home):
     return sorted(f".grok/hooks/{f}" for f in os.listdir(grok) if f.endswith(".json")) if os.path.isdir(grok) else []
 
 
-# The per-harness registry (governance#228): adding a render target is one entry here, not an edit
+# The per-harness registry: adding a render target is one entry here, not an edit
 # at every site that used to spell the harness's name out. Each entry names: the parts (of
 # skills/hooks/agents/bin) this harness links in; whether it gets a merged settings.json; how its
 # own layer is planned (plan); and which hook config(s) under a home are its own (hook_configs, for

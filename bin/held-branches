@@ -73,7 +73,7 @@ for R in "${REPOS[@]}"; do
     git -C "$R" fetch origin --prune --quiet || { echo "held-branches: fetch failed in $R — refusing to report on stale refs (use --no-fetch to accept them)" >&2; exit 2; }
   fi
   # The default branch from origin/HEAD, asked of the forge directly when that cache is unset —
-  # never guessed from a main/master naming convention (governance#228 Finding 3).
+  # never guessed from a main/master naming convention.
   D="$(forge_default_branch "$R")"
   [ -n "$D" ] || { echo "held-branches: cannot resolve the default branch of $R (no origin/HEAD, and the forge could not be asked)" >&2; exit 2; }
 

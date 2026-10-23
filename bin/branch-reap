@@ -128,7 +128,7 @@ for repo in "${REPOS[@]}"; do
   # for-each-ref, not `branch --format`: a detached checkout has no ref under refs/heads/, so it
   # contributes no row at all. `git branch` (even with --format) still emits its own placeholder
   # text for a detached HEAD, which then fails a branch lookup and reads as a REFUSED row carrying
-  # a diagnosis about a branch that was never real (governance#193).
+  # a diagnosis about a branch that was never real.
   done < <(git -C "$repo" for-each-ref --format='%(refname:short)' refs/heads/ 2>/dev/null)
 
   echo "  $name (default: $def) — ${#del[@]} reapable, ${#kept[@]} kept"
