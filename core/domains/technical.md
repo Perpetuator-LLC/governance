@@ -3439,7 +3439,7 @@ in history.
 **Scope:** any API call that mutates and can partially succeed; strongest where the endpoint bundles
 two effects.
 
-**Where it would be wrong:** an endpoint with a documented all-or-nothing transaction and an
+**Where it is wrong:** an endpoint with a documented all-or-nothing transaction and an
 idempotency key — there a refusal and a timeout *are* equivalent, and hedging the message costs the
 reader certainty they are entitled to. Say which one you are in.
 
@@ -3452,7 +3452,7 @@ cannot be computed.
 
 **Scope:** any derived duration, above all one that looks good.
 
-**Where it would be wrong:** a metric that is *supposed* to measure internal handling (a queue dwell
+**Where it is wrong:** a metric that is *supposed* to measure internal handling (a queue dwell
 time, a retry gap) legitimately has both ends inside one system — there the shared origin is the
 point. The test is whether the span you are *claiming* to measure is wholly inside it.
 
@@ -3469,7 +3469,7 @@ create-or-overwrite, one exported variable turns a careful converger into a blin
 **Scope:** any parse of a CLI's human-readable output, especially one that decides whether something
 exists.
 
-**Where it would be wrong:** a tool with no format switch at all — pinning a flag it does not have
+**Where it is wrong:** a tool with no format switch at all — pinning a flag it does not have
 fails the command outright. Then the protection is the sentinel assertion alone, and that half is
 worth having regardless.
 
@@ -3483,7 +3483,7 @@ write-back becomes a compare-and-set.
 **Scope:** any revoke, disconnect, logout, or cache invalidation in a system with a read-modify-write
 refresh. Security-relevant: the user believes access is gone.
 
-**Where it would be wrong:** a store with a monotonic version or a tombstone that the write-back must
+**Where it is wrong:** a store with a monotonic version or a tombstone that the write-back must
 respect — there the delete needs no lock, because the write-back loses on its own. Prove the
 tombstone is honoured rather than assuming it.
 
@@ -3496,7 +3496,7 @@ Parse the components, or require the whole line to equal a known-good form.
 **Scope:** any readiness, `ensure` or idempotence check built on a tool's own composite status
 output.
 
-**Where it would be wrong:** a status line deliberately designed as a single summary verdict (one
+**Where it is wrong:** a status line deliberately designed as a single summary verdict (one
 word, by contract) — prefix-matching it is correct, and splitting it invents components. The tell is
 whether the line can ever describe two things.
 
@@ -3511,7 +3511,7 @@ deliberately-failing control per shape.
 **Scope:** any lint, AST scan or grep-based invariant whose claim is universal ("no bypasses", "every
 write is audited", "every call is rate-limited").
 
-**Where it would be wrong:** a codebase with an enforced single call convention *and* a check that
+**Where it is wrong:** a codebase with an enforced single call convention *and* a check that
 fails on any unrecognised shape rather than skipping it — there one shape is the whole alphabet.
 Fail-closed on the unknown shape is what makes that safe: a scanner that silently skips what it
 cannot parse never qualifies.
@@ -3527,7 +3527,7 @@ evidence it is green now.
 **Scope:** any time-varying gate: dependency audits, license scans, certificate expiry,
 image-freshness checks.
 
-**Where it would be wrong:** a deterministic gate (tests, lint, type checks) — there a new failure on
+**Where it is wrong:** a deterministic gate (tests, lint, type checks) — there a new failure on
 an unchanged tree is real news, usually a flake or an environment drift, and reaching for "the
 database moved" hides it.
 
@@ -3546,7 +3546,7 @@ off.
 **Scope:** any config-management step that writes a whole file rather than a managed block, above all
 for a security-relevant service.
 
-**Where it would be wrong:** a file the automation genuinely owns end to end, where a live-only edit
+**Where it is wrong:** a file the automation genuinely owns end to end, where a live-only edit
 is itself the defect — there wholesale rendering *is* the convergence you want. The distinction is
 whether a second writer is sanctioned; if it is, the two writers both belong in the artifact.
 
@@ -3560,7 +3560,7 @@ with a case where the series is genuinely absent.
 
 **Scope:** Prometheus-style alerting rules that mix "X is too high" with "X is missing".
 
-**Where it would be wrong:** where you *want* per-instance matching and the absent limb is
+**Where it is wrong:** where you *want* per-instance matching and the absent limb is
 unnecessary — a rule covering a fixed, enumerated set of instances can assert each one by name
 instead, which is clearer than an absence join. The rule is about the combination, not about absence
 detection as such.
@@ -3580,7 +3580,7 @@ image-build time, or use a check the runtime provides natively.
 **Scope:** any multi-service platform with a shared entrypoint, sidecar bootstrap or a health check
 written as a shell command.
 
-**Where it would be wrong:** a deliberately minimal image whose correct health check is an in-process
+**Where it is wrong:** a deliberately minimal image whose correct health check is an in-process
 one (the application's own `--healthcheck` subcommand, or an orchestrator probe that needs no
 in-container tooling) — there the fix is to stop shelling out, not to fatten the image. Adding tools
 to a distroless base to satisfy a script trades the image's whole point for convenience.
@@ -3597,7 +3597,7 @@ actually is, per engine version; never inherit the conclusion.
 **Scope:** any host running a container engine on a split filesystem layout, and every rebuild runbook
 that pins storage with a single data-directory setting.
 
-**Where it would be wrong:** a host pinned to an older engine version where the relocation does cover
+**Where it is wrong:** a host pinned to an older engine version where the relocation does cover
 images — there the original procedure is correct and re-doing it as two settings is churn. The rule
 is to check the version, not to assume either answer.
 

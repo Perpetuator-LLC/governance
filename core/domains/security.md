@@ -848,7 +848,7 @@ something applies it, and nothing in the denial says which of the two you are lo
 **Scope:** any declared-permission system with a separate apply step: cloud IAM, secret-store
 policies, database grants, forge team permissions.
 
-**Where it would be wrong:** a system that applies declarations continuously and reports drift (a
+**Where it is wrong:** a system that applies declarations continuously and reports drift (a
 reconciling controller) — there "never applied" is already ruled out, and the denial really is about
 the policy's content or an evaluation rule. Know which regime you are in before you choose the
 hypothesis.
@@ -865,7 +865,7 @@ Nothing reports it, and the record looks correct in the provider's own UI.
 per-record proxying. It happens one record at a time, so neighbouring records being fine is no
 evidence.
 
-**Where it would be wrong:** a name that genuinely serves HTTP to users and wants the proxy's address
+**Where it is wrong:** a name that genuinely serves HTTP to users and wants the proxy's address
 records — there proxying is the feature. The discriminator is the consumer: a human's browser, or a
 verifier that must see your record.
 
@@ -882,7 +882,7 @@ already exists, it stops before changing anything rather than assuming "absent".
 **Scope:** any automated provisioning against a shared key-value secret path; strongest where each
 service's run is independent and nobody owns the whole path.
 
-**Where it would be wrong:** a path a single provisioner genuinely owns, where merging preserves
+**Where it is wrong:** a path a single provisioner genuinely owns, where merging preserves
 credentials that *should* have been removed — a stale key surviving every run is its own security
 defect. The one-writer case wants replace; the shared case wants merge; and which one you are in
 belongs in writing beside the path.
