@@ -3435,7 +3435,7 @@ and the retry duplicates the side effect.
 **Scope:** any operation with an irreversible external effect followed by a verification of that
 effect — send, publish, charge, provision.
 
-**Where it would be wrong:** when the verification *is* the commit — a two-phase write whose second
+**Where it is wrong:** when the verification *is* the commit — a two-phase write whose second
 phase is what makes the first visible — a failure there genuinely is a failure of the whole operation
 and must be reported as one. The distinction is whether the effect is already irreversible when the
 verification runs.
@@ -3449,7 +3449,7 @@ attempts.**
 **Scope:** retry limits, circuit breakers and give-up conditions around a call that can be terminated
 without returning.
 
-**Where it would be wrong:** for a pure, cheap, in-process computation there is nothing that can
+**Where it is wrong:** for a pure, cheap, in-process computation there is nothing that can
 hang, and counting before the call costs an extra write on the happy path for no benefit. The rule
 binds on calls that cross a process, host or network boundary.
 
@@ -3462,7 +3462,7 @@ deploy — and the site it names returns an error from that moment until the bac
 **Scope:** configuration that names an upstream, combined with any automatic reload or pull-deploy.
 Also the ordering constraint: the backend is stood up before the config that routes to it merges.
 
-**Where it would be wrong:** in an environment with no automatic reload, merging config ahead of the
+**Where it is wrong:** in an environment with no automatic reload, merging config ahead of the
 backend is the normal and correct order — the config is inert until someone applies it. The hazard is
 created by the automation, so the rule attaches to the presence of a reloader, not to the config
 change.
@@ -3476,7 +3476,7 @@ permanently on, which is then silenced.**
 **Scope:** any check iterating over subjects where one subject's unreadability is a normal, recurring
 state — hosts, services, repositories, accounts.
 
-**Where it would be wrong:** a check over a closed, declared set must fail when a declared member is
+**Where it is wrong:** a check over a closed, declared set must fail when a declared member is
 missing, because there the absence is the finding (destructive-by-omission). The distinction is
 whether the roster is discovered or declared: a discovered subject that cannot be read is reported as
 `unknown` and the walk continues; a declared one that cannot be read is a failure.
@@ -3490,7 +3490,7 @@ label then names the wrong subject, and the alert is syntactically fine.
 **Scope:** exporters whose series carry a dimension name that a scrape job, relabel rule or
 remote-write config might also set — `service`, `instance`, `job`, `env`, `host`.
 
-**Where it would be wrong:** deliberately overriding an exporter's label from the scrape config is a
+**Where it is wrong:** deliberately overriding an exporter's label from the scrape config is a
 legitimate normalisation (giving a third-party exporter the fleet's own naming). The rule is not
 "never collide" but "the exporter owns a distinct name for anything an alert will name," so a
 collision is a choice rather than an accident.
@@ -3505,7 +3505,7 @@ file is correct, and the drift is invisible to a file check.
 **Scope:** shared-configuration deployments where the apply has a narrowing flag and the subjects are
 recreated individually.
 
-**Where it would be wrong:** narrowing is exactly right for a per-subject change, and widening it
+**Where it is wrong:** narrowing is exactly right for a per-subject change, and widening it
 needlessly restarts healthy services — a real cost on a serving box. The rule is therefore about the
 shared file: narrowing is safe when the change is confined to the named subject, and a change to the
 shared part obliges a full apply or an explicit follow-up for the siblings.
@@ -3519,7 +3519,7 @@ other consumer's half silently never happens, and the run is green.
 **Scope:** configuration-management systems with named, globally-registered handlers and
 parameterised includes.
 
-**Where it would be wrong:** a shared handler is the right design when the action is genuinely global
+**Where it is wrong:** a shared handler is the right design when the action is genuinely global
 — reloading one daemon that serves every consumer. The failure is a per-consumer action behind a
 global name, so the fix is a handler name that carries the consumer, not avoiding repeated includes.
 
@@ -3531,7 +3531,7 @@ subjects under one key — and the one already in the roster suppresses the newc
 **Scope:** any long-lived roster, watchlist or comparison table whose subjects come from a namespace
 where names are not unique — repositories, packages, container images, model names.
 
-**Where it would be wrong:** for a one-off comparison, a fully-qualified key is noise, and the short
+**Where it is wrong:** for a one-off comparison, a fully-qualified key is noise, and the short
 name is what makes the table readable. The rule earns its place through persistence: a roster that
 will be re-read by a later run needs a key that cannot silently merge two subjects, and the display
 name can still be short.
@@ -3547,7 +3547,7 @@ supposed to reduce.
 **Scope:** automated regression tests for performance. A one-off local measurement with a stated
 machine is a legitimate benchmark, not a test.
 
-**Where it would be wrong:** a budget test is legitimately absolute — a timeout, an SLO, "the page
+**Where it is wrong:** a budget test is legitimately absolute — a timeout, an SLO, "the page
 must answer within 300 ms on the production tier" — because there the wall clock *is* the
 requirement. The distinction is whether the number is a property of the code or a promise to a user;
 a budget test belongs on representative hardware and a regression test must not depend on hardware at

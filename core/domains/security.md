@@ -848,7 +848,7 @@ transmitted to the pinned endpoint.
 **Scope:** any process that authenticates to an endpoint it names explicitly, using a client that
 also honours ambient credential configuration. It is a boundary rule, not only a correctness one.
 
-**Where it would be wrong:** ambient credentials are the intended mechanism for an interactive
+**Where it is wrong:** ambient credentials are the intended mechanism for an interactive
 operator session and for an agent sidecar that deliberately supplies them — stripping the environment
 there breaks the design. The rule binds where the code names its endpoint, because naming it is a
 claim that nothing else decides where the credential goes.
