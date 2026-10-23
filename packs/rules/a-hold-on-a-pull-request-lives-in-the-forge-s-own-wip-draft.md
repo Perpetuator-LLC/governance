@@ -28,6 +28,13 @@ the absence of an objection.
   branch), then clear the hold, then read `mergeable` back. Only then may the claim cite it. Reading
   it while held either blocks the claim forever or tempts you to clear the hold before anything is
   verified.
+- **A blocking send-back puts the hold BACK, in the same action.** Once the claim clears the hold,
+  nothing on the server records that a reviewer later rejected that head. The PR reads mergeable,
+  and a merger who never opens the thread merges exactly what was sent back. So whoever sends it back
+  re-adds the marker; where the reviewer cannot edit the title, the branch owner does on receipt. Only
+  the next PASS on a new head clears it. **Scope:** a finding that blocks the merge. An advisory note
+  the author may take or leave is not a send-back and sets no hold. A wrong hold costs a wait; a missing
+  one lets the rejected head merge.
 - **It does not replace the merge-ready claim.** The hold answers *"may this be merged at all?"*;
   the claim answers *"is THIS head green, by which gate?"*. A cleared hold with no claim invites a
   merge of an unverified head.
