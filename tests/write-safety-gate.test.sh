@@ -108,6 +108,17 @@ done
 check_allowed 'C:\\Users\\x\\project\\README.md' "an ordinary backslash path"
 check_allowed 'C:\\Users\\x\\docker\\config.json' "docker\\config.json outside a dot-directory (as with /)"
 
+echo " · Windows path forms bypassing \$-anchored rules (#300): trailing dot/space, NTFS ADS"
+# Windows opens the SAME base file for each of these; every secret-file rule above is anchored with
+# \$, so the literal bytes here never match unless the gate strips the form first.
+check_blocked 'C:\\r\\.env.' "a single trailing dot opens the same file as .env"
+check_blocked 'C:\\r\\.env. . .' "multiple trailing dots and spaces"
+check_blocked 'C:\\r\\.env::$DATA' "the NTFS default-stream suffix opens the same file as .env"
+check_blocked 'C:\\Users\\x\\.npmrc:$DATA' "the single-colon stream suffix opens the same file as .npmrc"
+check_allowed 'C:\\r\\normal.txt' "an ordinary file with no trailing dot/space or ADS suffix"
+check_allowed 'C:\\r\\.env.example' "a template's own trailing letters are not a dot/space run"
+check_allowed 'C:\\r\\notes.txt.' "an ordinary file's trailing dot does not turn it into a secret"
+
 echo " · controls: ordinary files are never blocked"
 check_allowed "app/README.md" "an ordinary markdown file"
 check_allowed "app/src/main.py" "an ordinary source file"

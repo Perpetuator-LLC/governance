@@ -71,6 +71,16 @@ path=$(tool_field "$input" .tool_input.file_path .tool_input.path .toolInput.fil
 # matches `/`, so a backslash path slipped past `.ssh/`, `.aws/`, `.gnupg/`, `.kube/config` and the
 # rest (#288). Match on one separator: backslashes become slashes before any rule reads the path.
 path=${path//\\//}
+
+# Windows opens the SAME base file for a path carrying a trailing run of dots/spaces
+# (`.env.` and `.env` are one file) and for an NTFS alternate-data-stream suffix (`.env::$DATA` and
+# `.env:$DATA` both open `.env`'s own data, just a named stream of it). Every rule below is anchored
+# with `$`, so either form slips past it unrefused (#300). Strip both before any rule reads the path,
+# same as the backslash normalisation above: match what Windows will actually open, not the literal
+# bytes the tool call carried.
+while [[ "$path" == *[.\ ] ]]; do path="${path%?}"; done
+path="${path%::\$DATA}"
+path="${path%:\$DATA}"
 tool=$(tool_field "$input" .tool_name .toolName)   # once, for deny()'s event
 
 if [[ -z "$path" ]]; then
