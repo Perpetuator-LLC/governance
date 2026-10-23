@@ -3437,7 +3437,7 @@ else. The number is not suspicious-looking, which is the whole problem: it looks
 staging or preview deployment, another team's host, a freshly seeded environment where only some
 content exists.
 
-**Where it would be wrong:** when the error path *is* the subject — timing a 404, or asserting that a
+**Where it is wrong:** when the error path *is* the subject — timing a 404, or asserting that a
 missing resource degrades gracefully — the requirement inverts, and you must assert the error page
 *was* served. So the rule is **"assert which page you got,"** never "require a 200."
 
@@ -3453,7 +3453,7 @@ and a unit matching no targets does nothing and exits 0, which is indistinguisha
 filter and report results per target — play-based config management, matrix CI jobs, fan-out task
 runners.
 
-**Where it would be wrong:** a guard that must run exactly once for a whole fan-out — a global lease,
+**Where it is wrong:** a guard that must run exactly once for a whole fan-out — a global lease,
 a one-time migration gate — is wrong inside the per-target unit, where it runs N times and may itself
 become the race. There it belongs in a preceding unit, and the correct fix is to make the orchestrator
 **fail when that unit is skipped**, not to move the guard.
@@ -3470,7 +3470,7 @@ working-tree state and needs no add.
 **Scope:** tracked files living inside an ignored directory — a generated or vendored tree carrying a
 few deliberately tracked files.
 
-**Where it would be wrong:** a new file genuinely requires `git add`, and a pathspec commit silently
+**Where it is wrong:** a new file genuinely requires `git add`, and a pathspec commit silently
 omits it; an index-only change cannot ride a pathspec at all. So the rule is not "never add" — it is
 **"never let an add's exit status gate the commit of an already-tracked file,"** and after any commit,
 assert HEAD moved rather than reading the command's own message.
@@ -3488,7 +3488,7 @@ way.
 **Scope:** detectors comparing a desired-state source against a running system's introspected
 configuration.
 
-**Where it would be wrong:** when the question genuinely is *"does this process's live config match
+**Where it is wrong:** when the question genuinely is *"does this process's live config match
 what we declared,"* those start-time-only values are exactly the finding — someone passed a flag no
 file records. Suppressing them hides the real drift. So the fix is to **attribute** each difference
 (declared-but-absent vs present-but-undeclared), never to narrow the hash.
@@ -3502,9 +3502,14 @@ that never ran each leave the declaration correct and the system different.
 
 **Scope:** binds any assertion used to close work or to authorize a next step — retiring a credential
 or client, confirming a flag is off, reporting a resource gone. It does not bind ordinary
-reading-to-understand.
+reading-to-understand. One instance worth naming on its own: a permission denial for an action your
+declared policy grants. The first hypothesis there is not a wrong policy document — it is that the
+declaration was never applied. Read the live policy's version or serial and compare it with the
+declaration's history before concluding the rule itself is mistaken.
 
-**Where it would be wrong:** when the declaration *is* the enforcement point — policy-as-code that the
-deciding engine reads at every decision — "check the live system" adds nothing and may read a cache.
-There the right check is which revision the engine actually loaded. Both halves reduce to one rule:
-**ask whatever decides.**
+**Where it is wrong:** when the declaration *is* the enforcement point — policy-as-code that the
+deciding engine reads at every decision, or a reconciling controller that applies declarations
+continuously and reports drift — "check the live system" adds nothing there (a reconciling controller
+has already ruled out "never applied"), and the right question is which revision the engine actually
+loaded, or what the drift report already says. Both halves reduce to one rule: **ask whatever
+decides.**
