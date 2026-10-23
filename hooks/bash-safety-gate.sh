@@ -310,8 +310,14 @@ def plain(w):                                     # a path the shell passes thro
         w = w.text
     return bool(w) and not re.search(r"[$~\t\n]", w)
 
+# A GIT_* variable set anywhere in the command (`GIT_DIR=<a> git checkout -- f`, `export GIT_WORK_TREE=..;`,
+# `env GIT_INDEX_FILE=..`) can move git to another repository, worktree, index or config, so the check
+# below, which asks about the directory, would judge the wrong files: CISA c106371 found the prefix form
+# allowed while it discarded a file in another repository. Any such name makes every target unknown.
+GIT_ENV = any(isinstance(t, W) and re.match(r"GIT_\w*($|=)", t.text) for t in toks)
+
 def restore_check(cdirs, gdirs, src, paths):
-    if cdirs is None or gdirs is None or not paths or not all(plain(x) for x in cdirs + gdirs + paths):
+    if GIT_ENV or cdirs is None or gdirs is None or not paths or not all(plain(x) for x in cdirs + gdirs + paths):
         restores.append("restore\tunknown\t%s" % " ".join(p.replace("\t", " ").replace("\n", " ") for p in paths))
     else:
         restores.append("\t".join(["restore", "ok", "1" if src else "0", str(len(cdirs))] + cdirs
@@ -599,7 +605,8 @@ esac
 # git checkout -- f`) does not count: commit or stash in one call, revert in the next.
 #
 # CAN'T TELL refuses (fail closed), as every doubt in the git rules above does: the directory or a path
-# holds a variable, `~` or `$(...)`; `--git-dir`/`--work-tree`/`--pathspec-from-file`; the directory does
+# holds a variable, `~` or `$(...)`; `--git-dir`/`--work-tree`/`--pathspec-from-file`; a GIT_* variable
+# set in the command; a configured clean or process filter; the directory does
 # not exist; it is not a repository; git is missing. In each of those the real command either fails anyway
 # or is unusual, so a refusal costs one rewrite, while a wrong allow costs uncommitted work, silently.
 restore_dirty=""
@@ -607,15 +614,38 @@ if [[ -n "$restore_doubt" ]]; then
   restore_dirty="(could not be determined: the command nests or quotes in a way this gate does not read)"
 elif [[ -n "$git_restores" ]]; then
   hook_cwd=$(tool_field "$input" .cwd)
+  # The check runs BEFORE the call is approved, so it must execute nothing the repository configures
+  # (CISA c106371: a `core.fsmonitor` command ran inside the hook). `status` runs fsmonitor, so it is
+  # switched off; no hooks, no optional locks (`status` would otherwise refresh the index), and
+  # submodules are not entered, since each has its own config.
+  safe=(-c core.fsmonitor=false -c core.hooksPath=/dev/null --no-optional-locks)
   while IFS=$'\t' read -r -a f; do
     [[ "${f[1]:-}" == "ok" ]] || { restore_dirty="(could not be determined for: ${f[*]:2})"; break; }
     src="${f[2]}"; n="${f[3]}"; cds=("${f[@]:4:n}"); k=$((4 + n))
-    n="${f[k]}"; cs=(); for c in "${f[@]:k+1:n}"; do cs+=(-C "$c"); done; paths=("${f[@]:k+1+n}")
+    n="${f[k]}"; cs=(); for c in "${f[@]:k+1:n}"; do cs+=("$c"); done; paths=("${f[@]:k+1+n}")
     st=$(
       if [[ -n "$hook_cwd" ]]; then cd -- "$hook_cwd" 2>/dev/null || exit 3; fi
-      for d in "${cds[@]}"; do cd -- "$d" 2>/dev/null || exit 3; done
-      git "${cs[@]}" status --porcelain --untracked-files=all -- "${paths[@]}" 2>/dev/null
-    ) || { restore_dirty="(could not be determined for: ${paths[*]}; not a git repository, or git failed)"; break; }
+      for d in "${cds[@]}" "${cs[@]}"; do cd -- "$d" 2>/dev/null || exit 3; done   # each `-C` is a cd, in order
+      # A clean or process FILTER would run inside `status` (on a racily clean file), so a path that one
+      # applies to cannot be judged: exit 4, refused below. Reading config and attributes runs nothing.
+      # Scoped to the tracked files the paths name (a filter runs only on those), because git-lfs
+      # configures its filter globally on every machine that uses it.
+      drivers=$(git "${safe[@]}" config --name-only --get-regexp '^filter\..*\.(clean|process)$' 2>/dev/null \
+        | sed -E 's/^filter\.(.*)\.(clean|process)$/\1/')
+      if [[ -n "$drivers" ]]; then
+        used=$(git "${safe[@]}" ls-files -z -- "${paths[@]}" 2>/dev/null \
+          | git "${safe[@]}" check-attr --stdin -z filter 2>/dev/null | tr '\0' '\n' | awk 'NR % 3 == 0' | sort -u) || exit 4
+        while IFS= read -r a; do
+          [[ -n "$a" ]] && printf '%s\n' "$drivers" | grep -qxF -- "$a" && exit 4
+        done <<<"$used"
+      fi
+      git "${safe[@]}" status --porcelain --untracked-files=all --ignore-submodules=all -- "${paths[@]}" 2>/dev/null
+    ); rc=$?
+    if [[ $rc == 4 ]]; then
+      restore_dirty="(could not be determined for: ${paths[*]}; the repository configures a clean or process filter, which checking would run)"; break
+    elif [[ $rc != 0 ]]; then
+      restore_dirty="(could not be determined for: ${paths[*]}; not a git repository, or git failed)"; break
+    fi
     [[ "$src" == 1 ]] || st=$(printf '%s\n' "$st" | grep -v '^??')   # no <rev>: an untracked file is untouched
     if [[ -n "$st" ]]; then
       restore_dirty=$(printf '%s\n' "$st" | cut -c4- | head -n 5 | paste -sd ' ' -)
@@ -624,7 +654,9 @@ elif [[ -n "$git_restores" ]]; then
   done <<<"$git_restores"
 fi
 if [[ -n "$restore_dirty" ]]; then
-  deny discard-uncommitted "This would discard uncommitted changes, silently and with no copy kept: $restore_dirty. Commit a checkpoint (git add, then git commit) or git stash push those paths in a separate call first, then revert. Run this yourself if intended."
+  # The remedy must be one that WORKS: committing or stashing after an edit does not undo it, and
+  # `git stash push -- f && git stash drop` loses the same changes as the discard (CISA c106371).
+  deny discard-uncommitted "This would discard uncommitted changes, silently and with no copy kept: $restore_dirty. To undo only your own edit, keep a copy of the file before you change it and restore from that copy (cp f f.orig first; cp f.orig f to undo). If every uncommitted change in these paths should go, ask the human to run it."
 fi
 
 # Block database destruction

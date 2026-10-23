@@ -88,6 +88,45 @@ blocked "$R" 'git --work-tree=. checkout -- clean.txt' "could not be determined"
 blocked "$R" 'true $(true) && git restore clean.txt' "could not be determined"
 blocked "$R" 'true $(true) && git checkout -- clean.txt' "could not be determined"
 
+echo "── a GIT_* variable moves git elsewhere (CISA c106371 D1): can't tell, refused"
+B="$TMP/clean-b"                          # a clean repository as the hook's cwd; the target is dirty $R
+mkdir -p "$B" && ( cd "$B" && git init -q . && echo m > mod.txt && git add mod.txt \
+  && git -c user.email=t@example.invalid -c user.name=t -c commit.gpgsign=false commit -qm one ) \
+  || { echo "FAIL: could not build the second repository"; exit 1; }
+blocked "$B" "GIT_DIR=$R/.git GIT_WORK_TREE=$R git checkout -- mod.txt" "could not be determined"
+blocked "$B" "GIT_WORK_TREE=$R git restore mod.txt" "could not be determined"
+blocked "$B" "export GIT_DIR=$R/.git; git checkout -- mod.txt" "could not be determined"
+blocked "$B" "GIT_INDEX_FILE=/tmp/x git checkout -- mod.txt" "could not be determined"
+blocked "$R" "GIT_DIR=$B/.git GIT_WORK_TREE=$B git checkout -- mod.txt" "could not be determined"
+blocked "$R" "GIT_CONFIG_GLOBAL=/dev/null git checkout -- clean.txt" "could not be determined"
+
+echo "── the check runs nothing the repository configures (CISA c106371 D2)"
+F="$TMP/fsm"                              # core.fsmonitor: a command git runs during status
+mkdir -p "$F" && ( cd "$F" && git init -q . && echo c > c.txt && git add c.txt \
+  && git -c user.email=t@example.invalid -c user.name=t -c commit.gpgsign=false commit -qm one \
+  && git config core.fsmonitor "touch '$TMP/fsmonitor-ran'; false" \
+  && git config core.hooksPath "$TMP/hooks" ) || { echo "FAIL: could not build the fsmonitor repository"; exit 1; }
+rc=$(run "$F" 'git checkout -- c.txt')
+[[ ! -e "$TMP/fsmonitor-ran" ]] && pass "core.fsmonitor did not run inside the gate (rc=$rc)" \
+  || fail "core.fsmonitor ran inside the gate, before the call was approved"
+L="$TMP/filt"                             # a clean filter: status may run it on a racily clean file
+mkdir -p "$L" && ( cd "$L" && git init -q . && echo '*.txt filter=x' > .gitattributes && echo c > c.txt \
+  && echo d > d.dat && git add . \
+  && git -c user.email=t@example.invalid -c user.name=t -c commit.gpgsign=false commit -qm one \
+  && git config filter.x.clean "touch '$TMP/filter-ran'; cat" \
+  && git config filter.x.smudge cat ) || { echo "FAIL: could not build the filter repository"; exit 1; }
+blocked "$L" 'git checkout -- c.txt' "clean or process filter"
+blocked "$L" 'git checkout -- .' "clean or process filter"
+[[ ! -e "$TMP/filter-ran" ]] && pass "the clean filter did not run inside the gate" \
+  || fail "the clean filter ran inside the gate"
+allowed "$L" 'git checkout -- d.dat'      # a filter exists, but not for this path
+
+echo "── the refusal names a revert that works (CISA c106371, Decide 2)"
+run "$R" 'git checkout -- mod.txt' >/dev/null
+grep -q 'keep a copy of the file before you change it' "$TMP/err" && ! grep -q 'stash push' "$TMP/err" \
+  && pass "the refusal says to restore from a saved copy, and no longer offers commit or stash" \
+  || fail "refusal text: $(cat "$TMP/err")"
+
 echo "── controls: clean paths, a branch switch, the index only"
 allowed "$R" 'git checkout -- clean.txt'
 allowed "$R" 'git checkout HEAD -- clean.txt sub/s.txt'
