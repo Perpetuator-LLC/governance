@@ -156,6 +156,21 @@ n_logged=$(grep -c "script=$f " "$h/.claude/audit/scripts.log" 2>/dev/null || ec
   && ok "the same file cited twice in one command is logged exactly once (dedup)" \
   || bad "dedup failed: logged $n_logged time(s), expected 1"
 
+# --- dedup does not confuse a SPACED filename with a shorter, distinct one (CISA send-back,
+#     governance#284 c105838): candidates come from an unquoted `for tok in $(...)`, so pathname
+#     expansion on a bare glob can hand back a filename containing a space as ONE token. A dedup
+#     keyed on a padded string match (`*" $f "*`) then reads the padding around a longer logged
+#     name as also matching a shorter, different name — here, "my a.sh" getting logged makes a
+#     later, truly distinct "a.sh" read as already-seen and get silently skipped. ------------------
+h="$TMP/home-dedup-space"; mkdir -p "$h"
+d="$TMP/space-dir"; mkdir -p "$d"
+printf 'marker-space-long\n' > "$d/my a.sh"
+printf 'marker-space-short\n' > "$d/a.sh"
+rc=$(cd "$d" && run "$h" "bash m*.sh a.sh")
+[ "$rc" = 0 ] && logged "$h" "marker-space-long" && logged "$h" "marker-space-short" \
+  && ok "a glob-expanded filename with a space does not mask a later, distinct shorter filename" \
+  || bad "a spaced filename's dedup entry masked a distinct later candidate (CISA governance#284)"
+
 # --- never a gate: exit 0 regardless, and NOTHING on stdout once a real candidate is captured ----
 h="$TMP/home-stdout"; mkdir -p "$h"
 f="$TMP/stdout-check.sh"; echo 'marker-stdout' > "$f"

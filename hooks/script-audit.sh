@@ -103,18 +103,23 @@ if [[ -f "$LOG" ]] && [[ "$(wc -c <"$LOG" 2>/dev/null || echo 0)" -gt 5242880 ]]
 fi
 
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
-# Dedup by a space-delimited string, not `declare -A`: associative arrays are bash 4+ only, and the
-# agent hosts this hook actually runs on include macOS, whose /bin/bash is 3.2 (frozen there by
-# Apple over the GPLv3 relicense). `declare -A` on bash 3.2 is a hard "invalid option" error, and
-# every candidate after it was never captured — the whole point of this hook, on the platform that
-# needed it. A leading/trailing space on `seen` makes every membership test exact: a bare substring
-# match would treat "a.sh" as already seen because of "scripts/a.sh".
-seen=" "
+# Dedup by an indexed array with exact comparison, not `declare -A` (bash 4+ only — the agent hosts
+# this hook actually runs on include macOS, whose /bin/bash is 3.2, frozen there by Apple over the
+# GPLv3 relicense) and not a space-joined string match either: candidates come from an UNQUOTED
+# `for tok in $(...)` above, so pathname expansion can hand back a filename that itself contains a
+# space (e.g. "my a.sh"), and a padded-string membership test (`*" $f "*`) then reads a later, truly
+# distinct "a.sh" as already seen — the padding spaces around one logged entry line up with the
+# padding spaces around a different, shorter one. An indexed array with per-element `==` has no
+# string to bleed across entries like that; bash 3.2 has indexed arrays, only `declare -A` is the
+# bash-4 feature.
+seen=()
 for f in "${candidates[@]}"; do
-  case "$seen" in
-    *" $f "*) continue ;;   # dedup within a single command
-  esac
-  seen="$seen$f "
+  dup=0
+  for s in ${seen[@]+"${seen[@]}"}; do
+    [[ "$s" == "$f" ]] && { dup=1; break; }
+  done
+  [[ $dup -eq 1 ]] && continue   # dedup within a single command
+  seen+=("$f")
   [[ -f "$f" && -r "$f" ]] || continue   # unresolved ($VAR, missing, cd'd-away) → skip silently
   sha=$(shasum -a 256 "$f" 2>/dev/null | awk '{print $1}')
   {
