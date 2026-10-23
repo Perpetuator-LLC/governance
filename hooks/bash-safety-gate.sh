@@ -183,8 +183,15 @@ fi
 # (APFS) `.ENV` and `.Env` open the same file as `.env`. Bracket classes, not `grep -i`, because the
 # same pattern also runs in python's `re` per sub-command, and neither grep -E nor that call has a
 # scoped inline flag.
+# A FIXED LIST OF READER VERBS is a list that is always one verb behind: `sed -n p`, `awk 1`, `cp`,
+# `xxd` and the case variant `CAT` (a case-SENSITIVE verb list, on the very filesystems where the name
+# itself is matched case-insensitively) all read or relocated the file unrefused (#301), each one
+# either a verb the list hadn't named or the same verb spelled differently. The verb never narrows the
+# risk anyway: `cp` doesn't print to stdout, but it stages the SAME bytes under a name this gate no
+# longer recognises, for an allowed-looking read later. So the match drops the verb list entirely —
+# a sub-command naming a secret-bearing file AT ALL is the floor, whatever reads or moves it.
 SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
-SECRET_READ="cat\s+.*$SECRET_NAME|grep\s+.*$SECRET_NAME|rg\s+.*$SECRET_NAME|head\s+.*$SECRET_NAME|tail\s+.*$SECRET_NAME|less\s+.*$SECRET_NAME|more\s+.*$SECRET_NAME"
+SECRET_READ="$SECRET_NAME"
 
 # A heredoc BODY given to `cat` or `tee` is DATA: those two only copy their stdin, so prose in the body
 # that names the file reads nothing. Refusing it blocked a seat's hand-off append (`cat >> <file> <<EOF`
@@ -284,12 +291,28 @@ sys.exit(1 if any(rx.search(" ".join(s)) for s in segs) else 0)
 PY
 }
 
+# A template (`.env.example`, `.env.sample`, `.env.template`) holds no secret — the same allowance
+# write-safety-gate.sh gives it on the write side (#301). Dropping the verb list above means every
+# mention of one now matches SECRET_READ, so it is stripped from a COPY built ONLY to test that match,
+# never from `scan` itself: a sub-command naming a real secret ALONGSIDE a template (`cp .env.example
+# .env.local`) must still match on the real name that survives the strip. No python3: this copy is
+# unchanged, so a template name still reads as a secret name — every doubt keeps the block, same as
+# `strip_data_heredocs` above.
+strip_template_names() {  # <cmd> -> <cmd> with every .env.(example|sample|template) occurrence removed
+  if ! command -v python3 >/dev/null 2>&1; then printf '%s' "$1"; return 0; fi
+  python3 -c '
+import re, sys
+print(re.sub(r"\.env\.(example|sample|template)(?![A-Za-z])", "", sys.argv[1], flags=re.IGNORECASE), end="")
+' "$1" 2>/dev/null || printf '%s' "$1"
+}
+
 # FLATTEN before matching. `grep -E` matches line by line, so a newline between the reader and the file
 # name — even one inside quotes, `cat "<newline>" .env`, which reads the file — hid the read from every
 # line and the gate ALLOWED it. Joining the lines closes that; the per-sub-command check above then
 # splits on UNQUOTED newlines, so an ordinary multi-line command keeps today's line-wise behaviour.
 scan=$(strip_data_heredocs "$cmd")
-if printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$scan" "$SECRET_READ"; then
+secret_scan=$(strip_template_names "$scan")
+if printf '%s' "$secret_scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$secret_scan" "$SECRET_READ"; then
   deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
 fi
 

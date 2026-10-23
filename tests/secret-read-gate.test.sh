@@ -21,6 +21,17 @@
 # Run under three PATHs: the host's, one without jq (python3 parser), one without python3 (jq only).
 # Without python3 the per-sub-command check cannot run, so the gate must FAIL CLOSED: the false
 # positives stay blocked there, and that is asserted, not assumed.
+#
+# ⚠️ #301 dropped the fixed READER-VERB list (`cat`/`grep`/`rg`/`head`/`tail`/`less`/`more`): `sed -n p`,
+# `awk 1`, `cp` and `xxd` all read or relocated the file unrefused, and the verb list was itself
+# case-SENSITIVE on filesystems where the NAME is matched case-insensitively (`CAT .env`). The match is
+# now the bare NAME, any verb — which means a sub-command naming only a TEMPLATE (`.env.example`,
+# `.env.sample`, `.env.template`) must be positively exempted, or every `ls .env.example` would also
+# block. That exemption is stripped from a COPY used only to test the match, never from the real
+# command text, so a sub-command naming a template ALONGSIDE a real secret name still matches on the
+# real name. Three cases below changed FROM an "allowed only because two sub-commands got conflated"
+# false positive TO an unconditional BLOCK, because under the new bare-name match the secret-bearing
+# sub-command no longer needs a reader verb to match at all.
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -62,6 +73,18 @@ cases = [
     (BLOCK, f"rg TOKEN {E}"), (BLOCK, f"less {E}"), (BLOCK, f"echo start; head -3 {E}"),
     (BLOCK, f"true || cat {E}"), (BLOCK, f"grep KEY < {E}"), (BLOCK, f"grep KEY $(echo {E})"),
     (BLOCK, f"grep KEY {E} &"), (BLOCK, f"ls |& grep KEY {E}"),
+    # #301: verbs the old fixed list never named, each measured allowed before this fix —
+    # content-dumping (sed/awk/xxd), and a relocation (cp) that stages the same bytes under an
+    # allowed-looking name for a later, unrefused read
+    (BLOCK, f"sed -n p {E}"), (BLOCK, f"awk 1 {E}"), (BLOCK, f"cp {E} notes.txt"), (BLOCK, f"xxd {E}"),
+    # #301: the old verb list was case-SENSITIVE on filesystems where the NAME is matched
+    # case-insensitively — `CAT` (uppercase) is the same /bin/cat on one of those
+    (BLOCK, f"CAT {E}"),
+    # #301: naming the file with NO verb at all — the bare name is now the floor
+    (BLOCK, f"{E}"), (BLOCK, f"echo {E}"),
+    # #301: a template ALONE, any verb — must stay allowed now that the verb list is gone
+    (ALLOW, f"cat {E}.example"), (ALLOW, f"sed -n p {E}.sample"), (ALLOW, f"cp {E}.template notes.txt"),
+    (ALLOW, f"ls -la {E.upper()}.EXAMPLE"),
     # a separator INSIDE quotes is part of a word
     (BLOCK, f'grep "a && b" {E}'), (BLOCK, f"grep 'x; y' {E}"), (BLOCK, f'grep ";" {E}'),
     (BLOCK, f'grep "&&" {E}'), (BLOCK, f"grep '|' {E}"), (BLOCK, f"grep $';' {E}"),
@@ -75,10 +98,15 @@ cases = [
     (BLOCK, f"head -2 \\\n  {E}"),
     # cross-sub-command false positives: a reader in one command, a secret-shaped NAME in another that
     # does not read it. These still match the whole-string pattern, so they need the per-sub-command check.
-    (FP, f"git worktree add ../wt && grep -q foo package.json && cp {E}.example {E}.local"),
     (FP, f"head -5 README.md && ls -la {E}.example"),
-    (FP, f"tail -1 log.txt; test -f {E}"),
-    (FP, f"head -5 README.md\ncp {E}.example {E}"),
+    # #301 dropped the reader-verb list: a sub-command naming a secret-bearing file AT ALL is now the
+    # floor, whatever reads or moves it — so these three are no longer cross-sub-command artifacts: the
+    # SAME sub-command names a real (non-template) secret, and must BLOCK unconditionally, with or
+    # without python3. `cp .env.example .env.local` is template-exempt on its SOURCE, but `.env.local` is
+    # the real name on its OWN; `test -f .env` and `cp .env.example .env` both name the bare file.
+    (BLOCK, f"git worktree add ../wt && grep -q foo package.json && cp {E}.example {E}.local"),
+    (BLOCK, f"tail -1 log.txt; test -f {E}"),
+    (BLOCK, f"head -5 README.md\ncp {E}.example {E}"),
     # RIGHT BOUNDARY: the name still matches with a non-letter after it, `rc`, or the end ...
     (BLOCK, f"cat {E}"), (BLOCK, f"head -1 app/{E}rc"), (BLOCK, f'cat "$D/{E}"'),
     (BLOCK, f"tail {E}_x"), (BLOCK, f"more {E}2"), (BLOCK, f"grep KEY {E}-staging"),

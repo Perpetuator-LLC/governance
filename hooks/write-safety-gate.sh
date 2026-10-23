@@ -86,9 +86,15 @@ fi
 # filesystems are case-insensitive, so `.ENV`, `.Env` or `ID_RSA` open the very same file as the
 # lowercase name; a case-sensitive pattern let those spellings write it unrefused.
 
-# Block writes to environment/secrets files. `.envrc` is direnv's, which exports secrets. A template
-# (`.env.example`, `.env.sample`, `.env.template`) holds no secret and stays writable.
-if echo "$path" | grep -qiE '(\.env$|\.envrc$|\.env\.(prod|production|staging|live|dev|development|test)|\.env\.local$)'; then
+# Block writes to environment/secrets files. A DENYLIST of suffixes (`.prod`, `.local`, …) is a list
+# that is always one spelling behind: `.env.stage`, `.env.ci`, `.env.qa`, `.env.uat`, `.env.preview`
+# and `.env.local.bak` were all measured writable (#301), each one more spelling the list hadn't named
+# yet. Inverted to an ALLOWLIST instead: every `.env` or `.env.<anything>` is blocked UNLESS the
+# `<anything>` is exactly `example`, `sample` or `template` — the only spellings that hold no secret.
+# `.envrc` is direnv's, which exports secrets, so it is caught by the same boundary SECRET_NAME uses
+# elsewhere (bash-safety-gate.sh): "env" followed by a non-letter, "rc", or the end.
+if echo "$path" | grep -qiE '\.env([^a-zA-Z]|rc$|$)' \
+  && ! echo "$path" | grep -qiE '\.env\.(example|sample|template)$'; then
   deny env-file-write "Cannot write to environment files. These may contain secrets. Edit manually."
 fi
 
