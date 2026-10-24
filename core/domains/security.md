@@ -886,3 +886,18 @@ service's run is independent and nobody owns the whole path.
 credentials that *should* have been removed — a stale key surviving every run is its own security
 defect. The one-writer case wants replace; the shared case wants merge; and which one you are in
 belongs in writing beside the path.
+
+## A client authenticating to a pinned endpoint inherits the ambient credential environment unless it is cleared
+
+**CLI clients for secret stores, registries and clouds read a token from the environment or the
+user's home directory and send it on every call, including the login to an endpoint the caller
+pinned explicitly.** So a credential for a different tenant, left in the shell by an earlier tool, is
+transmitted to the pinned endpoint.
+
+**Scope:** any process that authenticates to an endpoint it names explicitly, using a client that
+also honours ambient credential configuration. It is a boundary rule, not only a correctness one.
+
+**Where it is wrong:** ambient credentials are the intended mechanism for an interactive
+operator session and for an agent sidecar that deliberately supplies them — stripping the environment
+there breaks the design. The rule binds where the code names its endpoint, because naming it is a
+claim that nothing else decides where the credential goes.
