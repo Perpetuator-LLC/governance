@@ -902,3 +902,22 @@ either admits everyone or locks everyone out, and nothing says which until someo
 - **Build time is not run time.** A rename or delete after the bind breaks the gate the same way, and
   the build check cannot see it. Pair the build check with a periodic report that reads each bound
   gate and resolves its names again.
+
+## A gate that accepts exceptions bounds them, and a missing field is never "no finding"
+
+**Applies to** any gate with an operator-supplied waiver list: dependency and vulnerability scanners,
+licence checks, lint suppressions, policy engines, alert silences. Two fail-opens appear
+independently, and each turns the gate green while the thing it guards is unguarded:
+
+1. **An unbounded expiry is accepted.** A waiver is dated, so the gate enforces a maximum horizon, not
+   merely *a* date; a far-future date is a permanent exemption wearing a deadline's clothes.
+2. **A finding missing an optional field is dropped.** Where the gate keys on a field the source does
+   not always fill (an advisory URL, an identifier, a severity), the absent value takes the "nothing
+   here" path. New, severe findings are the ones most likely to have incomplete metadata.
+
+**The rule:** the gate states its maximum horizon itself, and reports an unevaluable finding as a
+third outcome beside pass and fail. Each fail-open gets a test that constructs the bad input and
+expects a refusal. **Scope:** a gate with no exception mechanism has nothing to bound. **Where it is
+wrong:** a field optional *in the domain*, or a permanent exemption declared as permanent, with a
+reason, and reviewed as such; the defect is absent silently equalling pass, and permanence smuggled
+in through a deadline field.
