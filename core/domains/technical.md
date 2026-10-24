@@ -1944,12 +1944,17 @@ success output:
 
 - A branch comparison whose checkout had silently failed compared a ref **with itself** and printed
   `0	0` — byte-identical to a genuinely in-sync pair.
+- Its quieter mirror, with **nothing failing**: a per-target check that reads its target from
+  **ambient state** instead of taking it as an argument runs successfully N times against the *same*
+  target. Every answer is correct about that one target and says nothing about the other N−1. Where
+  a check is run across a set, the target's identity belongs in the invocation — N identical answers
+  is the smell the differentiation rule below already names.
 - A search run with an invalid flag returned the **same error for every input**, which read as three
   consistent results.
 - A grep for a concept, written with the author's own phrasing, returned zero — establishing that a
   *string* is absent, which is not the question anyone was asking.
 
-**The three share a shape: the command answered a narrower question than the one being asked, and
+**The four share a shape: the command answered a narrower question than the one being asked, and
 answered it correctly.** Nothing in the output is wrong, so nothing in the output can warn you.
 That is why the check has to be run against a KNOWN-BROKEN invocation rather than read carefully —
 careful reading of a truthful answer to the wrong question produces confidence, not detection.
@@ -3819,3 +3824,115 @@ must answer within 300 ms on the production tier" — because there the wall clo
 requirement. The distinction is whether the number is a property of the code or a promise to a user;
 a budget test belongs on representative hardware and a regression test must not depend on hardware at
 all.
+
+## A positive control must satisfy the checker's own SELECTOR, or it measures nothing
+
+⚠️ **A control artifact must enter the population under test, which means satisfying the checker's
+own SELECTOR first.** Most checkers pick their population before they judge it — a `type:` field, a
+path glob, a filename pattern, a status value. A control that fails the selector is **skipped, not
+passed**, and a skip and a pass are the same silence. The reading is then *"the gate cannot fail,"*
+which is the opposite of what happened.
+
+So a control is built in two steps, and the first one is asserted on its own: **prove the checker SAW
+the artifact** (it appears in the examined count, the listing, the per-item output), then prove the
+verdict. A control that produces no line anywhere in the output has not been shown to be in the
+population.
+
+**The consequence is worse than a wasted control, because the selector IS the denominator.** Where
+the selector runs before the integrity check, an artifact broken badly enough to damage the fields
+the selector reads is dropped before it can be judged — so the gate's sensitivity runs backwards to
+the severity it detects: it catches untidy items and misses thoroughly broken ones, which are the
+population it exists for.
+
+**Where it is wrong:** do not conclude that a selector is a defect. A narrow selector is usually
+correct and deliberate — it is what keeps a check from judging documents it has no business judging.
+The rule is about the order: parse-or-read integrity is asserted over everything the check is pointed
+at, and the selector narrows what gets judged, not what gets looked at.
+
+## A monitor's own input can go stale, and staleness is a finding, not an absence of findings
+
+**A monitor that reads a file, a log or a metric series is only as current as that source, and a
+source that stopped is indistinguishable from a quiet period.** A log with no new line reads as
+"nothing to report"; a counter that is no longer written reads as a steady value; a series that
+stopped being scraped reads as its last sample, forever.
+
+Adjacent to, not the same as, technical.md → *a probe reports the freshness of its own inputs, or it
+reports nothing*: that rule is about the probe's own REFRESH STEP failing (the fetch itself errors);
+this one is about the upstream SOURCE going quiet even when the refresh succeeds perfectly — nothing
+in the pipeline reports a problem, because nothing in the pipeline failed.
+
+So **a reading carries the age of what it read, and an age past the expected interval is its own named
+finding** — reported as `SOURCE STOPPED`, never folded into the healthy verdict. Set the staleness
+window from the source's own cadence, not from a round number, and make the lookback longer than the
+longest outage you expect to survive: a window shorter than the freeze turns the freeze itself into
+silence.
+
+**The mirror, which the same rule covers:** a condition whose "active since" timestamp resets every
+time it clears measures the time since the latest flap, not the duration of the fault. A flapping
+condition reads minutes old forever, however long it has been broken. Where age is the thing you are
+deciding on, read the underlying transition or occurrence count instead, and say which of the two you
+used.
+
+**Where it is wrong:** a source that is supposed to be silent — an append-only audit log of rare
+events, an alert that fires once a quarter — must not be red for being quiet. The test is whether the
+source has a declared cadence: a thing written on a schedule is stale when it misses it; a thing
+written on an event is not.
+
+## De-duplicate a noisy signal's PRESENTATION; never exclude its series
+
+**"The same fact reported N times" and "a false alarm reported N times" produce identical output, and
+the remedies are opposites.** One is a legibility problem; the other removes a signal. A finding that
+a signal is duplicated therefore licenses collapsing the duplicates for display — one row per
+underlying thing — and never excluding the source from the rule that produces it. An exclusion is
+permanent and silent: the next genuine instance does not arrive late, it does not arrive.
+
+**And before writing either remedy, read the VALUE.** A duplication argument is about the shape of the
+output and can be completely correct while the thing being reported is a real emergency. The
+reasoning *"these N series share one underlying resource, therefore this is a rule defect"* has a true
+first half and a conclusion that does not follow — the shared resource may also genuinely be at the
+threshold. One query on the value distinguishes them, and nothing in the duplicated output ever will.
+
+**Where it is wrong:** a signal that is definitionally incapable of being true — a check pointed at a
+resource that does not exist, a rule whose predicate is inverted — is a defect to fix or remove at the
+source, not a presentation problem. The discriminator is whether a true instance of this signal is
+possible: if yes, collapse the display; if no, fix the predicate.
+
+## Removing a worktree deletes that worktree's own HEAD reflog
+
+**A linked worktree keeps its own HEAD reflog, and removing the worktree deletes it with the
+directory.** So a commit that was reachable only from that worktree's detached HEAD has, after
+removal, no ref and no reflog entry anywhere: it is recoverable only by its raw SHA, and only until
+the next garbage collection prunes unreachable objects (commonly a two-week grace, which is a
+default, not a promise).
+
+So **before removing a worktree, write down its HEAD SHA in the removal record** — not as bookkeeping,
+but because it is the only remaining handle. A worktree on a named branch is safe (the branch survives
+the removal); a detached one is not, and the two look the same in a listing until you ask.
+
+**Where it is wrong:** do not infer that a dirty or detached worktree must be preserved. The ordinary
+case is an abandoned experiment whose content is already merged, and keeping it costs disk and
+attention. Establish that the content exists elsewhere — a merge check against the integration tip,
+per worktree, with that worktree's own HEAD — and then remove it, SHA recorded.
+
+## Pin the data, not the whole response
+
+**Re-reading one unchanged remote surface can return a different digest every time, because the
+response carries per-request material** — a trace id, a nonce or random seed, an edge-cache token, a
+timestamp. A digest over the whole response therefore reports "changed" on every read, and an agent
+that treats a digest difference as a content difference will chase a change that never happened.
+
+So **hash the extracted data, not the transport**: the specific object, record or subtree the claim is
+about, serialized by a named normalizer. State the normalizer whenever a size or digest is cited — the
+same object yields different bytes under different serialization settings, so a bare byte count is
+not comparable to anyone else's.
+
+⚠️ **And a candidate that merely held still across one run is not a pin.** A subtree can be
+byte-stable over three reads a second apart and still carry values that move on their own clock — view
+counts, queue depths, anything cumulative. Establish stability from what the field MEANS, not from the
+agreement of closely-spaced reads, which is the weakest possible evidence of invariance. Prefer the
+narrowest subtree that carries the claim.
+
+**Where it is wrong:** when the question is "did this response change" — detecting a tampered
+download, pinning an artifact for supply-chain purposes — the whole-byte digest is the right
+instrument and a narrowed one is the defect. The rule applies when the claim is about the content; the
+transport's own variance is then noise, and only then.
