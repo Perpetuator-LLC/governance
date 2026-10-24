@@ -1739,6 +1739,18 @@ pre-pass's number **as if it were the model's** — a silent regex-only score ma
 score, which is **absence-as-health in eval flavor**. Assert non-empty output per item and fail the
 run; never let a missing answer be scored as an answer.
 
+**The same holds for any WRITER, not only a scorer: a step that persists a produced value checks the
+value is substantive before writing, and fails when it is not.** "The call returned" is not
+validation. A generated summary, rendered file or transformed record that comes back empty, once
+written, looks downstream exactly like a correct one. Worse, the write often consumes the marker that
+said *this still needs doing*, so a search for the marker reports the item done: **the write destroys
+the evidence that the write was needed.** **Scope:** steps that persist a value they did not compute
+deterministically, above all where a placeholder or pending marker is replaced by the write.
+**Where it is wrong:** a writer whose correct output can be empty (a diff with no changes, a log of a
+quiet interval, a report with no findings). There, tell an empty result from a failure by a
+**separate** signal (an exit code, an explicit no-op flag), never by length; a minimum-length check
+turns a correct quiet result into a manufactured error.
+
 ## An "exactly once per period" writer marks the no-op path too; a dry run emits no real side effects
 
 **A job that must act at most once per period records that the period was handled on EVERY path that
@@ -3557,3 +3569,20 @@ is being approached at all — and it encodes a multiplier the next library vers
 a ceiling nobody can explain. Set the threshold to the real intent and enforce the boundary yourself
 before handing the input to the library, so the policy lives in your code and the library's warning
 stays a warning.
+
+**Measure the refusal once, not forever.** Where the library documents its constant as the exact
+refusal point and a test already pins the boundary, keep the test and stop re-deriving it: the rule
+asks for one measurement of a delegated limit, not permanent suspicion of every configured value.
+It does not cover limits your own code compares; those are ordinary tests.
+
+## A cleanup hung on the user's EXIT misses every ending the user did not choose
+
+**When state must be cleared at the end of a session, list every way the session can end and attach
+the cleanup where it covers all of them:** explicit exit, timeout or expiry, crash, navigation away,
+process kill. Bound to the sign-out control, close button or menu item alone, it leaves the other
+endings uncovered, and those are usually the common ones. **Scope:** state that outlives its session
+and is visible to whoever comes next (cached pages, tokens, drafts, temp files, locks). **Where it is
+wrong:** an action that is only correct on a deliberate exit. "Commit the pending edit on close" must
+not fire on a crash or a timeout, because the user never confirmed it; binding it to the explicit
+action is the point, and widening it destroys data. Sort each end-of-session action first: *clear*
+(every ending) or *commit* (deliberate endings only).

@@ -836,3 +836,15 @@ either admits everyone or locks everyone out, and nothing says which until someo
 - **Build time is not run time.** A rename or delete after the bind breaks the gate the same way, and
   the build check cannot see it. Pair the build check with a periodic report that reads each bound
   gate and resolves its names again.
+
+## A test of a LATER auth gate needs a principal that PASSES every earlier one
+
+**A sequential, short-circuiting auth chain (password, then role, then second factor, …) refuses at
+its first failing gate, so the later gates never run for that principal.** A test asserting "the
+second factor was required" proves nothing when its principal was already refused by the role check,
+and a suite built only from such principals reports the second factor as enforced when no request has
+ever reached it. **The rule:** each gate's test uses a principal that passes every gate before it, and
+asserts the refusal came from the gate under test (its reason or error code), not merely that access
+was denied. **Scope:** chains that stop at the first refusal. **Where it is wrong:** evaluators that
+run every check and collect all violations (form validation, policy engines that return every failed
+rule). There every gate does run, and assuming a short-circuit would hide a real check.
