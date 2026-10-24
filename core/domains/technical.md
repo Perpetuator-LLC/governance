@@ -3160,7 +3160,9 @@ the series. If it is not, zero must trip an absolute rule.
 rule evaluates only the series that exist, so when the target becomes unreachable (the scrape fails,
 the exporter dies, a label changes) the expression returns nothing and the alert resolves: a recovery
 nobody observed. Pair each such rule with one that fires on the series being absent, and read a
-resolve with no series behind it as unmeasurable, never as healthy. **Where it is wrong:** a series
+resolve with no series behind it as unmeasurable, never as healthy. **Scope:** threshold or freshness
+rules on a scraped or pulled series; a pushed or recording-rule input can fall silent in other ways,
+and each needs its own absence check. **Where it is wrong:** a series
 removed on purpose, such as a retired target; there the absence rule is retired in the same change.
 
 ## A capability guard tests for the CAPABILITY, not the environment it used to imply

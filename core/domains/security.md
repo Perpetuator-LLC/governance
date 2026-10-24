@@ -917,7 +917,8 @@ independently, and each turns the gate green while the thing it guards is unguar
 
 **The rule:** the gate states its maximum horizon itself, and reports an unevaluable finding as a
 third outcome beside pass and fail. Each fail-open gets a test that constructs the bad input and
-expects a refusal. **Scope:** a gate with no exception mechanism has nothing to bound. **Where it is
+expects a refusal, with the expected refusal derived from the input, never read back from the
+gate's own output. **Scope:** a gate with no exception mechanism has nothing to bound. **Where it is
 wrong:** a field optional *in the domain*, or a permanent exemption declared as permanent, with a
 reason, and reviewed as such; the defect is absent silently equalling pass, and permanence smuggled
 in through a deadline field.
