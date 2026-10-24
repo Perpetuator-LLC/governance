@@ -1852,6 +1852,85 @@ a sandbox), a double defeats the purpose; use the privilege drop. **The mirror:*
 root (`chown`, binding a low port) and is skipped for non-root developers is the same defect from the
 other side. It must run where it gates.
 
+## Installing a stub by NAME on PATH does not prove the stub is what runs
+
+**A test that replaces a command with a fake by prepending a directory to `PATH` has established only
+that the shell running the check resolves the fake.** A version-manager shim (pyenv, asdf, rbenv, nvm
+and the like) re-orders `PATH` for its own children before exec'ing the real interpreter, so the
+production code's subprocess — one process deeper than the guard — can still reach the real binary. A
+`command -v <name>` assertion made in the parent shell cannot see this, and it passes while the run
+under test silently uses the real tool.
+
+**So: when the code under test invokes the collaborator from a subprocess, either pass the stub by
+absolute path through a mechanism the whole process tree inherits unchanged (an environment variable),
+or ask a real child of the same kind what it resolves the name to** (a `python3` child reporting
+`shutil.which(<name>)`, for instance). When neither can be guaranteed, the test reports **"NOT
+checked"** and a non-zero code distinct from a failure — never a pass, and never a red that blames the
+code.
+
+**Scope:** applies only where the real caller is a subprocess, or deeper. **Where it is wrong:** a
+test whose target invokes the command directly in the guard's own shell needs none of this — `PATH`
+order *is* the whole story there, a child-process probe is dead weight, and resolving the stub to an
+absolute path can defeat a legitimate test of `PATH` handling itself. The trigger is "the thing I am
+faking is reached through at least one `exec`," not "I am faking a thing."
+
+## A least-privilege credential that must introspect ITSELF needs the introspection grant explicitly
+
+**A self-verifying check — mint a credential with policy X, then ask the store what that credential is
+allowed to do — fails when the credential is minted with only the policy under test.** Asking about
+one's own capabilities is itself a permissioned operation, usually carried by the store's default
+policy, which a deliberately minimal mint omits. The failure surfaces as a bare non-zero exit with no
+message, because the store refuses the introspection call rather than answering it negatively.
+
+**So: when a check's subject is the credential's OWN grants, mint it with the policy under test plus
+the store's introspection grant, and state in the check why that second grant is present.** Otherwise
+record the step as "could not tell," never as a failure of the policy.
+
+**Scope:** checks whose subject is the credential's own permissions. **Where it is wrong:** a
+credential that merely *uses* its grants needs nothing extra, and adding the default policy there
+widens the blast radius for no benefit. The mirror also matters: a negative test asserting that a
+scoped credential *cannot* reach a path must not grant it introspection either — that changes what is
+being measured, and a test that adds permissions to prove a restriction is testing the wrong
+credential.
+
+## A stub that shadows a command by NAME must never invoke that bare name
+
+**A shell function or script installed as `<name>` that calls `<name>` in its own body re-enters
+itself.** There is no error and no recursion warning: it forks until the process limit is reached. The
+blast radius is the whole execution environment, not the test — on a shared container or host, every
+other process that then tries to start fails, so unrelated concurrent work is cut off partway with
+errors that point nowhere near the test.
+
+**So: a stub that wraps the real command calls it by absolute path (`/usr/bin/<name>`), or through the
+shell's own bypass (`command <name>`, `builtin`), never the bare name.** A test that installs such a
+stub also bounds itself (`ulimit -u`, or a sandbox with its own process cap), so a mistake of this
+shape cannot reach anything outside the test.
+
+**Scope:** any name-shadowing stub — PATH scripts, exported shell functions, aliases — in any language
+whose lookup is by name. **Where it is wrong:** a stub that fully replaces the command and never
+delegates has no call to qualify, and an absolute path there would reintroduce the real tool the test
+exists to keep out. The rule binds the delegating stub only.
+
+## A model call that returns nothing still returns 200, so assert the success SHAPE
+
+**A text-generation endpoint that produces no usable output does not usually fail. It answers 200 with
+an empty body and a status field explaining why** — the model spent its budget on internal reasoning,
+hit a stop condition, or was truncated. There is no exception to catch. A caller written as "try the
+call, catch errors, use the result" therefore stores an empty result as a success, and whatever
+consumes it downstream cannot tell an empty answer from a quiet input.
+
+**So: a generation step asserts two things before it accepts a result — the provider's own completion-
+reason field says it finished normally, and the body is non-empty after whatever post-processing
+strips reasoning or markup.** Anything else is a failure with the provider's own status quoted
+verbatim, never a stored blank.
+
+**Scope:** any call to a generative model whose output is written somewhere a later reader will trust.
+**Where it is wrong:** a call whose empty output is itself a meaningful answer (a classifier that may
+legitimately return "nothing matched") needs its own distinct encoding for that case instead — the
+same discipline, stated the other way round. A *streaming* call is also an exception: an empty body
+mid-stream is normal, and the completion reason only arrives at the end, so asserting per-chunk would
+reject every healthy stream — the assertion belongs at stream close.
+
 ## Prove a job you just kicked RAN by the output's IDENTITY, not by its timestamp
 
 **Scope:** you start a job and then poll a status or output file it writes, to decide whether this
