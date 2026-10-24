@@ -67,12 +67,34 @@ def md_files(paths):
 def find_pointers(path):
     ptrs = []
     with open(path, encoding="utf-8", errors="ignore") as fh:
-        for n, line in enumerate(fh, 1):
-            for m in FORM_A.finditer(line):
-                for t in re.findall(r"\*([^*\n]{2,160})\*", m.group("targets")):
-                    ptrs.append((n, m.group("prefix"), m.group("doc"), t.strip()))
-            for m in FORM_B.finditer(line):
-                ptrs.append((n, m.group("prefix"), m.group("doc"), m.group("target").strip()))
+        lines = fh.readlines()
+    for i, line in enumerate(lines):
+        n = i + 1
+        found = False
+        for m in FORM_A.finditer(line):
+            found = True
+            for t in re.findall(r"\*([^*\n]{2,160})\*", m.group("targets")):
+                ptrs.append((n, m.group("prefix"), m.group("doc"), t.strip()))
+        for m in FORM_B.finditer(line):
+            found = True
+            ptrs.append((n, m.group("prefix"), m.group("doc"), m.group("target").strip()))
+        # A `*target*` can WRAP to the next line (house style wraps prose around 100 cols), and
+        # `[^*\n]` in the patterns above stops at the newline, so a wrapped pointer matched nothing
+        # on this line and was never even counted as dangling — it just vanished from the scan. A
+        # line ending in an ARROW with an ODD number of `*` after it has an opening emphasis mark
+        # with no close before EOL: exactly the wrap case, never a complete pointer that happens to
+        # end a line. Retry joined with the next line, once, before giving up on it.
+        if not found and i + 1 < len(lines):
+            last_arrow = None
+            for am in re.finditer(ARROW, line):
+                last_arrow = am
+            if last_arrow is not None and line.count("*", last_arrow.end()) % 2 == 1:
+                joined = line.rstrip("\n") + " " + lines[i + 1].lstrip()
+                for m in FORM_A.finditer(joined):
+                    for t in re.findall(r"\*([^*\n]{2,160})\*", m.group("targets")):
+                        ptrs.append((n, m.group("prefix"), m.group("doc"), t.strip()))
+                for m in FORM_B.finditer(joined):
+                    ptrs.append((n, m.group("prefix"), m.group("doc"), m.group("target").strip()))
     return ptrs
 
 
