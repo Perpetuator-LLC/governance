@@ -1243,3 +1243,19 @@ So write it so the expiry is detectable:
 - **Prefer pointing at the artefact over restating its state.** A pointer stays true as the artefact
   moves; a restatement is a copy that has to be maintained, and copies are what go stale.
 
+
+
+## Prove the acting identity can perform the action before asking a person for presence
+
+**When a flow asks a human for a physical confirmation — a hardware key, a biometric, a password —
+the step before the prompt proves that the identity that will actually act can see the resource and
+is permitted to act on it.** A human's presence is a scarce, interrupting resource; spending it on an
+action that was never possible is the worst available outcome, because the failure arrives after the
+tap and reads as "your approval failed."
+
+**Scope:** any human-gated action performed by a service identity rather than by the human's own
+account — the common shape in agent and dashboard systems.
+
+**Where it is wrong:** where the pre-check itself needs the same credential the tap unlocks, the
+pre-check cannot run first, and the right fix is to make the post-tap failure message name the
+identity and the missing permission, not to add a probe that cannot work.
