@@ -43,23 +43,8 @@ pass=0; fail=0
 ok()   { echo "  ✅ $1"; pass=$((pass+1)); }
 bad()  { echo "  ❌ $1"; fail=$((fail+1)); }
 
-# A PATH holding every command on the current PATH except the named ones (as hook-input.test.sh).
-shim_path() {
-  local dir="$TMP/path-$1"; shift
-  mkdir -p "$dir"
-  local d f n x skip
-  IFS=: read -ra dirs <<<"$PATH"
-  for d in "${dirs[@]}"; do
-    [ -d "$d" ] || continue
-    for f in "$d"/*; do
-      n="${f##*/}"; skip=0
-      for x in "$@"; do [ "$n" = "$x" ] && skip=1; done
-      [ "$skip" = 1 ] || [ -e "$dir/$n" ] || ln -s "$f" "$dir/$n" 2>/dev/null
-    done
-  done
-  if [ -L "$dir/python3" ]; then ln -sf "$(python3 -c 'import sys; print(sys.executable)')" "$dir/python3"; fi
-  printf '%s' "$dir"
-}
+# shim_path <label> <tool>...: a PATH of exec wrappers without the named tools (tests/lib/shim-path.sh).
+. "$ROOT/tests/lib/shim-path.sh"
 
 # The cases live in python so a command can hold a literal newline, quote or backslash exactly as the
 # harness would deliver it. Columns: expectation · command. E is the secret-file shape.

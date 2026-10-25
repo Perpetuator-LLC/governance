@@ -27,25 +27,8 @@ export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$TMP/gitconfig"
 git config --global user.email t@example.com; git config --global user.name test
 git config --global init.defaultBranch main; git config --global commit.gpgsign false
 
-# A PATH holding every command on the current PATH except the named ones.
-shim_path() {
-  local dir="$TMP/path-$1"; shift
-  mkdir -p "$dir"
-  local d f n x skip
-  IFS=: read -ra dirs <<<"$PATH"
-  for d in "${dirs[@]}"; do
-    [ -d "$d" ] || continue
-    for f in "$d"/*; do
-      n="${f##*/}"; skip=0
-      for x in "$@"; do [ "$n" = "$x" ] && skip=1; done
-      [ "$skip" = 1 ] || [ -e "$dir/$n" ] || ln -s "$f" "$dir/$n" 2>/dev/null
-    done
-  done
-  # A version-manager shim (pyenv, asdf) only works with its manager on PATH; link the real
-  # interpreter, or the no-jq leg measures a broken python3 instead of a missing jq.
-  if [ -L "$dir/python3" ]; then ln -sf "$(python3 -c 'import sys; print(sys.executable)')" "$dir/python3"; fi
-  printf '%s' "$dir"
-}
+# shim_path <label> <tool>...: a PATH of exec wrappers without the named tools (tests/lib/shim-path.sh).
+. "$ROOT/tests/lib/shim-path.sh"
 
 # Stubs: a fake `uname` naming the OS, and notifiers that append their arguments to a record file.
 # stub_dir <name> <os> [notifier...]
