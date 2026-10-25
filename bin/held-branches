@@ -52,8 +52,9 @@
 # NOT HELD WORK, and so not counted: a ref that cannot be lost because it is a COPY of a record held
 # elsewhere. Measured: a five-repo pass printed 521 rows of which about 7 were real, and a leg that
 # reports 521 findings reports nothing. Skipped, and COUNTED per repo on stderr:
-#   - PR-head MIRRORS — origin/pr/<n>, origin/pull/<n>…, origin/merge-requests/<n>… (a refs/pull/*
-#     fetch refspec), and a LOCAL pr/<n> branch whose tip IS a published PR head: the PR is the record;
+#   - PR-head MIRRORS — origin/pr/<n>, origin/pull/<n>[/head], origin/merge-requests/<n>[/head], <n> ALL
+#     digits (a refs/pull/* fetch refspec; a pr/123-hotfix is a branch, and is scanned), and a LOCAL
+#     pr/<n> branch whose tip IS a published PR head (one commit on top, and it is a row): the PR is the record;
 #   - branches of any remote other than origin (a retired or secondary remote: the scan fetches and
 #     measures against origin only);
 #   - bot branches — origin/dependabot/*: a bot re-creates them; no person holds them.
@@ -155,10 +156,14 @@ for R in "${REPOS[@]}"; do
   # Classify every remote-tracking ref not merged into the default branch. Full refnames, so a remote
   # name and a branch name can never be confused.
   REFS=(); sk_pr=0; sk_remote=0; sk_bot=0
+  # A mirror's <n> is ALL digits: a glob like pr/[0-9]* also matched a human branch pr/123-hotfix and
+  # counted its real work as a mirror (governance#323 F1). pull/ and merge-requests/ mirrors may carry
+  # the forge's /head or /merge suffix (a refs/pull/* refspec without the /head).
+  MIRROR='^refs/remotes/origin/(pr/[0-9]+|(pull|merge-requests)/[0-9]+(/head|/merge)?)$'
   while IFS= read -r ref; do
+    [[ "$ref" =~ $MIRROR ]] && { sk_pr=$((sk_pr + 1)); continue; }
     case "$ref" in
       ""|refs/remotes/origin/HEAD|refs/remotes/origin/merge/*) ;;
-      refs/remotes/origin/pr/[0-9]*|refs/remotes/origin/pull/*|refs/remotes/origin/merge-requests/*) sk_pr=$((sk_pr + 1)) ;;
       refs/remotes/origin/dependabot/*) sk_bot=$((sk_bot + 1)) ;;
       refs/remotes/origin/*) REFS+=("$ref") ;;
       *) sk_remote=$((sk_remote + 1)) ;;
@@ -244,12 +249,13 @@ for R in "${REPOS[@]}"; do
       lonly="$(git -C "$R" rev-list --no-merges "$lref" --not --remotes 2>/dev/null)"
       [ -n "$lonly" ] || continue
       # A local checkout of a PR (pr/<n>) whose tip IS a published PR head: the PR is the record.
-      case "$b" in pr/[0-9]*)
+      # <n> all digits, as for the remote mirrors; a pr/13 with a commit on top of the PR head is a row.
+      if [[ "$b" =~ ^pr/[0-9]+$ ]]; then
         tip="$(git -C "$R" rev-parse "refs/heads/$b")"
         if printf '%s\n' "$PRS" | awk -v t="$tip" '$1 == t { f = 1 } END { exit !f }'; then
           sk_pr=$((sk_pr + 1)); continue
-        fi ;;
-      esac
+        fi
+      fi
       # …minus what landed on the default branch, or on a pushed rolling branch, under a new hash.
       read -r only _ < <(printf '%s\n' "$lonly" | classify)
       if [ "$only" -gt 0 ]; then

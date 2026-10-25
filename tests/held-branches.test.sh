@@ -181,6 +181,39 @@ k branch -qD fix/only-here
 rc=0; "$HB" --local "$C3" >"$TMP/out3" 2>"$TMP/err3" || rc=$?
 check "noise only, no real work ⇒ exit 0 and no rows" "[ '$rc' = '0' ] && [ ! -s '$TMP/out3' ]"
 
+# --- a mirror is a PR NUMBER, never a name that starts with one (governance#323 F1, F2) -------------
+# Review found `origin/pr/[0-9]*` matched a human branch `origin/pr/123-hotfix`: real work was counted
+# as a PR mirror and left the exit code. And the local pr/<n> skip must apply ONLY when the tip IS the
+# published PR head: a local pr/13 with an unpushed commit on top is the only copy of that commit.
+O4="$TMP/origin4.git"; C4="$TMP/clone4"
+git init -q --bare -b main "$O4"; git clone -q "$O4" "$C4" 2>/dev/null
+m() { git -C "$C4" "$@"; }
+m config commit.gpgsign false
+c4() { printf '%s\n' "$2" > "$C4/$1"; m add "$1"; m commit -qm "$3"; }
+c4 base base "base"; m push -q origin main
+m switch -qc merge/lane; m push -q origin merge/lane; m switch -q main
+# human branches whose names merely START like a mirror's
+m switch -qc pr/123-hotfix main; c4 hf hf "a hotfix on a pr-prefixed branch"; m push -q origin HEAD
+m switch -qc pull/5-fix main; c4 pf pf "a fix on a pull-prefixed branch"; m push -q origin HEAD
+# a local checkout of PR 13 with one UNPUSHED commit on top of the PR head
+m switch -qc pr/13 main; c4 p13 p13 "work proposed in PR 13"; m push -q origin HEAD:refs/pull/13/head
+c4 p13b p13b "unpushed follow-up on the PR 13 checkout"
+# a local checkout of PR 14 that IS the PR head: the PR is the record
+m switch -qc pr/14 main; c4 p14 p14 "work proposed in PR 14"; m push -q origin HEAD:refs/pull/14/head
+m switch -q main
+for b in pr/123-hotfix pull/5-fix; do m branch -qD "$b"; done
+
+rc=0; "$HB" --local "$C4" >"$TMP/out4" 2>"$TMP/err4" || rc=$?
+check "prefix: a pushed origin/pr/123-hotfix holding real work is a ROW, not a PR mirror" \
+  "grep -q 'origin/pr/123-hotfix  1 not upstream' '$TMP/out4'"
+check "prefix: a pushed origin/pull/5-fix holding real work is a ROW too" \
+  "grep -q 'origin/pull/5-fix  1 not upstream' '$TMP/out4'"
+check "local pr/<n>: a PR checkout with an UNPUSHED commit on top is a (local) row — the only copy" \
+  "grep -Eq ' pr/13 \\(local\\)  [0-9]+ commit\\(s\\) ONLY ON THIS MACHINE' '$TMP/out4'"
+check "local pr/<n>: a PR checkout whose tip IS the PR head gets no row, and is counted as a PR mirror" \
+  "! grep -q 'pr/14' '$TMP/out4' && grep -q 'skipped 1 PR mirror' '$TMP/err4'"
+check "prefix + local pr/<n>: exit 1 — the real findings signal" "[ '$rc' = '1' ]"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
