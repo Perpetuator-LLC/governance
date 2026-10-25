@@ -5,10 +5,23 @@ The hand-off layout is canon (domains/operations.md -> Command hand-off format).
 enforced here as floor, not text. The rules, each checked only when the final message contains a
 fenced SHELL block (```bash / sh / zsh / shell / console):
 
-  R1  every shell block is preceded (within the 4 non-blank lines above it) by a `► <user>@<host>` line;
-  R2  a block containing `read -s`, `sudo`, `login`, `ssh ` or `--ask-` needs a `🔑 PROMPTS` line in the message;
+  R1  every shell block is preceded (within the 4 non-blank lines above it) by a `► <user>@<host>` line,
+      OR a header table (3-cell or 2-cell form, below) whose user/host identity is present;
+  R2  a block containing `read -s`, `sudo`, `login`, `ssh ` or `--ask-` needs a `🔑 PROMPTS` line in the message,
+      OR the header table's 🔑 cell is non-empty and not the literal "none";
   R3  the message has a `## 👤 You` header and it is the LAST `## ` header;
-  R4  every shell block has `📝 LOGGED` or `🚫 NOT LOGGED` within the 4 non-blank lines above it.
+  R4  every shell block has `📝 LOGGED` or `🚫 NOT LOGGED` within the 4 non-blank lines above it,
+      OR the header table's 📝 cell is non-empty (its text may be "no": the cell only has to say whether
+      it was logged, not that it was).
+
+The header table is two markdown rows directly above the fence, in either of two forms:
+    | 🖥️ <host> | 👤 <user> | 📝 <logged, or "no"> |          | 👤 <user>@<machine> | 📝 <logged, or "no"> |
+    | --- | --- | --- |                              or       | --- | --- |
+    | 🔑 <prompts, or "none"> | | |                           | 🔑 <prompts, or "none"> | |
+3-cell form: host and user are separate cells. 2-cell form: one cell merges them as `user@machine`,
+parsed the same way as the `►` line's own `<user>@<host>`. All three forms are accepted; Nik asked for
+the 3-cell table on 2026-10-25 and the 2-cell table the same day, each replacing the one before it in
+his own use, but none is retired here — the gate checks whichever one precedes a given block.
 
 Scope: the final message to the human (the last assistant text in the transcript). Peer DMs and forge comments are
 tool calls, never final text, so they are exempt by construction. A block relayed for the human is final text: checked.
@@ -31,6 +44,40 @@ SHELL_FENCE = re.compile(r"^```(bash|sh|zsh|shell|console)\s*$", re.I)
 FENCE_END = re.compile(r"^```\s*$")
 HOST_LINE = re.compile(r"►\s*\S+@\S+")
 PROMPT_WORDS = re.compile(r"read\s+-s|\bsudo\b|\blogin\b|\bssh\s|--ask-")
+TABLE_ROW1 = re.compile(r"^\|\s*🖥️\s*([^|]*?)\s*\|\s*👤\s*([^|]*?)\s*\|\s*📝\s*([^|]*?)\s*\|\s*$")
+TABLE_SEP = re.compile(r"^\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|\s*$")
+TABLE_ROW2 = re.compile(r"^\|\s*🔑\s*([^|]*?)\s*\|\s*\|\s*\|\s*$")
+TABLE2_ROW1 = re.compile(r"^\|\s*👤\s*([^|]*?)\s*\|\s*📝\s*([^|]*?)\s*\|\s*$")
+TABLE2_SEP = re.compile(r"^\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|\s*$")
+TABLE2_ROW2 = re.compile(r"^\|\s*🔑\s*([^|]*?)\s*\|\s*\|\s*$")
+USER_HOST = re.compile(r"(\S+)@(\S+)")
+
+
+def table_header(above):
+    """Find the two-row header table in the lines just above a fence, 3-cell or 2-cell form. Returns a
+    dict with host/user/logged (required) and prompts (None when its row is absent), or None when no
+    table is there."""
+    for idx in range(len(above) - 1):
+        line0, line1 = above[idx].strip(), above[idx + 1].strip()
+        m1 = TABLE_ROW1.match(line0)
+        if m1 and TABLE_SEP.match(line1):
+            host, user, logged = (g.strip() for g in m1.groups())
+            row2 = TABLE_ROW2
+        else:
+            m1 = TABLE2_ROW1.match(line0)
+            if not (m1 and TABLE2_SEP.match(line1)):
+                continue
+            merged, logged = (g.strip() for g in m1.groups())
+            uh = USER_HOST.search(merged)
+            user, host = (uh.group(1), uh.group(2)) if uh else ("", "")
+            row2 = TABLE2_ROW2
+        prompts = None
+        if idx + 2 < len(above):
+            m2 = row2.match(above[idx + 2].strip())
+            if m2:
+                prompts = m2.group(1).strip()
+        return {"host": host, "user": user, "logged": logged, "prompts": prompts}
+    return None
 
 
 def violations(text):
@@ -50,12 +97,14 @@ def violations(text):
         return []
     out = []
     for n, body, above in blocks:
-        if not any(HOST_LINE.search(l) for l in above):
-            out.append(f"R1 line {n}: shell block has no `► <user>@<host>` line just above it")
-        if not any(("📝 LOGGED" in l) or ("🚫 NOT LOGGED" in l) for l in above):
-            out.append(f"R4 line {n}: shell block has no `📝 LOGGED →` / `🚫 NOT LOGGED` marker just above it")
-        if PROMPT_WORDS.search(body) and "🔑 PROMPTS" not in text:
-            out.append(f"R2 line {n}: block prompts (read -s / sudo / login / ssh / --ask-) but the message has no `🔑 PROMPTS` line")
+        tbl = table_header(above)
+        if not any(HOST_LINE.search(l) for l in above) and not (tbl and tbl["host"] and tbl["user"]):
+            out.append(f"R1 line {n}: shell block has no `► <user>@<host>` line, and no header table, just above it")
+        if not any(("📝 LOGGED" in l) or ("🚫 NOT LOGGED" in l) for l in above) and not (tbl and tbl["logged"]):
+            out.append(f"R4 line {n}: shell block has no `📝 LOGGED →` / `🚫 NOT LOGGED` marker, and no header table 📝 cell, just above it")
+        table_prompts = tbl and tbl["prompts"] and tbl["prompts"].lower() != "none"
+        if PROMPT_WORDS.search(body) and "🔑 PROMPTS" not in text and not table_prompts:
+            out.append(f"R2 line {n}: block prompts (read -s / sudo / login / ssh / --ask-) but the message has no `🔑 PROMPTS` line or header-table 🔑 cell")
     heads = [l.strip() for l in lines if l.startswith("## ")]
     if not any(h.startswith("## 👤 You") for h in heads):
         out.append("R3: a message with a shell block for the human needs a `## 👤 You` section")
