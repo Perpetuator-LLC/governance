@@ -1046,6 +1046,19 @@ scope: <vault / engagement>
 review_cadence: "per worker-thread orientation + quarterly"
 ```
 
+**A North Star that is delivered by building things is DRAWN as well as written.** Pair the
+statement with one diagram of the system that delivers it. Every part carries a status (done ·
+partial · missing · tool not yet chosen, colour-coded with a legend) and names the work item that will
+change it. The diagram is the plan: it shows the human what is left at a glance, shows agents the
+dependencies between parts (including parts owned by other repositories), and an agent picks its next
+work from the parts that are not done. **Flip a part's status in the same change that flips the part,
+and re-render the image then.** A stale picture is worse than none, because it shows a finished plan.
+Commit the diagram's source with its rendered images, and embed the image in the North Star document.
+**Scope:** a goal that is met by behaviour rather than by building ("reduce spending") needs a measure
+and its trend, not a system diagram. **Mirror case:** a part marked done because its work item closed
+is not done until the result is verified where users meet it. Closing the ticket is evidence about
+the ticket, not about the part.
+
 **Home:** the instance lives in its domain's canonical place (e.g. a personal vault's finance North
 Star lives with its finance notes); the vault's instruction file points to it so every session finds
 it. Relation to the spine: a North Star sits at the Theme/Objective (strategy) layer of the artifact
