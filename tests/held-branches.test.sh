@@ -141,6 +141,79 @@ check "--local: stderr says a (local) row is the only copy" "grep -q 'ONLY copy'
 check "--local: a branch whose only local-only commit is a MERGE gets no row (first live run's noise)" \
   "! grep -q 'merge-only (local)' '$TMP/out'"
 
+# --- noise is not held work (governance#314) ------------------------------------------------------
+# Measured: a five-repo pass printed 521 rows, about 7 real. PR-head mirrors (a refs/pull/* fetch
+# refspec), a RETIRED remote's branches and dependabot branches all read as "pushed, never folded".
+# Fixture: one of each, plus exactly ONE real local-only branch — so exactly one row.
+O3="$TMP/origin3.git"; OLD="$TMP/retired.git"; C3="$TMP/clone3"
+git init -q --bare -b main "$O3"; git init -q --bare -b main "$OLD"; git clone -q "$O3" "$C3" 2>/dev/null
+k() { git -C "$C3" "$@"; }
+k config commit.gpgsign false
+c3() { printf '%s\n' "$2" > "$C3/$1"; k add "$1"; k commit -qm "$3"; }
+c3 base base "base"; k push -q origin main
+k switch -qc merge/lane; k push -q origin merge/lane; k switch -q main
+# a PR head, published by the forge and mirrored into refs/remotes/origin/pr/<n> by a fetch refspec
+k switch -qc pr-src main; c3 pr pr "work proposed in PR 12"; k push -q origin pr-src:refs/pull/12/head
+k config --add remote.origin.fetch '+refs/pull/*/head:refs/remotes/origin/pr/*'
+# a bot branch
+k switch -qc dependabot/npm_and_yarn/marked-18.0.6 main; c3 dep dep "Bump marked"; k push -q origin HEAD
+# a retired remote's branch
+k remote add origin_old "$OLD"
+k switch -qc feat/old-work main; c3 old old "work on a retired remote"; k push -q origin_old HEAD
+k fetch -q origin_old
+k switch -q main
+for b in pr-src dependabot/npm_and_yarn/marked-18.0.6 feat/old-work; do k branch -qD "$b"; done
+# the one real finding: a fix that exists only on this machine
+k switch -qc fix/only-here main; c3 oh oh "a fix only this machine holds"; k switch -q main
+
+rc=0; HELD_BRANCHES_PROGRESS_EVERY=1 "$HB" --local "$C3" >"$TMP/out3" 2>"$TMP/err3" || rc=$?
+check "noise: exactly ONE row — the real local-only branch (PR mirror, retired remote, dependabot are not held work)" \
+  "[ \"\$(grep -c . '$TMP/out3')\" = 1 ] && grep -q 'fix/only-here (local)' '$TMP/out3'"
+check "noise: still exit 1 — the real finding signals, not just prints" "[ '$rc' = '1' ]"
+check "noise: the skipped refs are COUNTED on stderr, never silently dropped" \
+  "grep -q '1 PR mirror' '$TMP/err3' && grep -q '1 on another remote' '$TMP/err3' && grep -q '1 bot branch' '$TMP/err3'"
+check "noise: the summary LEADS with the (local) count, the number to act on" \
+  "grep -m1 '^held-branches: [0-9]' '$TMP/err3' | grep -q '^held-branches: 1 local-only'"
+check "progress: a per-repo line on stderr as the repo starts" "grep -q '^held-branches: \[1/1\] ' '$TMP/err3'"
+check "progress: per-ref progress lines on stderr, so a long run is never silent" \
+  "grep -Eq '^held-branches: .* (remote ref|local branch) [0-9]+/[0-9]+' '$TMP/err3'"
+k branch -qD fix/only-here
+rc=0; "$HB" --local "$C3" >"$TMP/out3" 2>"$TMP/err3" || rc=$?
+check "noise only, no real work ⇒ exit 0 and no rows" "[ '$rc' = '0' ] && [ ! -s '$TMP/out3' ]"
+
+# --- a mirror is a PR NUMBER, never a name that starts with one (governance#323 F1, F2) -------------
+# Review found `origin/pr/[0-9]*` matched a human branch `origin/pr/123-hotfix`: real work was counted
+# as a PR mirror and left the exit code. And the local pr/<n> skip must apply ONLY when the tip IS the
+# published PR head: a local pr/13 with an unpushed commit on top is the only copy of that commit.
+O4="$TMP/origin4.git"; C4="$TMP/clone4"
+git init -q --bare -b main "$O4"; git clone -q "$O4" "$C4" 2>/dev/null
+m() { git -C "$C4" "$@"; }
+m config commit.gpgsign false
+c4() { printf '%s\n' "$2" > "$C4/$1"; m add "$1"; m commit -qm "$3"; }
+c4 base base "base"; m push -q origin main
+m switch -qc merge/lane; m push -q origin merge/lane; m switch -q main
+# human branches whose names merely START like a mirror's
+m switch -qc pr/123-hotfix main; c4 hf hf "a hotfix on a pr-prefixed branch"; m push -q origin HEAD
+m switch -qc pull/5-fix main; c4 pf pf "a fix on a pull-prefixed branch"; m push -q origin HEAD
+# a local checkout of PR 13 with one UNPUSHED commit on top of the PR head
+m switch -qc pr/13 main; c4 p13 p13 "work proposed in PR 13"; m push -q origin HEAD:refs/pull/13/head
+c4 p13b p13b "unpushed follow-up on the PR 13 checkout"
+# a local checkout of PR 14 that IS the PR head: the PR is the record
+m switch -qc pr/14 main; c4 p14 p14 "work proposed in PR 14"; m push -q origin HEAD:refs/pull/14/head
+m switch -q main
+for b in pr/123-hotfix pull/5-fix; do m branch -qD "$b"; done
+
+rc=0; "$HB" --local "$C4" >"$TMP/out4" 2>"$TMP/err4" || rc=$?
+check "prefix: a pushed origin/pr/123-hotfix holding real work is a ROW, not a PR mirror" \
+  "grep -q 'origin/pr/123-hotfix  1 not upstream' '$TMP/out4'"
+check "prefix: a pushed origin/pull/5-fix holding real work is a ROW too" \
+  "grep -q 'origin/pull/5-fix  1 not upstream' '$TMP/out4'"
+check "local pr/<n>: a PR checkout with an UNPUSHED commit on top is a (local) row — the only copy" \
+  "grep -Eq ' pr/13 \\(local\\)  [0-9]+ commit\\(s\\) ONLY ON THIS MACHINE' '$TMP/out4'"
+check "local pr/<n>: a PR checkout whose tip IS the PR head gets no row, and is counted as a PR mirror" \
+  "! grep -q 'pr/14' '$TMP/out4' && grep -q 'skipped 1 PR mirror' '$TMP/err4'"
+check "prefix + local pr/<n>: exit 1 — the real findings signal" "[ '$rc' = '1' ]"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
