@@ -80,6 +80,26 @@ ${F}"
 check "table's 🔑 row says 'none' but the block prompts: R2 fires" 1 "R2" "$(printf '%s' "$GOOD_TABLE" | sed 's/🔑 alice · password · workstation (sudo)/🔑 none/')"
 check "table with 📝 cell 'no' still satisfies R4 (states the answer, need not BE logged)" 0 "ok" "$(printf '%s' "$GOOD_TABLE" | sed 's/📝 ~\/.local\/state\/x.log/📝 no/')"
 
+# The 2-cell header table (requested by Nik, same day): user and machine merged into one cell.
+GOOD_TABLE2="## 👤 You
+**Rotate the key**
+| 👤 alice@workstation | 📝 ~/.local/state/x.log |
+| --- | --- |
+| 🔑 alice · password · workstation (sudo) | |
+${F}bash
+sudo ./rotate.sh
+${F}"
+
+check "2-cell table (user@machine merged) satisfies R1/R2/R4"  0 "ok" "$GOOD_TABLE2"
+check "2-cell table missing its 🔑 row fails R2 when the block prompts" 1 "R2" "## 👤 You
+| 👤 alice@workstation | 📝 no |
+| --- | --- |
+${F}bash
+sudo ./rotate.sh
+${F}"
+check "2-cell table's 🔑 row says 'none' but the block prompts: R2 fires" 1 "R2" "$(printf '%s' "$GOOD_TABLE2" | sed 's/🔑 alice · password · workstation (sudo)/🔑 none/')"
+check "2-cell table's identity cell with no '@' (not user@machine) fails R1" 1 "R1" "$(printf '%s' "$GOOD_TABLE2" | sed 's/👤 alice@workstation/👤 alice/')"
+
 # Stop-hook channel: a transcript whose last assistant text is the exhibit
 mk() { python3 - "$1" "$2" <<'PY'
 import json,sys

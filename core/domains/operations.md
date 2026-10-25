@@ -242,11 +242,19 @@ complete answer, an empty cell is not. The 🔑 cell lists every prompt the comm
 from its own flags (never guessed, never from a description of it) — a command that prompts and a
 cell reading "none" is a defect, not a convenience.
 
-**A single compact line directly above the block is an accepted alternative to the table:**
+**Two accepted alternatives to the 3-cell table carry the same three facts, differently arranged.** A
+2-cell table merges the identity cell into one `user@machine` value:
+
+| 👤 \<user\>@\<machine\> | 📝 \<logged path, or "no"\> |
+| --- | --- |
+| 🔑 \<prompts the command raises, or "none"\> | |
+
+A single compact line directly above the block carries all three in one row:
 `► <user>@<host> · 🔑 PROMPTS: <list> · 📝 LOGGED → <path>` (or `🚫 NOT LOGGED` when it is not).
 
-Enforced by `hooks/handoff-layout-gate.py`: a shell block preceded by neither form, or a table whose
-🔑 row is absent or reads "none" while the command actually prompts, is refused.
+All three forms are checked independently — use whichever fits the surface; none retires the others.
+Enforced by `hooks/handoff-layout-gate.py`: a shell block preceded by none of the three, or a table
+whose 🔑 cell is absent or reads "none" while the command actually prompts, is refused.
 
 ### A credential the human must create is handed over with its mint recipe, from the last run that worked
 
