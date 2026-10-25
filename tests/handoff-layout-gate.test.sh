@@ -64,6 +64,10 @@ ${F}bash
 sudo ./rotate.sh
 ${F}"
 check "R5 passes: sudo -p '<owner>@<host>: ' on the sudo line itself" 0 "ok" "$GOOD"
+check "R5 fires: a second, bare sudo on a labelled line"     1 "R5" "$(printf '%s' "$GOOD" | sed "s/sudo -p 'alice@workstation: ' .\/rotate.sh/sudo -p 'alice@workstation: ' true \&\& sudo rm -f \/etc\/x/")"
+check "R5 fires: a later command's -p does not label an earlier bare sudo" 1 "R5" "$(printf '%s' "$GOOD" | sed "s/sudo -p 'alice@workstation: ' .\/rotate.sh/sudo .\/rotate.sh \&\& tool -p 'alice@workstation: '/")"
+check "R5 passes: two sudos, each with its own -p"           0 "ok" "$(printf '%s' "$GOOD" | sed "s/sudo -p 'alice@workstation: ' .\/rotate.sh/sudo -p 'alice@workstation: ' true \&\& sudo -p 'alice@workstation: ' .\/rotate.sh/")"
+check "R5 passes: the long form --prompt='<owner>@<host>: '" 0 "ok" "$(printf '%s' "$GOOD" | sed "s/sudo -p 'alice@workstation: '/sudo --prompt='alice@workstation: '/")"
 
 # Stop-hook channel: a transcript whose last assistant text is the exhibit
 mk() { python3 - "$1" "$2" <<'PY'

@@ -931,18 +931,7 @@ either admits everyone or locks everyone out, and nothing says which until someo
 
 ## A denial for an action your declared policy grants means the declaration was never applied
 
-**When a permission denial names an action your infrastructure code grants, the first hypothesis is
-not a wrong policy document — it is that the document was never applied.** Read the live policy's
-version or serial and compare it with the declaration's history. A declaration is a proposal until
-something applies it, and nothing in the denial says which of the two you are looking at.
-
-**Scope:** any declared-permission system with a separate apply step: cloud IAM, secret-store
-policies, database grants, forge team permissions.
-
-**Where it is wrong:** a system that applies declarations continuously and reports drift (a
-reconciling controller) — there "never applied" is already ruled out, and the denial really is about
-the policy's content or an evaluation rule. Know which regime you are in before you choose the
-hypothesis.
+Stated once, with its scope and mirror, in `technical.md` → *A value read from a DECLARATION is not the state of the system*.
 
 ## Putting a validated CNAME behind a proxy replaces it with the proxy's own address records
 

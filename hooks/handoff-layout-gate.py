@@ -9,7 +9,8 @@ fenced SHELL block (```bash / sh / zsh / shell / console):
   R2  a block containing `read -s`, `sudo`, `login`, `ssh ` or `--ask-` needs a `🔑 PROMPTS` line in the message;
   R3  the message has a `## 👤 You` header and it is the LAST `## ` header;
   R4  every shell block has `📝 LOGGED` or `🚫 NOT LOGGED` within the 4 non-blank lines above it;
-  R5  every `sudo` token inside a shell block carries `-p '<owner>@<host>: …'` on that same line — a ► line
+  R5  every `sudo` token inside a shell block carries its OWN `-p '<owner>@<host>: …'` (or `--prompt=`) before
+      the next `sudo` or command separator — a second bare `sudo` on a labelled line is caught; a ► line
       above the block, or a label on a different line, does not satisfy this (a committed script's bare
       `sudo` on a remote host named no account and no host, and the ► line above it did not help).
 
@@ -35,7 +36,19 @@ FENCE_END = re.compile(r"^```\s*$")
 HOST_LINE = re.compile(r"►\s*\S+@\S+")
 PROMPT_WORDS = re.compile(r"read\s+-s|\bsudo\b|\blogin\b|\bssh\s|--ask-")
 SUDO_TOKEN = re.compile(r"\bsudo\b")
-SUDO_OWNER_HOST = re.compile(r"-p\s+['\"]?[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:")
+SUDO_OWNER_HOST = re.compile(r"(?:-p\s+|--prompt(?:=|\s+))['\"]?[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:")
+# A sudo's own argument span ends at the next sudo or at a shell command separator, so a later
+# command's -p never labels an earlier bare sudo.
+SUDO_SPAN_END = re.compile(r"\bsudo\b|&&|\|\||[;|]")
+
+
+def bare_sudo(line):
+    """True when any `sudo` on the line lacks its own -p/--prompt '<owner>@<host>:' in its argument span."""
+    for m in SUDO_TOKEN.finditer(line):
+        end = SUDO_SPAN_END.search(line, m.end())
+        if not SUDO_OWNER_HOST.search(line[m.end():end.start() if end else len(line)]):
+            return True
+    return False
 
 
 def violations(text):
@@ -63,7 +76,7 @@ def violations(text):
         if PROMPT_WORDS.search(body) and "🔑 PROMPTS" not in text:
             out.append(f"R2 line {n}: block prompts (read -s / sudo / login / ssh / --ask-) but the message has no `🔑 PROMPTS` line")
         for offset, line in enumerate(raw):
-            if SUDO_TOKEN.search(line) and not SUDO_OWNER_HOST.search(line):
+            if bare_sudo(line):
                 out.append(f"R5 line {n + 1 + offset}: `sudo` has no `-p '<owner>@<host>: …'` on that line "
                             "naming who is asked and where — a ► line above the block, or a label on another "
                             "line, does not satisfy this")
