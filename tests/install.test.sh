@@ -473,6 +473,29 @@ rc="$(gov check --home "$HB")"
 check "…and growth past it after install makes check refuse to re-derive, loudly" \
   "[ '$rc' = '2' ] && grep -q 'over its budget' '$TMP/stderr'"
 
+# NO SYMLINKS (Windows without Developer Mode): os.symlink raises. The install must refuse before its
+# first write. It used to fail part-way, with prior files already moved into the backup, and leave the
+# home half-installed. Simulated by replacing os.symlink, since this suite also runs where links work.
+nolink() {
+  python3 - "$GOV" "$@" >"$TMP/stdout" 2>"$TMP/stderr" <<'PY'
+import os, runpy, sys
+def refuse(*a, **k):
+    raise OSError(1314, "A required privilege is not held by the client")
+os.symlink = refuse
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+PY
+  echo $?
+}
+HN="$TMP/home-no-symlinks"; mkdir -p "$HN/.claude"; put "$HN/.claude/CLAUDE.md" "# prior"
+before="$(snap "$HN")"
+rc="$(nolink install --home "$HN" --repo "$C" --adapter "$A1" --no-local)"
+after="$(snap "$HN")"; nb="$(backups "$HN")"   # compared as variables: snapshots span lines
+check "where symlinks cannot be made, install REFUSES and the home is untouched, no backup taken" \
+  "[ '$rc' = '2' ] && grep -q 'cannot create symlinks' '$TMP/stderr' && [ \"\$after\" = \"\$before\" ] && [ '$nb' = '0' ]"
+rc="$(nolink install --home "$HN" --repo "$C" --adapter "$A1" --no-local --dry-run)"
+check "…a dry run still plans (it writes nothing, so it needs no links)" "[ '$rc' = '0' ] && grep -q 'dry run:' '$TMP/stdout'"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
