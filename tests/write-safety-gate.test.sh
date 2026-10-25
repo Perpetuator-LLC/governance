@@ -21,7 +21,9 @@ fails=0
 pass() { printf '  PASS  %s\n' "$1"; }
 fail() { printf '  FAIL  %s\n' "$1"; fails=$((fails + 1)); }
 
-payload() { printf '{"tool_name":"Write","tool_input":{"file_path":"%s"}}' "$1"; }
+# JSON-escape the path's backslashes: a raw one makes the payload unparseable, and the gate refuses it
+# for THAT reason, a block that would hide the verdict the row is testing.
+payload() { printf '{"tool_name":"Write","tool_input":{"file_path":"%s"}}' "${1//\\/\\\\}"; }
 
 blocked() {  # blocked <path> -> 0 if the gate refuses this path, 1 if it allows it
   local rc
@@ -59,6 +61,28 @@ check_blocked "app/.env.preview" ".env.preview"
 check_blocked "app/.env.local.bak" ".env.local.bak (a backup suffix after a real one, still a secret)"
 check_blocked "app/.ENV.STAGE" ".ENV.STAGE (case-insensitive, same gap)"
 check_allowed "app/.ENV.EXAMPLE" ".ENV.EXAMPLE (the allowlist, not just the old denylist, is case-insensitive)"
+
+echo " · env-file-write uses the READ gate's name list: what it refuses to read, this refuses to write"
+check_blocked "app/.envrc.local" ".envrc.local (direnv secrets; read-blocked, so write-blocked)"
+check_blocked "app/.envrc.private" ".envrc.private"
+check_blocked "app/.ENVRC.LOCAL" ".ENVRC.LOCAL (case variant)"
+check_blocked "app/.env.example.local" ".env.example.local (a template prefix, then a real suffix)"
+check_blocked "app/.env.sample2" ".env.sample2 (not exactly a template name)"
+check_blocked "app/.env/.env.example" "a template inside a .env directory: the directory name still matches"
+
+echo " · Windows backslash paths: the same file as the slash form, so the same verdict"
+check_blocked 'C:\Users\me\.kube\config' 'backslash .kube\config'
+check_blocked 'C:\Users\me\.docker\config.json' 'backslash .docker\config.json'
+check_blocked 'C:\Users\me\.gnupg\pubring.kbx' 'backslash .gnupg\'
+check_blocked 'C:\Users\me\.ssh\config' 'backslash .ssh\'
+check_blocked 'C:\Users\me\.aws\config' 'backslash .aws\'
+check_blocked 'C:\Users\me\.gcloud\legacy' 'backslash .gcloud\'
+check_blocked 'C:\repo\.github\workflows\secret.yml' 'backslash .github\...secret'
+check_blocked 'C:\proj\.envrc.local' 'backslash .envrc.local'
+check_blocked 'C:\proj\.env' 'backslash .env'
+check_allowed 'C:\proj\.env.example' 'backslash .env.example (a template stays allowed)'
+check_allowed 'C:\proj\docker\config.json' "backslash docker\\config.json (not the client's .docker)"
+check_allowed 'C:\proj\src\main.py' 'backslash ordinary source file'
 
 echo " · credential-file-write"
 check_blocked "app/credentials.json" "bare 'credentials' substring"

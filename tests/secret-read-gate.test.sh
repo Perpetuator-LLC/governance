@@ -38,6 +38,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GATE="$ROOT/hooks/bash-safety-gate.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 export GOVERNANCE_DENY_LOG="$TMP/deny.jsonl"   # the gates now write a deny trail: never the real one
+. "$ROOT/tests/lib/legs.sh"
 pass=0; fail=0
 ok()   { echo "  ✅ $1"; pass=$((pass+1)); }
 bad()  { echo "  ❌ $1"; fail=$((fail+1)); }
@@ -82,9 +83,14 @@ cases = [
     (BLOCK, f"CAT {E}"),
     # #301: naming the file with NO verb at all — the bare name is now the floor
     (BLOCK, f"{E}"), (BLOCK, f"echo {E}"),
-    # #301: a template ALONE, any verb — must stay allowed now that the verb list is gone
-    (ALLOW, f"cat {E}.example"), (ALLOW, f"sed -n p {E}.sample"), (ALLOW, f"cp {E}.template notes.txt"),
-    (ALLOW, f"ls -la {E.upper()}.EXAMPLE"),
+    # #301: a template ALONE, any verb — must stay allowed now that the verb list is gone. FP, not
+    # ALLOW: removing the template name needs python3, so without it the gate fails closed (BLOCK).
+    (FP, f"cat {E}.example"), (FP, f"sed -n p {E}.sample"), (FP, f"cp {E}.template notes.txt"),
+    (FP, f"ls -la {E.upper()}.EXAMPLE"),
+    # ... but only a WHOLE template name: a template prefix followed by more name is a real file, and
+    # the write gate refuses the same names (one shared list, hooks/secret-names.sh)
+    (BLOCK, f"cat {E}.example.local"), (BLOCK, f"cat {E}.template.prod"), (BLOCK, f"cat {E}.sample2"),
+    (BLOCK, f"cat app/{E}rc.local"),
     # a separator INSIDE quotes is part of a word
     (BLOCK, f'grep "a && b" {E}'), (BLOCK, f"grep 'x; y' {E}"), (BLOCK, f'grep ";" {E}'),
     (BLOCK, f'grep "&&" {E}'), (BLOCK, f"grep '|' {E}"), (BLOCK, f"grep $';' {E}"),
@@ -196,9 +202,10 @@ if PATH="$NOPY" command -v jq >/dev/null 2>&1; then
   echo " ── parser: jq only (no python3) — the sub-command check cannot run, so it must fail CLOSED"
   run_matrix nopy "$NOPY" failclosed
 else
-  echo " ── parser: jq only — SKIPPED, this host has no jq (the leg is not checked, not passed)"
+  # A leg that did not run is NOT RUN and fails the suite: a green result must not hide it.
+  leg_not_run "parser: jq only" "this host has no jq, so the fail-closed leg is unchecked"
 fi
 
 echo
 echo "  $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+legs_verdict "$fail"

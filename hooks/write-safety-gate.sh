@@ -82,19 +82,28 @@ if [[ -z "$path" ]]; then
   exit 0
 fi
 
+# A Windows path names the same file with `\` as with `/`, and every directory rule below is written
+# with `/`: `C:\Users\me\.ssh\config` and `.kube\config` were writable while the slash forms were
+# refused. Canonicalise once, before any match.
+path="${path//\\//}"
+
 # Every secret-path match below is CASE-INSENSITIVE (`grep -i`). Windows and default macOS (APFS)
 # filesystems are case-insensitive, so `.ENV`, `.Env` or `ID_RSA` open the very same file as the
 # lowercase name; a case-sensitive pattern let those spellings write it unrefused.
 
-# Block writes to environment/secrets files. A DENYLIST of suffixes (`.prod`, `.local`, …) is a list
-# that is always one spelling behind: `.env.stage`, `.env.ci`, `.env.qa`, `.env.uat`, `.env.preview`
-# and `.env.local.bak` were all measured writable (#301), each one more spelling the list hadn't named
-# yet. Inverted to an ALLOWLIST instead: every `.env` or `.env.<anything>` is blocked UNLESS the
-# `<anything>` is exactly `example`, `sample` or `template` — the only spellings that hold no secret.
-# `.envrc` is direnv's, which exports secrets, so it is caught by the same boundary SECRET_NAME uses
-# elsewhere (bash-safety-gate.sh): "env" followed by a non-letter, "rc", or the end.
-if echo "$path" | grep -qiE '\.env([^a-zA-Z]|rc$|$)' \
-  && ! echo "$path" | grep -qiE '\.env\.(example|sample|template)$'; then
+# Block writes to environment/secrets files, by the SAME name list the read gate uses
+# (secret-names.sh beside this script): what bash-safety-gate.sh refuses to read, this refuses to
+# write. A DENYLIST of suffixes (`.prod`, `.local`, …) is always one spelling behind: `.env.stage`,
+# `.env.ci`, `.env.qa`, `.env.uat`, `.env.preview` and `.env.local.bak` were all measured writable
+# (#301). So it is an ALLOWLIST: every `.env`, `.env.<anything>` or `.envrc<anything>` is blocked
+# UNLESS it is a whole template name (`.env.example`, `.env.sample`, `.env.template`). No shared list
+# beside this script: refuse every write, rather than guess which names are secret.
+SECRET_NAMES_FILE="$(dirname "$DENY_HELPER")/secret-names.sh"
+# shellcheck source=secret-names.sh
+if ! [[ -f "$SECRET_NAMES_FILE" ]] || ! . "$SECRET_NAMES_FILE" || [[ -z "${SECRET_NAME:-}" ]]; then
+  deny secret-names-missing "this safety gate cannot load its secret-name list (secret-names.sh beside it); refusing rather than allowing it unchecked."
+fi
+if strip_secret_templates "$path" | grep -qE "$SECRET_NAME"; then
   deny env-file-write "Cannot write to environment files. These may contain secrets. Edit manually."
 fi
 

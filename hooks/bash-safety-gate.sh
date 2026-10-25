@@ -174,15 +174,15 @@ if echo "$cmd" | grep -qE '[a-zA-Z_:][a-zA-Z0-9_:]*\s*\(\s*\)\s*\{[^}]*\|[^}]*&[
 fi
 
 # Block secret extraction — secrets must never enter agent context.
-# Catches: cat/grep/rg/head/tail on .env files, keychain access, docker env dumps.
+# Catches: any command that names an env file (any verb), keychain access, docker env dumps.
+# The NAME and its template allowance come from secret-names.sh beside this script, the same file
+# write-safety-gate.sh sources, so the two gates refuse the same names. Its header states the SCOPE
+# (the name as written; no indirection) and the COST (a command that only names the file is refused).
 # The name has a RIGHT BOUNDARY: `.env` followed by a non-letter, `rc`, or the end. That still matches
 # `.env`, `.env.local`, `.env_x`, `"$D/.env"` and `.envrc` (direnv files hold secrets too), and stops
 # matching a longer word that merely starts with the letters: `properties.environment`,
-# `sample.environment.ts`, `.envoy.yaml`. Without it, any reader verb near such a word was refused.
-# The NAME (only the name, not the reader verbs) is CASE-INSENSITIVE: on Windows and default macOS
-# (APFS) `.ENV` and `.Env` open the same file as `.env`. Bracket classes, not `grep -i`, because the
-# same pattern also runs in python's `re` per sub-command, and neither grep -E nor that call has a
-# scoped inline flag.
+# `sample.environment.ts`, `.envoy.yaml`. The name is CASE-INSENSITIVE: on Windows and default macOS
+# (APFS) `.ENV` and `.Env` open the same file as `.env`.
 # A FIXED LIST OF READER VERBS is a list that is always one verb behind: `sed -n p`, `awk 1`, `cp`,
 # `xxd` and the case variant `CAT` (a case-SENSITIVE verb list, on the very filesystems where the name
 # itself is matched case-insensitively) all read or relocated the file unrefused (#301), each one
@@ -190,7 +190,12 @@ fi
 # risk anyway: `cp` doesn't print to stdout, but it stages the SAME bytes under a name this gate no
 # longer recognises, for an allowed-looking read later. So the match drops the verb list entirely —
 # a sub-command naming a secret-bearing file AT ALL is the floor, whatever reads or moves it.
-SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
+# No shared list beside this script: refuse, rather than run with no secret-name check at all.
+SECRET_NAMES_FILE="$(dirname "$DENY_HELPER")/secret-names.sh"
+# shellcheck source=secret-names.sh
+if ! [[ -f "$SECRET_NAMES_FILE" ]] || ! . "$SECRET_NAMES_FILE" || [[ -z "${SECRET_NAME:-}" ]]; then
+  deny secret-names-missing "this safety gate cannot load its secret-name list (secret-names.sh beside it); refusing rather than allowing it unchecked."
+fi
 SECRET_READ="$SECRET_NAME"
 
 # A heredoc BODY given to `cat` or `tee` is DATA: those two only copy their stdin, so prose in the body
@@ -298,12 +303,20 @@ PY
 # .env.local`) must still match on the real name that survives the strip. No python3: this copy is
 # unchanged, so a template name still reads as a secret name — every doubt keeps the block, same as
 # `strip_data_heredocs` above.
-strip_template_names() {  # <cmd> -> <cmd> with every .env.(example|sample|template) occurrence removed
+# Only a WHOLE template name is removed: it must end the text or be followed by whitespace, a quote,
+# `/` or a shell separator. A template prefix followed by more name (`.env.example.local`,
+# `.env.sample2`) is a real file, refused here and by the write gate alike. Same pattern and the same
+# repeat-until-none as `strip_secret_templates` in secret-names.sh, which the write gate runs.
+strip_template_names() {  # <cmd> -> <cmd> with every whole .env.<template> name removed
   if ! command -v python3 >/dev/null 2>&1; then printf '%s' "$1"; return 0; fi
   python3 -c '
 import re, sys
-print(re.sub(r"\.env\.(example|sample|template)(?![A-Za-z])", "", sys.argv[1], flags=re.IGNORECASE), end="")
-' "$1" 2>/dev/null || printf '%s' "$1"
+rx = re.compile(r"\.env\.(" + sys.argv[2] + r")(?=\Z|[\s\"\x27/;&|<>)])", re.IGNORECASE)
+s, prev = sys.argv[1], None
+while s != prev:
+    prev, s = s, rx.sub("", s)
+print(s, end="")
+' "$1" "$SECRET_TEMPLATES" 2>/dev/null || printf '%s' "$1"
 }
 
 # FLATTEN before matching. `grep -E` matches line by line, so a newline between the reader and the file
