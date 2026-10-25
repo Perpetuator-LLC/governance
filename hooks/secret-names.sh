@@ -5,6 +5,10 @@
 # left writable, while `.env.example.local` was allowed to read but refused to write.
 # tests/secret-gates-agree.test.sh runs one table of names through both gates.
 #
+# Each gate also EMBEDS a copy of the code lines below, used when this file cannot be found (the
+# installer links hooks one file at a time, so an older link set lacks it). Change both copies with
+# this file; tests/secret-names-fallback.test.sh fails when they differ.
+#
 # SCOPE: this matches a NAME as written in the text of the tool call. It cannot see a file reached
 # through an indirection: a variable (`f=.e; cat ${f}nv`), a glob (`cat .e*`, `cat .en[v]`), split
 # quoting (`cat ./.e''nv`), or a symlink with another name. It is a floor for the common case, not a
@@ -23,13 +27,16 @@ SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
 # are real names. Matched case-insensitively.
 SECRET_TEMPLATES='example|sample|template'
 
-# strip_secret_templates <text> -> <text> with every whole template name removed, repeated until none
-# is left. The read gate does the same in python, with the same pattern and the same repetition.
+# strip_secret_templates <text> -> <text> with every whole template name removed, in ONE pass over the
+# text as given. Each removed name first becomes a mark that is not a separator, so removing one name
+# cannot make the text before it a whole name: `.env.sample.env.example` is a real file, not two
+# templates (a repeat-until-none strip allowed it on both gates). The read gate does the same in
+# python: one `re.sub` over the original text.
 strip_secret_templates() {
-  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>)].*)\$" nocase=0
+  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>)].*)\$" nocase=0 mark=$'\001'
   shopt -q nocasematch && nocase=1
   shopt -s nocasematch
-  while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${BASH_REMATCH[3]}"; done
+  while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${mark}${BASH_REMATCH[3]}"; done
   [ "$nocase" = 1 ] || shopt -u nocasematch
-  printf '%s' "$s"
+  printf '%s' "${s//$mark/}"
 }

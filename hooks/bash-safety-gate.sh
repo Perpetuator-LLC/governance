@@ -175,7 +175,7 @@ fi
 
 # Block secret extraction — secrets must never enter agent context.
 # Catches: any command that names an env file (any verb), keychain access, docker env dumps.
-# The NAME and its template allowance come from secret-names.sh beside this script, the same file
+# The NAME and its template allowance come from secret-names.sh (found as below), the same file
 # write-safety-gate.sh sources, so the two gates refuse the same names. Its header states the SCOPE
 # (the name as written; no indirection) and the COST (a command that only names the file is refused).
 # The name has a RIGHT BOUNDARY: `.env` followed by a non-letter, `rc`, or the end. That still matches
@@ -190,11 +190,41 @@ fi
 # risk anyway: `cp` doesn't print to stdout, but it stages the SAME bytes under a name this gate no
 # longer recognises, for an allowed-looking read later. So the match drops the verb list entirely —
 # a sub-command naming a secret-bearing file AT ALL is the floor, whatever reads or moves it.
-# No shared list beside this script: refuse, rather than run with no secret-name check at all.
-SECRET_NAMES_FILE="$(dirname "$DENY_HELPER")/secret-names.sh"
-# shellcheck source=secret-names.sh
-if ! [[ -f "$SECRET_NAMES_FILE" ]] || ! . "$SECRET_NAMES_FILE" || [[ -z "${SECRET_NAME:-}" ]]; then
-  deny secret-names-missing "this safety gate cannot load its secret-name list (secret-names.sh beside it); refusing rather than allowing it unchecked."
+#
+# WHERE the list is found. The installer links hooks FILE BY FILE into the harness's hooks directory,
+# so the directory of BASH_SOURCE is that link directory, not the clone that holds secret-names.sh.
+# Looking only beside the link refused every Bash and Write call on a machine whose links predated the
+# new file, the agent's own `reconcile` included, until a human ran it from a terminal. So the list is
+# loaded from this script's REAL directory (symlinks followed), then from beside the link; and when
+# neither has it, the copy embedded below is used, so a missing file still yields the right list, never
+# a refuse-everything gate. tests/secret-names-fallback.test.sh diffs this copy against the file.
+# >>> embedded copy of secret-names.sh (code lines only; keep identical)
+SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
+SECRET_TEMPLATES='example|sample|template'
+strip_secret_templates() {
+  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>)].*)\$" nocase=0 mark=$'\001'
+  shopt -q nocasematch && nocase=1
+  shopt -s nocasematch
+  while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${mark}${BASH_REMATCH[3]}"; done
+  [ "$nocase" = 1 ] || shopt -u nocasematch
+  printf '%s' "${s//$mark/}"
+}
+# <<< end of embedded copy
+gate_real_dir() {  # the directory of this script's REAL file, symlinks followed (portable: no readlink -f)
+  local src="${BASH_SOURCE[0]}" dir
+  while [[ -L "$src" ]]; do
+    dir="$(cd -P "$(dirname "$src")" 2>/dev/null && pwd)" || return 0
+    src="$(readlink "$src")" || return 0
+    [[ "$src" == /* ]] || src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" 2>/dev/null && pwd
+}
+for SECRET_NAMES_FILE in "$(gate_real_dir)/secret-names.sh" "$(dirname "${BASH_SOURCE[0]}")/secret-names.sh"; do
+  # shellcheck source=secret-names.sh
+  [[ -f "$SECRET_NAMES_FILE" ]] && . "$SECRET_NAMES_FILE" && break
+done
+if [[ -z "${SECRET_NAME:-}" || -z "${SECRET_TEMPLATES:-}" ]]; then
+  deny secret-names-missing "this safety gate's secret-name list is empty (secret-names.sh); refusing rather than allowing it unchecked."
 fi
 SECRET_READ="$SECRET_NAME"
 
@@ -305,17 +335,16 @@ PY
 # `strip_data_heredocs` above.
 # Only a WHOLE template name is removed: it must end the text or be followed by whitespace, a quote,
 # `/` or a shell separator. A template prefix followed by more name (`.env.example.local`,
-# `.env.sample2`) is a real file, refused here and by the write gate alike. Same pattern and the same
-# repeat-until-none as `strip_secret_templates` in secret-names.sh, which the write gate runs.
+# `.env.sample2`) is a real file, refused here and by the write gate alike. Same pattern as
+# `strip_secret_templates` in secret-names.sh, which the write gate runs, and the same ONE pass over the
+# original text: repeating the strip let `.env.sample.env.example` lose `.env.example`, then
+# `.env.sample`, and pass both gates as nothing.
 strip_template_names() {  # <cmd> -> <cmd> with every whole .env.<template> name removed
   if ! command -v python3 >/dev/null 2>&1; then printf '%s' "$1"; return 0; fi
   python3 -c '
 import re, sys
 rx = re.compile(r"\.env\.(" + sys.argv[2] + r")(?=\Z|[\s\"\x27/;&|<>)])", re.IGNORECASE)
-s, prev = sys.argv[1], None
-while s != prev:
-    prev, s = s, rx.sub("", s)
-print(s, end="")
+print(rx.sub("", sys.argv[1]), end="")
 ' "$1" "$SECRET_TEMPLATES" 2>/dev/null || printf '%s' "$1"
 }
 

@@ -46,6 +46,13 @@ for p in app/.env app/.env.local app/.env.production app/.env.local.bak app/.ENV
          'C:\proj\.env' 'C:\proj\.envrc.local'; do
   check BLOCK "$p"
 done
+# A template strip that REPEATS removes `.env.example`, then the `.env.sample` it exposed, and lets a
+# real name through as nothing. The strip is one pass over the name as given, so these stay refused.
+for p in app/.env.sample.env.example app/.env.example.env.example; do
+  check BLOCK "$p"
+done
+# A DIRECTORY named after a template is not a secret file: the strip also ends a name at `/`.
+check ALLOW app/.env.example/notes.txt
 for p in app/.env.example app/.env.sample app/.env.template app/.ENV.EXAMPLE \
          app/environment.md app/.envoy.yaml src/sample.environment.ts 'C:\proj\.env.example'; do
   check ALLOW "$p"

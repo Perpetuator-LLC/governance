@@ -92,16 +92,43 @@ path="${path//\\//}"
 # lowercase name; a case-sensitive pattern let those spellings write it unrefused.
 
 # Block writes to environment/secrets files, by the SAME name list the read gate uses
-# (secret-names.sh beside this script): what bash-safety-gate.sh refuses to read, this refuses to
+# (secret-names.sh, found as below): what bash-safety-gate.sh refuses to read, this refuses to
 # write. A DENYLIST of suffixes (`.prod`, `.local`, …) is always one spelling behind: `.env.stage`,
 # `.env.ci`, `.env.qa`, `.env.uat`, `.env.preview` and `.env.local.bak` were all measured writable
 # (#301). So it is an ALLOWLIST: every `.env`, `.env.<anything>` or `.envrc<anything>` is blocked
-# UNLESS it is a whole template name (`.env.example`, `.env.sample`, `.env.template`). No shared list
-# beside this script: refuse every write, rather than guess which names are secret.
-SECRET_NAMES_FILE="$(dirname "$DENY_HELPER")/secret-names.sh"
-# shellcheck source=secret-names.sh
-if ! [[ -f "$SECRET_NAMES_FILE" ]] || ! . "$SECRET_NAMES_FILE" || [[ -z "${SECRET_NAME:-}" ]]; then
-  deny secret-names-missing "this safety gate cannot load its secret-name list (secret-names.sh beside it); refusing rather than allowing it unchecked."
+# UNLESS it is a whole template name (`.env.example`, `.env.sample`, `.env.template`).
+#
+# WHERE the list is found: this script's REAL directory (symlinks followed), then beside the link, then
+# the copy embedded below. The installer links hooks file by file, so looking only beside the link
+# refused every write on a machine whose links predated secret-names.sh. Same loader as
+# bash-safety-gate.sh; tests/secret-names-fallback.test.sh diffs this copy against the file.
+# >>> embedded copy of secret-names.sh (code lines only; keep identical)
+SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
+SECRET_TEMPLATES='example|sample|template'
+strip_secret_templates() {
+  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>)].*)\$" nocase=0 mark=$'\001'
+  shopt -q nocasematch && nocase=1
+  shopt -s nocasematch
+  while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${mark}${BASH_REMATCH[3]}"; done
+  [ "$nocase" = 1 ] || shopt -u nocasematch
+  printf '%s' "${s//$mark/}"
+}
+# <<< end of embedded copy
+gate_real_dir() {  # the directory of this script's REAL file, symlinks followed (portable: no readlink -f)
+  local src="${BASH_SOURCE[0]}" dir
+  while [[ -L "$src" ]]; do
+    dir="$(cd -P "$(dirname "$src")" 2>/dev/null && pwd)" || return 0
+    src="$(readlink "$src")" || return 0
+    [[ "$src" == /* ]] || src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" 2>/dev/null && pwd
+}
+for SECRET_NAMES_FILE in "$(gate_real_dir)/secret-names.sh" "$(dirname "${BASH_SOURCE[0]}")/secret-names.sh"; do
+  # shellcheck source=secret-names.sh
+  [[ -f "$SECRET_NAMES_FILE" ]] && . "$SECRET_NAMES_FILE" && break
+done
+if [[ -z "${SECRET_NAME:-}" || -z "${SECRET_TEMPLATES:-}" ]]; then
+  deny secret-names-missing "this safety gate's secret-name list is empty (secret-names.sh); refusing rather than allowing it unchecked."
 fi
 if strip_secret_templates "$path" | grep -qE "$SECRET_NAME"; then
   deny env-file-write "Cannot write to environment files. These may contain secrets. Edit manually."
