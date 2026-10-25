@@ -145,11 +145,61 @@ doing it twice for the same service is a violation.** Before any token prompt:
    write) and is then consumed from the store, so that service never prompts again. New tokens always
    land in the store at mint time — a token that only lives in a shell/history/CI var is a bug.
 
+**Plan for the failure, because there is always one: the mint is its own step, and it ends at the
+store.** A hand-off or script that both captures a credential and USES it puts the capture first and
+alone, ending at the secret store, and every step after it reads the store and is safe to re-run. Any
+failure after the capture (a hang, a red check, a typo, a timeout, a wrong account) is retried from the
+failed step with zero prompts. Chaining a mint in front of steps that can fail, with `&&` in one
+pasted block, turns the first downstream error into a second mint, and every one after it into another.
+- **A cache that expires recreates the ask.** Keep a captured credential until the credential itself
+  expires or is rotated, or, if it was created only for this piece of work, until the work's last step
+  revokes it (`operations.md` → *Hand the human a SCRIPT, not steps — self-logging by design*, test 3).
+  Never for a fixed window: a "kept 24 h" cache makes tomorrow's retry a re-mint. Where a long-held
+  credential is too strong to keep, mint it short-lived at the source (an expiry on the token), not
+  short-lived in the store.
+- **Never recommend re-minting a stored credential "to be safe".** Re-mint only on evidence: proven
+  exposure (the value was printed where an agent or log could read it), proven revocation, or a
+  store check showing it absent. An unproven re-mint is a repeat ask with no benefit.
+- **Mirror case: the store is the problem.** When the store write itself failed, the rule above
+  applies: say the human pastes once more, and why. The plan for failure covers the mint step too:
+  the capture validates shape and length before it writes, so a cut-off paste is refused on the
+  spot instead of discovered three steps later.
+
 **A fix to the storing step does not recover a value collected before it shipped.** Before telling
 the human a credential "is kept", check that the store holds it (its metadata, never its value). If
 it is empty, say so plainly: they will paste once more, and because most services show a token only
 at creation, one they did not save is revoked and minted again. Never write that an earlier token
 "still works": that is true only if the human still holds it, which is the store's job.
+
+## An agent connects to one MCP front door; the door injects secrets, never the agent
+
+**An agent connects to one MCP front door. The door injects secrets server-side at call time; an
+agent never holds a key.** A tool that needs a credential reads it from the store at call time, into
+memory, on the door's own side of the connection — not into the agent's context, and not into a
+config file the agent can read. This is the same "never in agent context" boundary as *Secrets in
+code* and *Ask-once provisioning* above, pushed one layer further back: those rules say the agent
+never *handles* a secret's value; this one says the agent never even has a *path* to request one
+directly, because there is exactly one door, and the door is what holds the key.
+
+- **One front door, not one-per-tool.** An agent with direct credentials to several backing
+  services is several places a leaked context compromises; an agent with one MCP connection and no
+  credentials of its own is one place, and that place never held what it would leak.
+- **Server-side, at call time, into memory.** The secret is fetched when the call is made, held only
+  for the call's duration, and never written to disk or returned to the agent as a value — the same
+  shape as a service fetching from the secret store at runtime, moved to the door instead of the
+  service.
+- **Mirror case — reading is not the same as holding:** an agent reading a secret's *metadata*
+  (its name, its version, its age) is fine; the value is not. A tool that answers "is there a token
+  for X, and how old is it" without returning the token itself has not violated this rule — the
+  question this rule answers is never "can the agent know a secret exists," only "can the agent read
+  its value."
+
+**Scope:** an agent's own calls into backing services and tools. **Where it is wrong:** a human's own
+CLI session on their workstation is not routed through the door — a person authenticating as
+themselves is not the case this rule is about. Nor is the single, network-locked credential the door
+itself uses to authenticate each agent seat: that credential identifies the connection to the door,
+it is not one the door hands out, and a front door has to hold at least that much to be a door at
+all.
 
 ## A first-run setup endpoint is claimed by the deploy, before anyone else can reach it
 

@@ -195,8 +195,8 @@ Four tests, applied to every line in the human's section **in the first message*
    permissions. Measured: a script prompted for an admin token (hidden input) while the hand-off
    never said which token, where it is minted, or with what scope.
 3. **A credential created only for this piece of work is removed when the WORK ends, not after one
-   run.** Until then it is staged in the secret store with an expiry, and every retry and every later
-   step reads it from there (`security.md` → *Ask-once provisioning*). The work's last step deletes
+   run.** Until then it is staged in the secret store with an expiry set past the work's end, and every
+   retry and every later step reads it from there (`security.md` → *Ask-once provisioning*). The work's last step deletes
    the staged copy and revokes the credential: where, and how. A script that asks for it on every run
    and says to revoke it after each run turns every failed attempt into a re-mint. The mirror: a
    credential meant to persist, such as a service token stored for later use, gets no revoke step. It
