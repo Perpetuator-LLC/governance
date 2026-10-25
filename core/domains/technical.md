@@ -3077,6 +3077,36 @@ Litmus: if the fix would have to be repeated on the next device, it's at the wro
 Measured: an internal DNS name resolved on the LAN but died on the VPN; the answer was VPN
 split-DNS + DHCP, and the hand-made per-machine resolver file became removable.
 
+## A host's own infrastructure is not that infrastructure's safety net
+
+**A host must never depend on a single resolver for a lookup it cannot survive without, and
+never on one it hosts itself.** When the box that runs a DNS resolver, a rate limiter, or a
+monitoring/alert path is also a consumer of that same service, an outage on the host takes out
+the thing meant to report or route around it — the single point of failure and the system that
+would detect it collapse together.
+
+- **Resolution:** a host that is also its own resolver (or depends solely on one resolver
+  instance) loses name resolution exactly when that resolver fails, with no second path to fall
+  back to. At least one lookup path must not route through infrastructure that single host
+  provides.
+- **Rate limiting:** a resolver's rate limit must exempt or cap separately the host that runs
+  the resolver itself. A shared limit counts the resolver's own health checks, retries, and
+  internal calls against the same budget as every other client, so the resolver can rate-limit
+  itself into failure under its own load.
+- **Alerting:** the alert path (the pager, the notification channel) must not depend on the
+  host it monitors staying up. An alert whose delivery requires the very host that just went
+  down to still be reachable will not fire for the outage it exists to report.
+
+**Scope:** infrastructure a system depends on to detect, report, or route around its own
+failures — name resolution, rate limiting, and alerting/paging specifically; the same reasoning
+extends to any monitoring or circuit-breaking path.
+
+**Where it is wrong (the mirror):** a host that is NOT the resolver's own box. An ordinary
+client depending on a resolver it does not run has a normal, single-direction dependency, and
+provisioning a second resolver for every such client is pure redundancy cost with no
+circularity to fix. The rule binds the resolver's own host and the monitored host's own alert
+path — not every consumer of a shared service.
+
 ## A declared-state list that SHRINKS is a finding, not a diff
 
 **A list that declares what must be true (permission rules, scheduled jobs, allowed hosts, installed
