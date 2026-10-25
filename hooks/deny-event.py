@@ -110,7 +110,12 @@ def main():
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
         try:
-            os.fchmod(fd, 0o600)
+            # os.fchmod exists on Windows only from Python 3.13. Without this fallback its
+            # AttributeError reached main()'s catch-all and NO event was written on such a host.
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, 0o600)
+            else:
+                os.chmod(path, 0o600)
         except OSError:
             pass
         os.write(fd, line.encode())
