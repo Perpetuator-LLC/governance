@@ -141,6 +141,46 @@ check "--local: stderr says a (local) row is the only copy" "grep -q 'ONLY copy'
 check "--local: a branch whose only local-only commit is a MERGE gets no row (first live run's noise)" \
   "! grep -q 'merge-only (local)' '$TMP/out'"
 
+# --- noise is not held work (governance#314) ------------------------------------------------------
+# Measured: a five-repo pass printed 521 rows, about 7 real. PR-head mirrors (a refs/pull/* fetch
+# refspec), a RETIRED remote's branches and dependabot branches all read as "pushed, never folded".
+# Fixture: one of each, plus exactly ONE real local-only branch — so exactly one row.
+O3="$TMP/origin3.git"; OLD="$TMP/retired.git"; C3="$TMP/clone3"
+git init -q --bare -b main "$O3"; git init -q --bare -b main "$OLD"; git clone -q "$O3" "$C3" 2>/dev/null
+k() { git -C "$C3" "$@"; }
+k config commit.gpgsign false
+c3() { printf '%s\n' "$2" > "$C3/$1"; k add "$1"; k commit -qm "$3"; }
+c3 base base "base"; k push -q origin main
+k switch -qc merge/lane; k push -q origin merge/lane; k switch -q main
+# a PR head, published by the forge and mirrored into refs/remotes/origin/pr/<n> by a fetch refspec
+k switch -qc pr-src main; c3 pr pr "work proposed in PR 12"; k push -q origin pr-src:refs/pull/12/head
+k config --add remote.origin.fetch '+refs/pull/*/head:refs/remotes/origin/pr/*'
+# a bot branch
+k switch -qc dependabot/npm_and_yarn/marked-18.0.6 main; c3 dep dep "Bump marked"; k push -q origin HEAD
+# a retired remote's branch
+k remote add origin_old "$OLD"
+k switch -qc feat/old-work main; c3 old old "work on a retired remote"; k push -q origin_old HEAD
+k fetch -q origin_old
+k switch -q main
+for b in pr-src dependabot/npm_and_yarn/marked-18.0.6 feat/old-work; do k branch -qD "$b"; done
+# the one real finding: a fix that exists only on this machine
+k switch -qc fix/only-here main; c3 oh oh "a fix only this machine holds"; k switch -q main
+
+rc=0; HELD_BRANCHES_PROGRESS_EVERY=1 "$HB" --local "$C3" >"$TMP/out3" 2>"$TMP/err3" || rc=$?
+check "noise: exactly ONE row — the real local-only branch (PR mirror, retired remote, dependabot are not held work)" \
+  "[ \"\$(grep -c . '$TMP/out3')\" = 1 ] && grep -q 'fix/only-here (local)' '$TMP/out3'"
+check "noise: still exit 1 — the real finding signals, not just prints" "[ '$rc' = '1' ]"
+check "noise: the skipped refs are COUNTED on stderr, never silently dropped" \
+  "grep -q '1 PR mirror' '$TMP/err3' && grep -q '1 on another remote' '$TMP/err3' && grep -q '1 bot branch' '$TMP/err3'"
+check "noise: the summary LEADS with the (local) count, the number to act on" \
+  "grep -m1 '^held-branches: [0-9]' '$TMP/err3' | grep -q '^held-branches: 1 local-only'"
+check "progress: a per-repo line on stderr as the repo starts" "grep -q '^held-branches: \[1/1\] ' '$TMP/err3'"
+check "progress: per-ref progress lines on stderr, so a long run is never silent" \
+  "grep -Eq '^held-branches: .* (remote ref|local branch) [0-9]+/[0-9]+' '$TMP/err3'"
+k branch -qD fix/only-here
+rc=0; "$HB" --local "$C3" >"$TMP/out3" 2>"$TMP/err3" || rc=$?
+check "noise only, no real work ⇒ exit 0 and no rows" "[ '$rc' = '0' ] && [ ! -s '$TMP/out3' ]"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

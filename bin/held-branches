@@ -49,6 +49,35 @@
 # patch-equivalent is on the default or a rolling branch. Pushed-but-unfolded work is the remote
 # scan's row, so it is never listed twice.
 #
+# NOT HELD WORK, and so not counted: a ref that cannot be lost because it is a COPY of a record held
+# elsewhere. Measured: a five-repo pass printed 521 rows of which about 7 were real, and a leg that
+# reports 521 findings reports nothing. Skipped, and COUNTED per repo on stderr:
+#   - PR-head MIRRORS — origin/pr/<n>, origin/pull/<n>…, origin/merge-requests/<n>… (a refs/pull/*
+#     fetch refspec), and a LOCAL pr/<n> branch whose tip IS a published PR head: the PR is the record;
+#   - branches of any remote other than origin (a retired or secondary remote: the scan fetches and
+#     measures against origin only);
+#   - bot branches — origin/dependabot/*: a bot re-creates them; no person holds them.
+# A real branch whose tip happens to be a PR head is still a row, annotated "tip is PR #<n>".
+#
+# The summary LEADS with the (local) count — the ONLY copy, the number to act on — and gives the
+# pushed-but-unfolded count separately; they are different findings and never share a number.
+#
+# PROGRESS goes to stderr so a long run is never silent (measured: 37 minutes with no output, which a
+# poller cannot tell from a hang): a line as each repo starts and ends, a line every
+# HELD_BRANCHES_PROGRESS_EVERY refs (default 25) or 10 s, and a heartbeat every
+# HELD_BRANCHES_HEARTBEAT seconds (default 30) naming what it is doing, which covers one slow git
+# call. Fetches are BOUNDED: ssh gets ConnectTimeout + BatchMode unless GIT_SSH_COMMAND is already
+# set, and each fetch/ls-remote is capped at HELD_BRANCHES_FETCH_TIMEOUT seconds (default 120) where
+# `timeout` exists. A fetch that fails or times out is exit 2, never a report on stale refs.
+#
+# SPEED: patch-ids are computed ONCE per repo, in three batched `git log -p | git patch-id` passes —
+# the default branch's commits that some scanned branch lacks, the rolling branches' commits, and
+# every candidate commit — and each branch is then a `git rev-list` plus a lookup. The first version
+# ran `git cherry` 2 × rolling-branches times for EVERY unfolded commit, which is what made one
+# repo with ~70 rolling branches take over half an hour. The comparison is the same `git cherry`
+# question, asked of the UNION of every branch's upstream set; it can differ only for a commit whose
+# patch duplicates one already on its own branch's history.
+#
 # Exit: 0 nothing unfolded · 1 findings · 2 usage/setup error
 set -uo pipefail
 source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")/lib/forge-tip.sh"
@@ -59,18 +88,53 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-fetch) FETCH=0; shift ;;
     --local) LOCAL=1; shift ;;
-    -h|--help) sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
     -*) echo "unknown flag: $1" >&2; exit 2 ;;
     *) REPOS+=("$1"); shift ;;
   esac
 done
 [ ${#REPOS[@]} -eq 0 ] && REPOS=("$PWD")
 
-findings=0
+EVERY="${HELD_BRANCHES_PROGRESS_EVERY:-25}"
+BEAT="${HELD_BRANCHES_HEARTBEAT:-30}"
+FETCH_TIMEOUT="${HELD_BRANCHES_FETCH_TIMEOUT:-120}"
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o ConnectTimeout=8 -o BatchMode=yes}" GIT_TERMINAL_PROMPT=0
+bounded() { if command -v timeout >/dev/null 2>&1; then timeout "$FETCH_TIMEOUT" "$@"; else "$@"; fi; }
+
+# The heartbeat: a timer, so even one slow git call (a fetch, a cherry over a long history) cannot
+# make the run silent. It ticks in 1 s sleeps so nothing it leaves behind outlives the script by more
+# than a second (a caller reading our stderr through a pipe would otherwise wait on an orphan sleep).
+STATE="$(mktemp)"
+START=$SECONDS
+( n=0; while [ -e "$STATE" ]; do
+    sleep 1; n=$((n + 1))
+    if [ "$n" -ge "$BEAT" ] && [ -e "$STATE" ]; then
+      n=0; echo "held-branches: still running ($((SECONDS - START)) s) — $(cat "$STATE" 2>/dev/null)" >&2
+    fi
+  done ) &
+BEAT_PID=$!
+trap 'rm -f "$STATE"; kill "$BEAT_PID" 2>/dev/null' EXIT
+progress() { echo "held-branches: $*" >&2; printf '%s\n' "$*" > "$STATE"; }
+state() { printf '%s\n' "$*" > "$STATE"; }
+
+W="$(mktemp -d)"
+trap 'rm -f "$STATE"; rm -rf "$W"; kill "$BEAT_PID" 2>/dev/null' EXIT
+
+# "<patch-id> <sha>" for every non-merge commit named on stdin as rev-list arguments (one per line).
+pids() { git -C "$R" log --stdin --no-merges -p --no-color --no-ext-diff --format='commit %H' 2>/dev/null | git patch-id --stable; }
+# How many of the commits on stdin are in each class: prints "<U> <F>" (unfolded, folded).
+classify() { awk 'NR == FNR { c[$1] = $2; next } { k = ($1 in c) ? c[$1] : "U"; n[k]++ } END { print n["U"] + 0, n["F"] + 0 }' "$W/class" -; }
+
+local_total=0; remote_total=0
+n_repos=${#REPOS[@]}; i=0
 for R in "${REPOS[@]}"; do
+  i=$((i + 1)); t0=$SECONDS; tag="[$i/$n_repos] $R"
   git -C "$R" rev-parse --git-dir >/dev/null 2>&1 || { echo "held-branches: not a git repo: $R" >&2; exit 2; }
   if [ "$FETCH" = 1 ]; then
-    git -C "$R" fetch origin --prune --quiet || { echo "held-branches: fetch failed in $R — refusing to report on stale refs (use --no-fetch to accept them)" >&2; exit 2; }
+    progress "$tag: fetching origin"
+    bounded git -C "$R" fetch origin --prune --quiet || { echo "held-branches: fetch failed or timed out in $R — refusing to report on stale refs (use --no-fetch to accept them)" >&2; exit 2; }
+  else
+    progress "$tag: scanning (no fetch)"
   fi
   # The default branch from origin/HEAD, asked of the forge directly when that cache is unset —
   # never guessed from a main/master naming convention (governance#228 Finding 3).
@@ -84,75 +148,127 @@ for R in "${REPOS[@]}"; do
   # Each PR's head, as "<sha> <ref>" lines (see the header). Read with the fetch, never without it.
   PRS=""
   if [ "$FETCH" = 1 ]; then
-    PRS="$(git -C "$R" ls-remote origin 'refs/pull/*/head' 'refs/merge-requests/*/head' 2>/dev/null)" ||
+    PRS="$(bounded git -C "$R" ls-remote origin 'refs/pull/*/head' 'refs/merge-requests/*/head' 2>/dev/null)" ||
       echo "held-branches: could not list $R's pull-request refs; no row names a PR" >&2
   fi
 
-  folded_branches=0
-  while IFS= read -r b; do
-    case "$b" in origin|origin/HEAD|origin/merge/*|"") continue ;; esac
-    up=0; folded=0
-    while read -r mark sha; do
-      [ "$mark" = "+" ] || continue
-      is_folded=0
-      for m in ${ROLL[@]+"${ROLL[@]}"}; do
-        # The commit itself is in the rolling branch (merged there): `git cherry` prints NOTHING for
-        # an ancestor, so this must be asked separately — the first draft missed it.
-        if git -C "$R" merge-base --is-ancestor "$sha" "$m" 2>/dev/null; then is_folded=1; break; fi
-        # Or a patch-equivalent landed there under a new hash.
-        if git -C "$R" cherry "$m" "$sha" "$sha^" 2>/dev/null | grep -q '^-'; then is_folded=1; break; fi
-      done
-      if [ "$is_folded" = 1 ]; then folded=$((folded + 1)); else up=$((up + 1)); fi
-    done < <(git -C "$R" cherry "origin/$D" "$b" 2>/dev/null)
+  # Classify every remote-tracking ref not merged into the default branch. Full refnames, so a remote
+  # name and a branch name can never be confused.
+  REFS=(); sk_pr=0; sk_remote=0; sk_bot=0
+  while IFS= read -r ref; do
+    case "$ref" in
+      ""|refs/remotes/origin/HEAD|refs/remotes/origin/merge/*) ;;
+      refs/remotes/origin/pr/[0-9]*|refs/remotes/origin/pull/*|refs/remotes/origin/merge-requests/*) sk_pr=$((sk_pr + 1)) ;;
+      refs/remotes/origin/dependabot/*) sk_bot=$((sk_bot + 1)) ;;
+      refs/remotes/origin/*) REFS+=("$ref") ;;
+      *) sk_remote=$((sk_remote + 1)) ;;
+    esac
+  done < <(git -C "$R" for-each-ref --no-merged="origin/$D" --format='%(refname)' refs/remotes/)
+
+  LREFS=()
+  [ "$LOCAL" = 1 ] && while IFS= read -r b; do [ -n "$b" ] && LREFS+=("$b"); done \
+    < <(git -C "$R" for-each-ref --format='%(refname)' refs/heads/)
+  SCAN=(${REFS[@]+"${REFS[@]}"} ${LREFS[@]+"${LREFS[@]}"})
+
+  # Classify every candidate commit ONCE (see SPEED in the header), into "$W/class" as "<sha> L|F|U":
+  #   L — a patch-equivalent is on the default branch (what `git cherry` marks '-');
+  #   F — folded: reachable from a rolling branch, or a patch-equivalent is on one;
+  #   U — on neither. A commit absent from the file (no patch: an empty commit) counts as U.
+  : > "$W/ud"; : > "$W/pd"; : > "$W/ra"; : > "$W/pr"; : > "$W/cand"
+  k=0
+  for ref in ${SCAN[@]+"${SCAN[@]}"}; do
+    k=$((k + 1)); [ $((k % EVERY)) -eq 0 ] && progress "$tag: preparing $k/${#SCAN[@]} ($((SECONDS - t0)) s)"
+    # the default branch's commits this branch lacks: `git cherry origin/<default> <branch>`'s upstream
+    git -C "$R" rev-list --no-merges "origin/$D" --not "$ref" >> "$W/ud" 2>/dev/null
+  done
+  if [ ${#SCAN[@]} -gt 0 ]; then
+    progress "$tag: patch-ids for ${#SCAN[@]} branch(es) and ${#ROLL[@]} rolling branch(es) ($((SECONDS - t0)) s)"
+    sort -u "$W/ud" -o "$W/ud"
+    [ -s "$W/ud" ] && git -C "$R" log --stdin --no-walk --no-merges -p --no-color --no-ext-diff --format='commit %H' \
+      < "$W/ud" 2>/dev/null | git patch-id --stable | awk '{ print $1 }' > "$W/pd"
+    if [ ${#ROLL[@]} -gt 0 ]; then
+      { printf 'refs/remotes/%s\n' "${ROLL[@]}"; echo "^origin/$D"; } | git -C "$R" rev-list --stdin --no-merges > "$W/ra" 2>/dev/null
+      { printf 'refs/remotes/%s\n' "${ROLL[@]}"; echo "^origin/$D"; } | pids | awk '{ print $1 }' > "$W/pr"
+    fi
+    { printf '%s\n' "${SCAN[@]}"; echo "^origin/$D"; } | pids > "$W/cand"
+  fi
+  awk -v PD="$W/pd" -v RA="$W/ra" -v PR="$W/pr" 'BEGIN {
+      while ((getline l < PD) > 0) pd[l] = 1
+      while ((getline l < RA) > 0) ra[l] = 1
+      while ((getline l < PR) > 0) pr[l] = 1 }
+    { print $2, (($1 in pd) ? "L" : (($2 in ra) || ($1 in pr)) ? "F" : "U") }' "$W/cand" > "$W/class"
+  # Reachable from a rolling branch but with no patch (not in cand): still folded.
+  awk 'NR == FNR { s[$1] = 1; next } !($1 in s) { print $1, "F" }' "$W/class" "$W/ra" >> "$W/class"
+
+  folded_branches=0; r_rows=0; l_rows=0; k=0; last=$SECONDS
+  for ref in ${REFS[@]+"${REFS[@]}"}; do
+    k=$((k + 1)); b="${ref#refs/remotes/}"
+    if [ $((k % EVERY)) -eq 0 ] || [ $((SECONDS - last)) -ge 10 ]; then
+      progress "$tag: remote ref $k/${#REFS[@]} ($((SECONDS - t0)) s)"; last=$SECONDS
+    else
+      state "$tag: remote ref $k/${#REFS[@]} $b"
+    fi
+    # The branch's commits not on the default branch, by class: L is landed under a new hash (not
+    # counted), F folded onto a rolling branch, U on neither.
+    read -r up folded < <(git -C "$R" rev-list --no-merges "$ref" --not "origin/$D" 2>/dev/null | classify)
     if [ "$up" -gt 0 ]; then
-      findings=$((findings + 1))
+      r_rows=$((r_rows + 1))
       # The tip's AUTHOR is printed because it is the first adjudication question: the first live run
       # found 7 candidates and 5 were a human contributor's work in progress, not dropped agent holds —
       # the reviewer had to work out whose each branch was by hand.
       # A PR whose head IS this tip (the header says why, and what no annotation does not prove).
-      pr="$(printf '%s\n' "$PRS" | awk -v t="$(git -C "$R" rev-parse "$b")" \
+      pr="$(printf '%s\n' "$PRS" | awk -v t="$(git -C "$R" rev-parse "$ref")" \
         '$1 == t { n = split($2, p, "/"); printf "%s%s%s", (k++ ? ", " : ""), (p[2] == "pull" ? "PR #" : "MR !"), p[3] }')"
       printf '%s  %s  %d not upstream%s · last %s by %s · "%s"%s\n' "$R" "$b" "$up" \
         "$([ "$folded" -gt 0 ] && printf ' · %d folded' "$folded")" \
-        "$(git -C "$R" log -1 --format=%cr "$b")" "$(git -C "$R" log -1 --format=%an "$b")" \
-        "$(git -C "$R" log -1 --format=%s "$b")" \
+        "$(git -C "$R" log -1 --format=%cr "$ref")" "$(git -C "$R" log -1 --format=%an "$ref")" \
+        "$(git -C "$R" log -1 --format=%s "$ref")" \
         "$([ -n "$pr" ] && printf ' · tip is %s: read it (open, closed or merged)' "$pr")"
     elif [ "$folded" -gt 0 ]; then
       folded_branches=$((folded_branches + 1))
     fi
-  done < <(git -C "$R" branch -r --no-merged "origin/$D" --format='%(refname:short)')
+  done
   [ "$folded_branches" -gt 0 ] && echo "$R  ($folded_branches branch(es) fully folded onto a rolling branch, pending its PR — not listed)"
 
   if [ "$LOCAL" = 1 ]; then
-    while IFS= read -r b; do
-      [ -n "$b" ] || continue
-      only=0
-      while IFS= read -r sha; do
-        [ -n "$sha" ] || continue
-        # Landed on the default branch under a new hash?
-        git -C "$R" cherry "origin/$D" "$sha" "$sha^" 2>/dev/null | grep -q '^-' && continue
-        # …or on a pushed rolling branch under a new hash?
-        eq=0
-        for m in ${ROLL[@]+"${ROLL[@]}"}; do
-          git -C "$R" cherry "$m" "$sha" "$sha^" 2>/dev/null | grep -q '^-' && { eq=1; break; }
-        done
-        [ "$eq" = 1 ] && continue
-        only=$((only + 1))
+    k=0
+    for lref in ${LREFS[@]+"${LREFS[@]}"}; do
+      k=$((k + 1)); b="${lref#refs/heads/}"
+      if [ $((k % EVERY)) -eq 0 ] || [ $((SECONDS - last)) -ge 10 ]; then
+        progress "$tag: local branch $k/${#LREFS[@]} ($((SECONDS - t0)) s)"; last=$SECONDS
+      else
+        state "$tag: local branch $k/${#LREFS[@]} $b"
+      fi
       # --no-merges: a local-only MERGE commit carries no work of its own (its parents are elsewhere);
       # counted, it made "Merge branch main into x" read as a held fix on the first live run.
-      done < <(git -C "$R" rev-list --no-merges "refs/heads/$b" --not --remotes 2>/dev/null)
+      lonly="$(git -C "$R" rev-list --no-merges "$lref" --not --remotes 2>/dev/null)"
+      [ -n "$lonly" ] || continue
+      # A local checkout of a PR (pr/<n>) whose tip IS a published PR head: the PR is the record.
+      case "$b" in pr/[0-9]*)
+        tip="$(git -C "$R" rev-parse "refs/heads/$b")"
+        if printf '%s\n' "$PRS" | awk -v t="$tip" '$1 == t { f = 1 } END { exit !f }'; then
+          sk_pr=$((sk_pr + 1)); continue
+        fi ;;
+      esac
+      # …minus what landed on the default branch, or on a pushed rolling branch, under a new hash.
+      read -r only _ < <(printf '%s\n' "$lonly" | classify)
       if [ "$only" -gt 0 ]; then
-        findings=$((findings + 1))
+        l_rows=$((l_rows + 1))
         printf '%s  %s (local)  %d commit(s) ONLY ON THIS MACHINE · last %s by %s · "%s"\n' "$R" "$b" "$only" \
           "$(git -C "$R" log -1 --format=%cr "refs/heads/$b")" "$(git -C "$R" log -1 --format=%an "refs/heads/$b")" \
           "$(git -C "$R" log -1 --format=%s "refs/heads/$b")"
       fi
-    done < <(git -C "$R" for-each-ref --format='%(refname:short)' refs/heads/)
+    done
   fi
+  local_total=$((local_total + l_rows)); remote_total=$((remote_total + r_rows))
+  if [ "$LOCAL" = 1 ]; then lc="$l_rows local-only"; else lc="local-only not checked"; fi
+  progress "$tag: done in $((SECONDS - t0)) s — $lc · $r_rows pushed, unfolded · skipped $sk_pr PR mirror(s), $sk_remote on another remote, $sk_bot bot branch(es)"
 done
 
-if [ "$findings" -gt 0 ]; then
-  echo "held-branches: $findings branch(es) with work on neither the default branch nor a rolling branch." >&2
+if [ $((local_total + remote_total)) -gt 0 ]; then
+  if [ "$LOCAL" = 1 ]; then lead="$local_total local-only branch(es) — the ONLY copy is on this machine"
+  else lead="local-only NOT CHECKED (run with --local)"; fi
+  echo "held-branches: $lead · $remote_total pushed branch(es) on neither the default branch nor a rolling branch." >&2
   echo "  Each is a DROPPED HOLD or someone's work in progress. Adjudicate by CONTENT before acting — a squash merge also appears here." >&2
   echo "  A row whose tip is a PR may be a proposal awaiting its merge: read the PR before calling it dropped." >&2
   [ "$LOCAL" = 1 ] && echo "  A (local) row is the ONLY copy: push it or hand it over before this seat or machine goes." >&2
