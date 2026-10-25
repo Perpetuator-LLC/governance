@@ -30,6 +30,15 @@ jobs:
           fi
           python3 -c 'import yaml; print("PyYAML", yaml.__version__)'
           command -v git >/dev/null || { echo "::error::git missing"; exit 1; }
+          if ! command -v ssh-keygen >/dev/null 2>&1; then
+            if command -v apt-get >/dev/null 2>&1; then
+              SUDO=""; [ "$(id -u)" = 0 ] || SUDO="sudo"
+              $SUDO apt-get update -qq && $SUDO apt-get install -y -qq openssh-client
+            elif command -v apk >/dev/null 2>&1; then
+              apk add --no-cache openssh-keygen
+            fi
+          fi
+          command -v ssh-keygen >/dev/null || { echo "::error::ssh-keygen missing (signature gate)"; exit 1; }
 
       - name: Parse-check every script
         run: |
@@ -87,6 +96,26 @@ jobs:
           base="${{ github.base_ref }}"
           git fetch -q origin "+refs/heads/$base:refs/remotes/origin/$base"
           python3 bin/attribution-check "origin/$base..${{ github.event.pull_request.head.sha }}"
+
+      # SIGNATURE GATE (pull requests). Every commit in the range, merges included, must read %G? = G
+      # against .gitea/allowed_signers. The range only: older history is append-only and cannot be
+      # re-signed, so it is never checked. The trust list is read from the BASE branch, never the pull
+      # request's own head: a change that adds its author's key must not be able to vouch for itself.
+      # Only when the base has no list yet (the change that introduces it) is the head's list used.
+      - name: Signed commits in the pull request range
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          base="${{ github.base_ref }}"
+          git fetch -q origin "+refs/heads/$base:refs/remotes/origin/$base"
+          signers="$RUNNER_TEMP/allowed_signers"
+          if git show "origin/$base:.gitea/allowed_signers" > "$signers" 2>/dev/null; then
+            echo "trust list: origin/$base:.gitea/allowed_signers"
+          else
+            cp .gitea/allowed_signers "$signers"
+            echo "::warning::origin/$base has no .gitea/allowed_signers; using this change's own list (bootstrap only)"
+          fi
+          bash bin/signed-commits-check --allowed-signers "$signers" "origin/$base..${{ github.event.pull_request.head.sha }}"
 
       - name: Test suite
         run: |

@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# signed-commits-check — every commit in a range carries a GOOD signature from a key this repo trusts.
+#
+#   signed-commits-check [--allowed-signers FILE] <base>..<head>
+#
+# Checks the RANGE only, never older history: a gate that failed on every commit already on the
+# default branch could never go green, and history is append-only, so it cannot be repaired. Each
+# change is held to the rule from the day the gate lands.
+#
+# Trust comes from an allowed-signers file the repository controls (git's gpg.ssh.allowedSignersFile
+# format: `<principal> <keytype> <base64-key>` per line). Default: .gitea/allowed_signers at the
+# repository's top level. The runner's own git config and keyrings are never consulted for trust:
+# a signature is only as good as the list of keys it is checked against, and that list is reviewed
+# like any other change.
+#
+# Every commit in the range, merges included, must read `%G?` = G. Anything else fails:
+#   N no signature · B bad signature · U/X/Y/R signature git will not call good (unknown validity,
+#   expired, expired key, revoked key) · E cannot be checked (key not in the allowed-signers file,
+#   or a missing verifier).
+#
+# Exit: 0 every commit good, or the range is EMPTY (a change with no commits has nothing unsigned) ·
+#       1 at least one commit not G · 2 cannot check (bad usage, unresolvable range, missing or empty
+#       allowed-signers file, no ssh-keygen).
+set -uo pipefail
+
+die() { echo "signed-commits-check: $*" >&2; exit 2; }
+
+signers=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --allowed-signers) [ $# -ge 2 ] || die "--allowed-signers needs a FILE"; signers="$2"; shift 2 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    --) shift; break ;;
+    -*) die "unknown option: $1" ;;
+    *) break ;;
+  esac
+done
+[ $# -eq 1 ] && [[ "$1" == *..* ]] || die "usage: signed-commits-check [--allowed-signers FILE] <base>..<head>"
+range="$1"
+base="${range%%..*}"; head="${range##*..}"
+[ -n "$base" ] && [ -n "$head" ] || die "range needs both ends: $range"
+
+top="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
+[ -n "$signers" ] || signers="$top/.gitea/allowed_signers"
+[ -f "$signers" ] || die "allowed-signers file not found: $signers"
+# A file with no key lines would fail every commit with E and blame the commits; say what is wrong.
+grep -Eq '^[[:space:]]*[^#[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[A-Za-z0-9+/=]+' "$signers" \
+  || die "allowed-signers file has no key lines: $signers"
+command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen not found; SSH signatures cannot be verified"
+
+for ref in "$base" "$head"; do
+  git rev-parse --verify -q "$ref^{commit}" >/dev/null || die "cannot resolve '$ref' to a commit"
+done
+
+# -c overrides any allowedSignersFile the runner's config names: trust is this file, nothing else.
+log="$(git -c gpg.ssh.allowedSignersFile="$signers" log --format='%G? %h %s' "$base..$head")" \
+  || die "git log failed for $range"
+
+if [ -z "$log" ]; then
+  echo "signed-commits-check: $range is empty; nothing to check"
+  exit 0
+fi
+
+total=0; badn=0
+while IFS= read -r line; do
+  total=$((total + 1))
+  status="${line%% *}"
+  if [ "$status" = "G" ]; then
+    echo "  ok   $line"
+  else
+    badn=$((badn + 1))
+    echo "  FAIL $line"
+    echo "::error::commit ${line#* } is not signed by an allowed key (%G? = $status)"
+  fi
+done <<< "$log"
+
+echo "signed-commits-check: $total commit(s) in $range, $badn not signed by an allowed key"
+[ "$badn" -eq 0 ]

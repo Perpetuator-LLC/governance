@@ -1,0 +1,9 @@
+# Allowed signers for bin/signed-commits-check (CI: every commit in a pull request's range must be
+# signed by one of these keys). git gpg.ssh.allowedSignersFile format: <principal> <keytype> <key>.
+# PUBLIC keys only: every SSH signature already embeds its signer's public key, so listing it here
+# discloses nothing new. Adding or removing a key is a reviewed change like any other.
+#
+# Maintainer hardware key (sk-ssh-ed25519)            SHA256:Vu8N5+NAYH4TFgawPJUJ9PRhKVqhAHodv4bsopilGEs
+maintainer-hwkey sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAINRV6WZVqNrVgLA/zJ1wdWH3YEDvnPhyvGeYpriz5OJCAAAABHNzaDo=
+# Maintainer Windows workstation key (ecdsa-p256)     SHA256:O3cPSXdAQigdAnassEvbCiSAelsqA6wqeSI+scXUQ0s
+maintainer-windows ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEHbt2wqRVsjHjhJT5vX2QRAr2DhuhSxIW1Q/9nZQEvq+ODLI0+5vTmb+MTRna6HsG1KmQ1KXictO62T3An8U5A=
