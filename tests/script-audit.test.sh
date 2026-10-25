@@ -32,9 +32,10 @@ echo "script-audit"
 
 # --- bash 3.2 compatibility (governance#284) -----------------------------------------------------
 # This hook runs on macOS, whose /bin/bash is 3.2 (frozen there since the GPLv3 relicense) — not just
-# on the Linux CI runner. No bash 3.2 binary is installable in THIS sandbox (no root, no network to
-# fetch one), so this is a STATIC check of the hook's own source, not a literal run under bash 3.2
-# semantics: documented here rather than silently passed off as full verification. `declare -A`
+# on the Linux CI runner. CI has no bash 3.2 binary, so this is a STATIC check of the hook's own
+# source, not a literal run under bash 3.2 semantics. Real runs of this suite under /bin/bash 3.2.57
+# with a BSD PATH are on record in the PR reviews (governance#312 c109259, c105323); this check keeps
+# the one hard blocker out between such runs. `declare -A`
 # (associative arrays) is bash-4.0-only; on bash 3.2 it is a hard "invalid option" error, and every
 # candidate reached after that line in the script was never captured — the measured symptom
 # (interpreter forms "NOT captured" on macOS) for every form, because the broken line runs once,
@@ -170,6 +171,18 @@ rc=$(cd "$d" && run "$h" "bash m*.sh a.sh")
 [ "$rc" = 0 ] && logged "$h" "marker-space-long" && logged "$h" "marker-space-short" \
   && ok "a glob-expanded filename with a space does not mask a later, distinct shorter filename" \
   || bad "a spaced filename's dedup entry masked a distinct later candidate (CISA governance#284)"
+
+# --- dedup compares EXACTLY, never as a pattern (coa governance#312 c109259, mutant M4): with an
+#     unquoted RHS, `[[ "$s" == $f ]]` treats a candidate named "a?.sh" as a glob, so an earlier
+#     "ab.sh" in `seen` matches it and the distinct file "a?.sh" is silently dropped from the audit. --
+h="$TMP/home-dedup-pattern"; mkdir -p "$h"
+d="$TMP/pattern-dir"; mkdir -p "$d"
+printf 'marker-pattern-plain\n' > "$d/ab.sh"
+printf 'marker-pattern-glob\n' > "$d/a?.sh"
+rc=$(cd "$d" && run "$h" "bash ab.sh a?.sh")
+[ "$rc" = 0 ] && logged "$h" "marker-pattern-plain" && logged "$h" "marker-pattern-glob" \
+  && ok "a filename with a glob character is compared exactly, not masked by an earlier name it matches" \
+  || bad "dedup matched 'a?.sh' as a pattern against 'ab.sh' and dropped it (coa governance#312 M4)"
 
 # --- never a gate: exit 0 regardless, and NOTHING on stdout once a real candidate is captured ----
 h="$TMP/home-stdout"; mkdir -p "$h"
