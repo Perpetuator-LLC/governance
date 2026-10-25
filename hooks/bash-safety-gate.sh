@@ -298,11 +298,14 @@ PY
 # .env.local`) must still match on the real name that survives the strip. No python3: this copy is
 # unchanged, so a template name still reads as a secret name — every doubt keeps the block, same as
 # `strip_data_heredocs` above.
-strip_template_names() {  # <cmd> -> <cmd> with every .env.(example|sample|template) occurrence removed
+# The template must END the path word (`.env.example.local`, `.env.sample2` are not templates): the
+# write gate anchors its exemption on the end of the name, and a strip that stopped at any non-letter
+# let both be read while writing them was refused (#272).
+strip_template_names() {  # <cmd> -> <cmd> with every .env(rc).(example|sample|template) path word removed
   if ! command -v python3 >/dev/null 2>&1; then printf '%s' "$1"; return 0; fi
   python3 -c '
 import re, sys
-print(re.sub(r"\.env\.(example|sample|template)(?![A-Za-z])", "", sys.argv[1], flags=re.IGNORECASE), end="")
+print(re.sub(r"\.env(rc)?\.(example|sample|template)(?![A-Za-z0-9._-])", "", sys.argv[1], flags=re.IGNORECASE), end="")
 ' "$1" 2>/dev/null || printf '%s' "$1"
 }
 

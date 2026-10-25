@@ -107,6 +107,58 @@ done
 check_allowed "app/.ENV.EXAMPLE" "a template stays allowed in any case"
 check_allowed "app/Environment.md" "a file merely containing 'Env' is not an env file, in any case"
 
+echo " · credential STORES, by directory and known file (#272): names a single-name list missed"
+# Each was measured writable against the single-name list. A store is matched by its directory (any
+# file under it) or by its known file name, with or without a backup suffix (`.bak`, `.old`, `~`).
+for p in home/.kube/config.bak home/.kube/cache/discovery/token home/.pypirc app/.yarnrc.yml app/.yarnrc \
+         home/.vault-token home/.config/gh/hosts.yml home/.netrc.bak home/_netrc home/.npmrc.old \
+         home/.docker/config.json.bak app/.envrc.local app/.envrc.private \
+         home/.KUBE/CONFIG.BAK home/.PyPiRc home/.Vault-Token home/.Config/GH/Hosts.yml app/.ENVRC.LOCAL; do
+  check_blocked "$p" "credential store $p"
+done
+
+echo " · Windows backslash forms of the same stores (#272): one separator before any rule reads the path"
+# JSON-escaped (\\) because payload() drops the path into a JSON string; the gate sees one backslash.
+for p in 'C:\\Users\\me\\.kube\\config' 'C:\\Users\\me\\.docker\\config.json' 'C:\\Users\\me\\.gnupg\\pubring.kbx' \
+         'C:\\Users\\me\\.ssh\\config' 'C:\\Users\\me\\.aws\\config' 'C:\\Users\\me\\.config\\gh\\hosts.yml' \
+         'C:\\Users\\me\\.pypirc' 'C:\\Users\\me\\.vault-token' 'C:\\proj\\.envrc.local'; do
+  check_blocked "$p" "backslash path $p"
+done
+
+echo " · templates and look-alikes stay writable (#272)"
+for p in app/.envrc.example app/.envrc.sample app/.envrc.template app/.ENVRC.EXAMPLE \
+         app/.pypirc.example home/.netrc.sample; do
+  check_allowed "$p" "template $p"
+done
+for p in docs/kube-config-guide.md src/vault_token_parser.py docs/pypirc.md app/yarnrc-notes.md \
+         src/gh/hosts.yml app/envrc_loader.sh docs/netrc-format.md src/npmrc.ts \
+         'C:\\Users\\me\\docs\\kube-config-guide.md'; do
+  check_allowed "$p" "look-alike $p"
+done
+
+echo " · read and write agree on the same names (#272): bash-safety-gate's read verdict = this gate's write verdict"
+# The read gate (bash-safety-gate.sh, a Bash `cat <name>` payload) and this gate must give ONE verdict
+# per name: a name readable but not writable, or the reverse, is a rule one side forgot. Without
+# python3 the read gate cannot strip a template name and fails closed, so the template rows are NOT
+# RUN there rather than reported as a disagreement.
+READ_GATE="$ROOT/hooks/bash-safety-gate.sh"
+read_blocked() {
+  local rc
+  printf '{"tool_name":"Bash","tool_input":{"command":"cat %s"}}' "$1" | bash "$READ_GATE" >/dev/null 2>"$TMP/rerr"
+  rc=$?
+  [[ "$rc" == "2" ]] && grep -q '^BLOCKED' "$TMP/rerr"
+}
+for n in .env .env.local .envrc .envrc.local .envrc.private .ENVRC.LOCAL .env.example.local .env.template.prod \
+         .env.sample2 .env.example .envrc.example .ENV.EXAMPLE .ENVRC.SAMPLE; do
+  if [[ "$n" =~ \.(example|sample|template|EXAMPLE|SAMPLE|TEMPLATE)$ ]] && ! python3 -c '' >/dev/null 2>&1; then
+    printf '  NOT RUN  agreement on %s (no python3: the read gate fails closed on templates)\n' "$n"; continue
+  fi
+  r=allow; w=allow
+  read_blocked "app/$n" && r=block
+  blocked "app/$n" && w=block
+  [[ "$r" == "$w" ]] && pass "agree on $n ($r)" || fail "disagree on $n: read=$r write=$w"
+done
+
 echo " · controls: ordinary files are never blocked"
 check_allowed "app/README.md" "an ordinary markdown file"
 check_allowed "app/src/main.py" "an ordinary source file"

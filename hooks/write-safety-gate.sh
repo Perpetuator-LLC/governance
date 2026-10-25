@@ -67,6 +67,10 @@ if [[ -z "$input" && -z "${CLAUDE_TOOL_INPUT:-}" ]]; then
 fi
 path=$(tool_field "$input" .tool_input.file_path .tool_input.path .toolInput.file_path .toolInput.path)
 [[ -z "$path" && -n "${CLAUDE_TOOL_INPUT:-}" ]] && path=$(tool_field "$CLAUDE_TOOL_INPUT" .file_path .path)
+# A harness on Windows passes native paths (`C:\Users\x\.ssh\config`). Every directory rule below
+# matches `/`, so a backslash path slipped past `.ssh/`, `.aws/`, `.gnupg/`, `.kube/config` and the
+# rest (#288). Match on one separator: backslashes become slashes before any rule reads the path.
+path=${path//\\//}
 tool=$(tool_field "$input" .tool_name .toolName)   # once, for deny()'s event
 
 if [[ -z "$path" ]]; then
@@ -92,19 +96,40 @@ fi
 # yet. Inverted to an ALLOWLIST instead: every `.env` or `.env.<anything>` is blocked UNLESS the
 # `<anything>` is exactly `example`, `sample` or `template` — the only spellings that hold no secret.
 # `.envrc` is direnv's, which exports secrets, so it is caught by the same boundary SECRET_NAME uses
-# elsewhere (bash-safety-gate.sh): "env" followed by a non-letter, "rc", or the end.
-if echo "$path" | grep -qiE '\.env([^a-zA-Z]|rc$|$)' \
-  && ! echo "$path" | grep -qiE '\.env\.(example|sample|template)$'; then
+# elsewhere (bash-safety-gate.sh): "env" followed by a non-letter, or "rc" followed by ANYTHING. The
+# read gate has no end anchor after "rc"; an `rc$` here left `.envrc.local` and `.envrc.private`
+# writable while reading them was refused (#272). The template exemption is the read gate's too, and
+# covers `.envrc.example` the same way. Both gates must give one verdict per name; the write gate's
+# test file runs each name through both.
+if echo "$path" | grep -qiE '\.env([^a-zA-Z]|rc|$)' \
+  && ! echo "$path" | grep -qiE '\.env(rc)?\.(example|sample|template)$'; then
   deny env-file-write "Cannot write to environment files. These may contain secrets. Edit manually."
 fi
 
-# Block writes to credential/key files. The second line is files whose ordinary use holds a login or
-# token: `.netrc` (machine passwords), `.npmrc` (registry auth tokens), `.pgpass` (PostgreSQL
-# passwords), the Docker and Kubernetes client configs (registry auths, cluster tokens), and the GnuPG
-# home (private keys). `.git-credentials` is already caught by `credentials`.
-if echo "$path" | grep -qiE '(credentials|secrets|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|id_rsa|id_ed25519|\.ssh/|\.aws/|\.gcloud/)' \
-  || echo "$path" | grep -qiE '(\.netrc$|\.npmrc$|\.pgpass$|\.docker/config\.json$|\.kube/config$|\.gnupg/)'; then
+# Block writes to credential/key files: names and extensions that hold a key wherever they live.
+if echo "$path" | grep -qiE '(credentials|secrets|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|id_rsa|id_ed25519)'; then
   deny credential-file-write "Cannot write to credential or key files. Edit manually."
+fi
+
+# Block writes to credential STORES, matched by directory and known file, not by one name each. A list
+# of single file names is always one name behind: `.kube/config.bak`, `.pypirc`, `.yarnrc.yml`,
+# `.vault-token` and `.config/gh/hosts.yml` were each measured writable after the list had grown to
+# `.kube/config` and its neighbours (#272). Two shapes instead:
+#  - a store DIRECTORY, where any file may hold a key or token: `.ssh/`, `.aws/`, `.gcloud/`, `.gnupg/`,
+#    `.kube/` (kubeconfigs, their backups, cached cluster tokens);
+#  - a store FILE, a tool's known login file, with or without a backup suffix (`.bak`, `.old`, `~`):
+#    `.netrc`/`_netrc`, `.npmrc`, `.yarnrc`/`.yarnrc.yml`, `.pypirc`, `.pgpass`, `.vault-token`,
+#    `.git-credentials`, `.docker/config.json`, the GitHub CLI's `hosts.yml`. A template suffix
+#    (`.example`, `.sample`, `.template`) holds no secret and stays writable, as for the env files.
+# Scope: the gate sees the PATH only, never the content. It refuses every `.npmrc` and `.yarnrc.yml`,
+# including a project's committed one that holds no token; that cost is the price of not reading the
+# file to find out. It does not see a store reached through a symlink or a relocated path
+# (`$KUBECONFIG`, `$DOCKER_CONFIG`, `$NETRC`).
+CRED_DIR='\.(ssh|aws|gcloud|gnupg|kube)/'
+CRED_FILE='(^|/)(\.netrc|_netrc|\.npmrc|\.yarnrc|\.pypirc|\.pgpass|\.vault-token|\.git-credentials|\.docker/config\.json|\.config/gh/hosts\.yml|github cli/hosts\.yml)([.~][^/]*)?$'
+if echo "$path" | grep -qiE "$CRED_DIR" \
+  || { echo "$path" | grep -qiE "$CRED_FILE" && ! echo "$path" | grep -qiE '\.(example|sample|template)$'; }; then
+  deny credential-store-write "Cannot write to a credential store (a login, token or key file or directory). Edit manually."
 fi
 
 # Block writes to CI/CD secrets
