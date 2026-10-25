@@ -21,6 +21,14 @@
 # Run under three PATHs: the host's, one without jq (python3 parser), one without python3 (jq only).
 # Without python3 the per-sub-command check cannot run, so the gate must FAIL CLOSED: the false
 # positives stay blocked there, and that is asserted, not assumed.
+#
+# ⚠️ governance#335: a shell removes an UNQUOTED backslash before an ordinary character, and adjacent
+# quoted/unquoted word fragments concatenate — so `cat .\env`, `cat .e\nv`, `cat '.e'nv`, `cat ".en"v`
+# and `cat $'\x2eenv'` all run as `cat .env`, and every one of them matched nothing (ALLOWED) before
+# the normalisation in bash-safety-gate.sh / hooks/lib/shell_normalize.py. Drop that call and every
+# PYBLOCK row below fails — that IS the mutant test. The plain backslash cases need no python3 (a sed
+# pass alone resolves them); quote concatenation and `$'...'` do, so PYBLOCK is BLOCK only where
+# python3 is present and a documented ALLOW (gap, not a silent one) on the jq-only leg.
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -55,7 +63,15 @@ python3 - "$TMP/cases.jsonl" <<'PY'
 import json, sys
 E = "." + "env"
 BLOCK, ALLOW, FP = "BLOCK", "ALLOW", "FP"   # FP: ALLOW with python3, BLOCK (fail closed) without
+PYBLOCK = "PYBLOCK"                         # BLOCK with python3, ALLOW (documented gap) without
 cases = [
+    # governance#335: backslash escapes and quote concatenation reach the same file as a plain `.env`.
+    (BLOCK, "cat ." + "\\env"),              # a sed pass alone resolves a bare backslash: no python3 needed
+    (BLOCK, "cat .e" + "\\nv"),
+    (PYBLOCK, "cat '.e'nv"),                 # quote concatenation needs the python3 pass
+    (PYBLOCK, 'cat ".en"v'),
+    (PYBLOCK, "cat $'\\x2e" + "env'"),       # $'...' ANSI-C hex escape
+    (ALLOW, "cat README.md"), (ALLOW, "printf 'a\\nb'"),
     # real reads — must stay blocked
     (BLOCK, f"grep KEY {E}"), (BLOCK, f"cat {E} | head"), (BLOCK, f"head {E} && echo ok"),
     (BLOCK, f"tail -n 5 {E}.local"), (BLOCK, f"cd app && grep -r KEY {E}.production"),
@@ -135,6 +151,10 @@ for line in open(cases):
     # Without python3 the sub-command check cannot run: every whole-string match must stay BLOCKED.
     if want == "FP":
         want = "BLOCK" if mode == "failclosed" else "ALLOW"
+    # The mirror: without python3 the normalisation that SURFACES these as a match cannot run either,
+    # so there is nothing for the sub-command check to fail closed ON — a documented gap, not a crash.
+    elif want == "PYBLOCK":
+        want = "ALLOW" if mode == "failclosed" else "BLOCK"
     r = subprocess.run(["bash", gate], input=json.dumps(c["payload"]), env=env,
                        capture_output=True, text=True)
     got = {2: "BLOCK", 0: "ALLOW"}.get(r.returncode, f"EXIT{r.returncode}")
