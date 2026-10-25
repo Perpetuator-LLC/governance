@@ -844,6 +844,22 @@ used, and it misses silently: a zero from a near-miss query looks exactly like a
 repository. Measured twice in one week: one search returned 0 because the matching ticket's title used
 the plural; another returned 0 for a ticket filed a minute earlier whose title did not contain the word.
 
+- **Key a create-gate on an identifier the finding's CLASS always carries, not on a phrase describing
+  it.** "Dedupe by goal" names the intent; the query still needs a key, and a conscientious reader
+  otherwise keys it on whatever words they are already thinking in, while the earlier author chose
+  different ones. An identifier the finding owns and cannot paraphrase (the alert name, the metric or
+  series name, the KPI id, the branch or ref name, the file path, the upstream ticket reference)
+  matches every earlier report of the same thing. A routine that files from a measurement has such a
+  key by construction: give it a ledger keyed on that identifier (identifier → the item it opened)
+  instead of re-deriving a search string on every pass.
+- ⚠️ **An identifier that differs per occurrence cannot dedupe.** A run number, session or sandbox id,
+  a timestamp, a temporary path, a per-comment reference: each is unique to *this* instance, so a
+  search keyed on it returns 0 on every pass and files a duplicate every time, which is worse than the
+  phrase search it replaced. The key is what every occurrence of the finding shares, never what makes
+  this one distinct.
+- **When the finding has no such identifier** (a proposal, a question, a judgement call), search
+  several phrasings and record in the new item which ones were tried, so the next reader can tell a
+  real absence from an unlucky query.
 - **Corroborate on a different surface, not the same index twice.** A second query through the same
   tokeniser is the first check run again. Use a form that differs in the way the index could have
   failed, or leave the index: list the newest items unfiltered and read them. For a topic someone may
@@ -855,9 +871,20 @@ the plural; another returned 0 for a ticket filed a minute earlier whose title d
   documents: the measured corpus (numbers, environments, reproductions) often lives only there, and
   the docs are the curated subset. A closed item may be closed because it was wrong, so read its status
   and provenance; the rule widens the candidates, it does not raise their weight.
-- **Scope:** keyword or full-text search used as the precondition for *creating* something
-  (route-before-create, dedupe by goal). A lookup by a durable identifier (an id, a commit hash, a
-  ticket number) is exempt: there, a zero does mean absent.
+- **An empty answer keyed on a good identifier still gets a second source before you create.** A
+  filtered listing or search can return 0 while the item exists (a filter the backend ignored, a
+  paging or state default, an index lagging the write). Confirm the zero against an independent
+  source, such as the unfiltered newest list or the ledger, before concluding "no duplicate". A probe
+  that cannot tell its own failure from a negative is not evidence.
+- **Scope:** search used as the gate on *creating* something (file a ticket, open a change, add a
+  row), where a false negative produces a duplicate that looks correct and nobody notices
+  (route-before-create, dedupe by goal). Exploratory search is out of scope: a phrase is the right
+  query there, and a miss costs one more query. A direct fetch of one item by its durable identifier
+  (open item N, resolve this commit hash) is exempt: there, a not-found does mean absent.
+- **Where this would be wrong:** a person triaging an inbox of free-text reports has no identifiers to
+  key on and should search phrases broadly. Keying on identifiers there finds only what a machine filed
+  earlier and silently misses every human-written report of the same problem. The identifier rule is
+  for create-gates over findings that carry one, not for search in general.
 
 ## Routines are infrastructure — they migrate, or they silently die
 
