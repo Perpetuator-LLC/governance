@@ -1100,6 +1100,53 @@ one walk record — who walked, environment, the artifact pair, steps, observed 
 readiness across lanes owns scheduling the walk and may not write *ready* without that link.
 *"Unwalked"* in a readiness line is a block, not a caveat.
 
+⚠️ **A WORK ITEM CLOSES ON VERIFICATION. A RELEASE CLOSES ON THE WALK. These are two different gates
+on two different records.** If a ticket is held open until a human walks it, the human becomes the
+queue: open tickets pile up waiting on one person, and nobody can tell finished work from unfinished.
+If a ticket closes on its merge, *merged* gets promoted to *done*. Neither failure happens when each
+gate sits on its own record.
+
+**A work item closes when both of these are on record in its closing comment:**
+1. **Tests check its done-when with known answers.** The expected values are derived from the inputs
+   by a route other than the code. Where the practice exists, they are written by a different model or
+   person than the one who built the change. The tests pass at a SHA on the default branch.
+2. **An independent verification pass.** Someone other than the builder breaks the guard the change
+   adds and shows that a test fails (mutation), or re-runs the tests and checks that they actually
+   cover the done-when. The pass names its coverage per file.
+
+**Two other closings are just as valid, each with its evidence in the closing comment:**
+- **No longer valid:** the decision, who made it, and why.
+- **Fixed by another change:** that change's commit on the default branch, and the ticket's own
+  reproduction re-run against it. The procedure:
+  `operations.md` → *Reproduce a bug before fixing it, on the current code, and record it on the ticket*.
+
+**Closing a ticket hands its human check to the release in the same act.** If anything about the work
+can be seen on the deployed candidate, the closer adds it to the next release ticket before closing,
+under the feature it belongs to. A ticket closed without that hand-off drops its check, and the
+release walk then cannot know what it should have looked at.
+
+**The human walk moves to ONE release ticket per release.** Each feature in the release is a bullet.
+Under each feature, its facets are sub-bullets, and each facet gives the steps to take on the deployed
+candidate and what a person should see. The walk record and the rule *"unwalked is a block"* attach
+to that ticket, with any other pre-promotion sweep the release process requires. **Only the release
+ticket's walk promotes the release.**
+
+**A facet that fails the walk** reopens nothing silently. It files a new linked ticket, which closes by
+the same two gates. The release ticket keeps the bullet unchecked until the re-walk passes.
+
+**Where this does NOT apply:**
+- **A work item whose done-when no test can observe.** Examples: visual judgement, copy tone, a
+  third-party portal step, a human-only gate. It closes when the facet passes on the release walk, and
+  the release ticket says so next to the bullet.
+- **A hotfix promoted without a release ticket.** The walk is on the hotfix ticket itself.
+- **No release train at all** (a repo that deploys every merge). The walk attaches to the deploy
+  record instead of a release ticket. The work item still closes on verification.
+
+**Why a walk per ticket is the wrong grain:** *merged is not walked* still holds, at the **release**
+level. A merge proves only that the change is in the candidate. A walk per ticket makes the human the
+closing step of every ticket. The verification pass is the check that a ticket really works, and the
+release walk checks the candidate as a whole.
+
 **A deploy is fully automated: the release pipeline alone sets the planned good state.** Every
 post-deploy seed, sync or catalog step lives in the pipeline's post-deploy hook or in infrastructure
 code, never as a block a human runs by hand. A hand-run command in a deploy hand-off is a defect to
