@@ -1610,6 +1610,33 @@ of a fix.
 - **Scope:** any loop over linked worktrees or several checkouts of one repository. A command run in
   a single checkout, about that checkout, is not affected.
 
+## Once `worktreeConfig` is on, a new worktree gets a COPY of the creating one's per-worktree config
+
+**With `extensions.worktreeConfig=true`, `git worktree add` writes the creating worktree's
+`--worktree`-scoped values into the new worktree at creation time.** The new worktree does not merely
+fall back to shared config — it holds its own copy, and a later change to the original does not reach
+it. Measured, both arms: with the extension on and `core.hooksPath` set at `--worktree` scope in the
+primary checkout, `git worktree add` on a fresh worktree shows that same value for `git config
+--worktree --get core.hooksPath` — its OWN value, not an inherited fallback.
+
+**Why it matters:** it silently invalidates any test of "does my installer configure every worktree?"
+when the test creates the worktree *after* the installer has run — the new worktree already has the
+right value, for free. The test then measures a copy made by git itself and passes while the
+installer's own path handling is broken.
+
+**So: a test of per-worktree setup must create the worktree BEFORE the thing under test runs**, or it
+is measuring git's copy, not the installer. Run the known-bad variant (the installer with its bug
+restored) against the fixture and require a failure; if the bug still passes, the fixture is measuring
+the wrong thing.
+
+**Scope:** git worktrees with the `worktreeConfig` extension enabled, for config set at `--worktree`
+scope. **Where it is wrong:** do not generalise this into "a new worktree inherits everything, so
+per-worktree setup is unnecessary." The copy happens only for values already set when the worktree is
+created, and only with the extension already on — a worktree created *before* the value is set, or in
+a repo where the extension is off, gets nothing, and that is the case a long-running fleet actually
+hits most, because long-lived worktrees predate most config changes. The rule is about what a test can
+no longer prove, not a licence to skip the setup.
+
 ## Agents that share a scratch directory write unique paths, and a publish step proves the file is its own
 
 **Some harnesses give every background agent launched from a session that session's scratch
@@ -1727,6 +1754,18 @@ returns **empty content**. A harness that quietly scores an empty completion rep
 pre-pass's number **as if it were the model's** — a silent regex-only score masquerading as a model
 score, which is **absence-as-health in eval flavor**. Assert non-empty output per item and fail the
 run; never let a missing answer be scored as an answer.
+
+**The same holds for any WRITER, not only a scorer: a step that persists a produced value checks the
+value is substantive before writing, and fails when it is not.** "The call returned" is not
+validation. A generated summary, rendered file or transformed record that comes back empty, once
+written, looks downstream exactly like a correct one. Worse, the write often consumes the marker that
+said *this still needs doing*, so a search for the marker reports the item done: **the write destroys
+the evidence that the write was needed.** **Scope:** steps that persist a value they did not compute
+deterministically, above all where a placeholder or pending marker is replaced by the write.
+**Where it is wrong:** a writer whose correct output can be empty (a diff with no changes, a log of a
+quiet interval, a report with no findings). There, tell an empty result from a failure by a
+**separate** signal (an exit code, an explicit no-op flag), never by length; a minimum-length check
+turns a correct quiet result into a manufactured error.
 
 ## An "exactly once per period" writer marks the no-op path too; a dry run emits no real side effects
 
@@ -3664,3 +3703,126 @@ domains, two-party approval from distinct roles, corroboration from independent 
 wrong:** where the requirement genuinely is a quantity ("at least three replicas," "any two of five"),
 per-category assertion over-constrains and refuses valid states. The tell is whether the written rule
 names the categories or only the number.
+
+## A process substitution's failure is invisible to `set -e`; the consumer just reads nothing
+
+**Under `set -euo pipefail`, a command that fails INSIDE `<( … )` does not fail the script.** The
+substitution's subshell dies, the reader is handed an empty stream, and the enclosing loop completes
+normally with exit 0. So `while read … ; done < <(producer)` reports success for a producer that never
+ran. `pipefail` does not help here: a process substitution is not a pipeline.
+
+**Why it matters more than it looks:** the failure mode is not an error, it is a plausible EMPTY
+result. A probe built this way writes a complete, well-formed, all-zero output, and every downstream
+check passes — the shape is right and the meaning is absent.
+
+**Measured, both arms (`bash 3.2.57`):**
+```
+set -euo pipefail
+while read -r l; do n=$((n+1)); done < <(false; echo x)   # -> 0 lines read, script continues, exit 0
+set -euo pipefail
+false; echo x                                              # -> exit 1, as expected
+```
+The second arm is the control: the same failing command outside a substitution does kill the script,
+so the probe can tell the two apart.
+
+**Scope:** bash/zsh process substitution feeding a reader — about the PRODUCER's exit status being
+discarded. **Where it is wrong:** do not conclude "therefore use a pipeline instead." A pipeline moves
+the loop into a subshell, so every variable the loop sets is lost at its end — the opposite bug, and
+the reason `< <( … )` is the recommended idiom in the first place. The fix is to keep the substitution
+and make the producer's own failure observable: have it write a sentinel the reader asserts on, or
+check a count the reader could not have produced from an empty stream. Switching idioms trades a
+silent-success bug for a silent-state-loss bug.
+
+## `pre-commit install` refuses outright when `core.hooksPath` is already set
+
+**`pre-commit install` exits with an error — "Cowardly refusing to install hooks with core.hooksPath
+set" — so a repo cannot have both a `core.hooksPath` hook directory and pre-commit's own `.git/hooks`
+installation.** Choosing `core.hooksPath` for one check silently drops every pre-commit-managed check
+unless the hooks in that directory delegate to `pre-commit run` explicitly.
+
+**Measured, both arms:** with no `core.hooksPath` set, `pre-commit install` succeeds normally; with
+`core.hooksPath` pointed at another directory, the same command refuses outright with the error above.
+
+**Scope:** repos using the `pre-commit` framework alongside any hand-written hook directory. **Where
+it is wrong:** do not resolve this by unsetting `core.hooksPath` because the error message suggests
+it. A hooks directory committed to the repo is what makes a hook arrive with a clone; `.git/hooks`
+does not travel. Where that is the reason `core.hooksPath` is set, the correct shape is the reverse —
+keep `core.hooksPath` and have its `pre-commit` hook exec `pre-commit run --hook-stage pre-commit`,
+degrading to a warning when the binary is absent so it does not hard-fail every commit on a machine
+that lacks it. Unsetting the path is right only when the framework is meant to be the single source of
+hooks.
+
+## Docker creates a missing bind-mount source as an empty directory, never a refusal
+
+**When a host path given as a bind-mount source does not exist, the daemon creates it as an empty
+directory rather than refusing.** A container reading a network share that failed to mount therefore
+sees a valid, readable, empty directory — and a job over it reports a clean, quiet run. "Not mounted"
+and "genuinely empty" are indistinguishable from inside the container.
+
+**So: any consumer of a mounted volume must verify the mount by content it did not create** — a marker
+file placed by whatever performs the mount, asserted before the first read, with a refusal rather than
+a zero result when it is absent. Checking that the directory exists, is readable, or that a listing
+succeeded, proves nothing.
+
+**Scope:** container bind mounts whose source is a network share, an external disk, or anything
+mounted by a separate step. **Where it is wrong:** the guard belongs at the READER, not as a refusal to
+start. Making the container fail to launch on a missing marker is attractive and wrong in the common
+case where the mount is established *after* first boot, or where the same image legitimately runs with
+that volume empty on a fresh install — a start-time refusal there turns a recoverable state into an
+outage. Refuse the operation that needs the data, and say which marker was missing.
+
+## A log file's mtime is the time of its LAST APPEND, so it cannot measure the age of its contents
+
+**Rotation, retention and staleness policies written as "when the file is older than N days" fail on
+exactly the files they are meant to govern: every append refreshes the mtime, so a busy log never
+looks old and never rotates, while an idle one rotates on schedule.** A policy about content age must
+read the content — the first record's own timestamp — not the file's metadata.
+
+**Second-order trap worth stating with it:** an age-triggered rotation that ages only the *current*
+file lets an entry survive up to roughly 2N days — N in the live file, then up to N more in the
+rotated copy until the next rotation touches it. If the policy is a retention promise, the rotated
+generations need the same cap, or the promise is wrong by a factor of two.
+
+**Scope:** append-only logs and journals under a time-based rotation or retention rule. **Where it is
+wrong:** do not invert this into "never trust mtime for time." For the question "when did this system
+last do anything," the mtime of a file it appends to is exactly the right reading, and cheaper than
+parsing. The distinction is last-write vs. oldest-content: mtime answers the first and is silent about
+the second. A heartbeat check should use mtime; a retention check must not.
+
+## A configured ceiling that only WARNS at its limit is not a limit
+
+**A library guard can accept a threshold and then enforce a multiple of it.** Pillow is a measured
+instance: `MAX_IMAGE_PIXELS` raises a warning at the configured value and an error only above TWICE
+it — so a service that sets a 50 MP ceiling actually accepts images up to 100 MP, and the code reads
+as if 50 were enforced.
+
+**The general rule, which is the part worth having: when you configure a resource ceiling in someone
+else's library, assert the refusal AT THE BOUNDARY, not the setting.** A test that feeds a value just
+over the limit and expects a rejection is the only thing that distinguishes a limit from a hint. The
+same shape appears wherever a threshold has two severities (warn/fail), a soft and a hard rlimit, or a
+quota with a burst allowance: the number you set is not necessarily the number that stops anything.
+
+**Scope:** third-party guards configured by a numeric threshold, where the library chooses the
+enforcement semantics. **Where it is wrong:** do not "fix" this by halving the setting so the hard stop
+lands where you wanted. That silences the warning tier, which is the half that tells you the ceiling
+is being approached at all — and it encodes a multiplier the next library version may change, leaving
+a ceiling nobody can explain. Set the threshold to the real intent and enforce the boundary yourself
+before handing the input to the library, so the policy lives in your code and the library's warning
+stays a warning.
+
+**Measure the refusal once, not forever.** Where the library documents its constant as the exact
+refusal point and a test already pins the boundary, keep the test and stop re-deriving it: the rule
+asks for one measurement of a delegated limit, not permanent suspicion of every configured value.
+It does not cover limits your own code compares; those are ordinary tests.
+
+## A cleanup hung on the user's EXIT misses every ending the user did not choose
+
+**When state must be cleared at the end of a session, list every way the session can end and attach
+the cleanup where it covers all of them:** explicit exit, timeout or expiry, crash, navigation away,
+process kill. Bound to the sign-out control, close button or menu item alone, it leaves the other
+endings uncovered, and those are usually the common ones. **Scope:** state that outlives its session
+and is visible to whoever comes next (cached pages, tokens, drafts, temp files, locks). **Where it is
+wrong:** an action that is only correct on a deliberate exit. "Commit the pending edit on close" must
+not fire on a crash or a timeout, because the user never confirmed it; binding it to the explicit
+action is the point, and widening it destroys data. Sort each end-of-session action first: *clear*
+(every ending) or *commit* (deliberate endings only).
