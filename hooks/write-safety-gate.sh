@@ -82,18 +82,42 @@ if [[ -z "$path" ]]; then
   exit 0
 fi
 
-# Block writes to environment/secrets files
-if echo "$path" | grep -qE '(\.env$|\.env\.(prod|production|staging|live)|\.env\.local$)'; then
+# A Windows path names the same file with `\` as with `/`, and every directory rule below is written
+# with `/`: `C:\Users\me\.ssh\config` and `.kube\config` were writable while the slash forms were
+# refused. Canonicalise once, before any match.
+path="${path//\\//}"
+
+# Every secret-path match below is CASE-INSENSITIVE (`grep -i`). Windows and default macOS (APFS)
+# filesystems are case-insensitive, so `.ENV`, `.Env` or `ID_RSA` open the very same file as the
+# lowercase name; a case-sensitive pattern let those spellings write it unrefused.
+
+# Block writes to environment/secrets files, by the SAME name list the read gate uses
+# (secret-names.sh beside this script): what bash-safety-gate.sh refuses to read, this refuses to
+# write. A DENYLIST of suffixes (`.prod`, `.local`, …) is always one spelling behind: `.env.stage`,
+# `.env.ci`, `.env.qa`, `.env.uat`, `.env.preview` and `.env.local.bak` were all measured writable
+# (#301). So it is an ALLOWLIST: every `.env`, `.env.<anything>` or `.envrc<anything>` is blocked
+# UNLESS it is a whole template name (`.env.example`, `.env.sample`, `.env.template`). No shared list
+# beside this script: refuse every write, rather than guess which names are secret.
+SECRET_NAMES_FILE="$(dirname "$DENY_HELPER")/secret-names.sh"
+# shellcheck source=secret-names.sh
+if ! [[ -f "$SECRET_NAMES_FILE" ]] || ! . "$SECRET_NAMES_FILE" || [[ -z "${SECRET_NAME:-}" ]]; then
+  deny secret-names-missing "this safety gate cannot load its secret-name list (secret-names.sh beside it); refusing rather than allowing it unchecked."
+fi
+if strip_secret_templates "$path" | grep -qE "$SECRET_NAME"; then
   deny env-file-write "Cannot write to environment files. These may contain secrets. Edit manually."
 fi
 
-# Block writes to credential/key files
-if echo "$path" | grep -qiE '(credentials|secrets|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|id_rsa|id_ed25519|\.ssh/|\.aws/|\.gcloud/)'; then
+# Block writes to credential/key files. The second line is files whose ordinary use holds a login or
+# token: `.netrc` (machine passwords), `.npmrc` (registry auth tokens), `.pgpass` (PostgreSQL
+# passwords), the Docker and Kubernetes client configs (registry auths, cluster tokens), and the GnuPG
+# home (private keys). `.git-credentials` is already caught by `credentials`.
+if echo "$path" | grep -qiE '(credentials|secrets|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|id_rsa|id_ed25519|\.ssh/|\.aws/|\.gcloud/)' \
+  || echo "$path" | grep -qiE '(\.netrc$|\.npmrc$|\.pgpass$|\.docker/config\.json$|\.kube/config$|\.gnupg/)'; then
   deny credential-file-write "Cannot write to credential or key files. Edit manually."
 fi
 
 # Block writes to CI/CD secrets
-if echo "$path" | grep -qE '(\.github/.*secret|vault\.y[a]?ml|\.vault-pass)'; then
+if echo "$path" | grep -qiE '(\.github/.*secret|vault\.y[a]?ml|\.vault-pass)'; then
   deny ci-secret-write "Cannot write to CI/CD secrets files. Edit manually."
 fi
 
