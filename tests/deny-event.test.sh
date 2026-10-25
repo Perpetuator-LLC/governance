@@ -177,6 +177,19 @@ rc=$(run "$RO/sub/deny.jsonl" bash-safety-gate R1 Bash x y)
   || pass "a logging failure prints nothing to stderr"
 chmod 0700 "$RO"  # so the trap can clean it up
 
+# --- a Python without os.fchmod (Windows before 3.13) still writes the event. The AttributeError used
+# to reach main()'s catch-all, so such a host had an empty trail. Hidden here so it runs on any OS.
+LOG9="$TMP/d9/deny.jsonl"
+printf 'y' | GOVERNANCE_DENY_LOG="$LOG9" python3 -c '
+import os, runpy, sys
+if hasattr(os, "fchmod"):
+    del os.fchmod
+sys.argv = [sys.argv[1]] + sys.argv[2:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+' "$HOOK" --gate bash-safety-gate --rule R1 --tool Bash --reason x >/dev/null 2>&1
+[[ -s "$LOG9" ]] && pass "without os.fchmod the event is still written" \
+  || fail "without os.fchmod no event was written"
+
 echo
 if [[ $fails -eq 0 ]]; then echo "  ✅ all checks passed"; exit 0
 else echo "  ❌ $fails failed"; exit 1
