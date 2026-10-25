@@ -438,6 +438,21 @@ Rules:
 
 Copy the repo's existing end-to-end enum (there is usually one) rather than inventing a new pattern.
 
+### "We don't know" is a member of the vocabulary, never folded into a default
+
+**An enum derived from input a producer may omit carries an explicit unknown member.** Mapping the
+empty case onto a real member — the commonest, the catch-all, the first — makes the record assert
+something nobody measured, and nothing downstream can undo it: the two are now the same value. A
+report that aggregates the field shows the unknown bucket rather than distributing it. Where the
+bucket exists only because of a cutover (records written before the field existed), say so in the
+field's documentation, so it drains instead of becoming permanent.
+
+**Scope:** derived or denormalised fields (source, channel, category, tier, attribution) computed
+from optional input. **Where it is wrong:** an absence with one meaning BY CONTRACT, such as an
+omitted priority the schema defines as `normal` or an absent flag meaning `false`; there the empty
+value *is* the default, and an unknown member adds a state nothing can act on. The test is whether
+the producer *decided* to omit the value or *failed* to send it.
+
 ### A list put into a one-value slot becomes ONE value, with no error
 
 **When a text template has a slot for one value and the value can be a list, the list is stringified
@@ -3322,6 +3337,32 @@ signal on its **absolute** value, and keep the ratio only for detecting the onse
 wrong:** a seasonal or traffic-driven series, where the absolute number means nothing and an absolute
 floor pages every quiet weekend. The deciding question is whether **zero is a legitimate value** for
 the series. If it is not, zero must trip an absolute rule.
+
+**The mirror: an alert on a BAD value resolves when its series VANISHES.** A threshold or freshness
+rule evaluates only the series that exist, so when the target becomes unreachable (the scrape fails,
+the exporter dies, a label changes) the expression returns nothing and the alert resolves: a recovery
+nobody observed. Pair each such rule with one that fires on the series being absent, and read a
+resolve with no series behind it as unmeasurable, never as healthy. **Scope:** threshold or freshness
+rules on a scraped or pulled series; a pushed or recording-rule input can fall silent in other ways,
+and each needs its own absence check. **Where it is wrong:** a series
+removed on purpose, such as a retired target; there the absence rule is retired in the same change.
+This is absence-as-health (a missing signal read as a healthy one) at the alerting layer.
+
+## A capability guard tests for the CAPABILITY, not the environment it used to imply
+
+**In code that runs in more than one runtime from one source** (server-side rendering, isomorphic
+libraries, shared packages, a CLI and a worker from one module), *am I in a browser?* often stands in
+for *does this API exist?*. The two agree only until the other runtime implements the API. From that
+release the guard passes and the code runs where it was never meant to, with no error, because
+nothing is broken: the API really is there. So guard on the behaviour you must avoid, and give any
+long-lived resource it opens (a channel, listener, subscription, handle) an owner that closes it on
+the path that owns its lifetime; the guard alone never bounds a resource.
+
+**Scope:** multi-runtime code; in single-runtime code the environment check is a constant. **Where
+it is wrong:** a DELIBERATE environment branch (prompt the user only on the client, read the
+filesystem only on the server). There the environment *is* the policy, and a capability check breaks
+it: the server may have the capability and still must not use it. The tell is whether the
+environment is used as evidence *about the API* or as the policy itself.
 
 ## A ticket looked up by an alert's NAME is the last incident of that name, not this one
 
