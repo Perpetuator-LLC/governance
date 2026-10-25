@@ -174,13 +174,59 @@ if echo "$cmd" | grep -qE '[a-zA-Z_:][a-zA-Z0-9_:]*\s*\(\s*\)\s*\{[^}]*\|[^}]*&[
 fi
 
 # Block secret extraction — secrets must never enter agent context.
-# Catches: cat/grep/rg/head/tail on .env files, keychain access, docker env dumps.
+# Catches: any command that names an env file (any verb), keychain access, docker env dumps.
+# The NAME and its template allowance come from secret-names.sh (found as below), the same file
+# write-safety-gate.sh sources, so the two gates refuse the same names. Its header states the SCOPE
+# (the name as written; no indirection) and the COST (a command that only names the file is refused).
 # The name has a RIGHT BOUNDARY: `.env` followed by a non-letter, `rc`, or the end. That still matches
 # `.env`, `.env.local`, `.env_x`, `"$D/.env"` and `.envrc` (direnv files hold secrets too), and stops
 # matching a longer word that merely starts with the letters: `properties.environment`,
-# `sample.environment.ts`, `.envoy.yaml`. Without it, any reader verb near such a word was refused.
-SECRET_NAME='\.env([^A-Za-z]|rc|$)'
-SECRET_READ="cat\s+.*$SECRET_NAME|grep\s+.*$SECRET_NAME|rg\s+.*$SECRET_NAME|head\s+.*$SECRET_NAME|tail\s+.*$SECRET_NAME|less\s+.*$SECRET_NAME|more\s+.*$SECRET_NAME"
+# `sample.environment.ts`, `.envoy.yaml`. The name is CASE-INSENSITIVE: on Windows and default macOS
+# (APFS) `.ENV` and `.Env` open the same file as `.env`.
+# A FIXED LIST OF READER VERBS is a list that is always one verb behind: `sed -n p`, `awk 1`, `cp`,
+# `xxd` and the case variant `CAT` (a case-SENSITIVE verb list, on the very filesystems where the name
+# itself is matched case-insensitively) all read or relocated the file unrefused (#301), each one
+# either a verb the list hadn't named or the same verb spelled differently. The verb never narrows the
+# risk anyway: `cp` doesn't print to stdout, but it stages the SAME bytes under a name this gate no
+# longer recognises, for an allowed-looking read later. So the match drops the verb list entirely —
+# a sub-command naming a secret-bearing file AT ALL is the floor, whatever reads or moves it.
+#
+# WHERE the list is found. The installer links hooks FILE BY FILE into the harness's hooks directory,
+# so the directory of BASH_SOURCE is that link directory, not the clone that holds secret-names.sh.
+# Looking only beside the link refused every Bash and Write call on a machine whose links predated the
+# new file, the agent's own `reconcile` included, until a human ran it from a terminal. So the list is
+# loaded from this script's REAL directory (symlinks followed), then from beside the link; and when
+# neither has it, the copy embedded below is used, so a missing file still yields the right list, never
+# a refuse-everything gate. tests/secret-names-fallback.test.sh diffs this copy against the file.
+# >>> embedded copy of secret-names.sh (code lines only; keep identical)
+SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
+SECRET_TEMPLATES='example|sample|template'
+strip_secret_templates() {
+  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>)].*)\$" nocase=0 mark=$'\001'
+  shopt -q nocasematch && nocase=1
+  shopt -s nocasematch
+  while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${mark}${BASH_REMATCH[3]}"; done
+  [ "$nocase" = 1 ] || shopt -u nocasematch
+  printf '%s' "${s//$mark/}"
+}
+# <<< end of embedded copy
+gate_real_dir() {  # the directory of this script's REAL file, symlinks followed (portable: no readlink -f)
+  local src="${BASH_SOURCE[0]}" dir
+  while [[ -L "$src" ]]; do
+    dir="$(cd -P "$(dirname "$src")" 2>/dev/null && pwd)" || return 0
+    src="$(readlink "$src")" || return 0
+    [[ "$src" == /* ]] || src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" 2>/dev/null && pwd
+}
+for SECRET_NAMES_FILE in "$(gate_real_dir)/secret-names.sh" "$(dirname "${BASH_SOURCE[0]}")/secret-names.sh"; do
+  # shellcheck source=secret-names.sh
+  [[ -f "$SECRET_NAMES_FILE" ]] && . "$SECRET_NAMES_FILE" && break
+done
+if [[ -z "${SECRET_NAME:-}" || -z "${SECRET_TEMPLATES:-}" ]]; then
+  deny secret-names-missing "this safety gate's secret-name list is empty (secret-names.sh); refusing rather than allowing it unchecked."
+fi
+SECRET_READ="$SECRET_NAME"
 
 # A heredoc BODY given to `cat` or `tee` is DATA: those two only copy their stdin, so prose in the body
 # that names the file reads nothing. Refusing it blocked a seat's hand-off append (`cat >> <file> <<EOF`
@@ -280,12 +326,35 @@ sys.exit(1 if any(rx.search(" ".join(s)) for s in segs) else 0)
 PY
 }
 
+# A template (`.env.example`, `.env.sample`, `.env.template`) holds no secret — the same allowance
+# write-safety-gate.sh gives it on the write side (#301). Dropping the verb list above means every
+# mention of one now matches SECRET_READ, so it is stripped from a COPY built ONLY to test that match,
+# never from `scan` itself: a sub-command naming a real secret ALONGSIDE a template (`cp .env.example
+# .env.local`) must still match on the real name that survives the strip. No python3: this copy is
+# unchanged, so a template name still reads as a secret name — every doubt keeps the block, same as
+# `strip_data_heredocs` above.
+# Only a WHOLE template name is removed: it must end the text or be followed by whitespace, a quote,
+# `/` or a shell separator. A template prefix followed by more name (`.env.example.local`,
+# `.env.sample2`) is a real file, refused here and by the write gate alike. Same pattern as
+# `strip_secret_templates` in secret-names.sh, which the write gate runs, and the same ONE pass over the
+# original text: repeating the strip let `.env.sample.env.example` lose `.env.example`, then
+# `.env.sample`, and pass both gates as nothing.
+strip_template_names() {  # <cmd> -> <cmd> with every whole .env.<template> name removed
+  if ! command -v python3 >/dev/null 2>&1; then printf '%s' "$1"; return 0; fi
+  python3 -c '
+import re, sys
+rx = re.compile(r"\.env\.(" + sys.argv[2] + r")(?=\Z|[\s\"\x27/;&|<>)])", re.IGNORECASE)
+print(rx.sub("", sys.argv[1]), end="")
+' "$1" "$SECRET_TEMPLATES" 2>/dev/null || printf '%s' "$1"
+}
+
 # FLATTEN before matching. `grep -E` matches line by line, so a newline between the reader and the file
 # name — even one inside quotes, `cat "<newline>" .env`, which reads the file — hid the read from every
 # line and the gate ALLOWED it. Joining the lines closes that; the per-sub-command check above then
 # splits on UNQUOTED newlines, so an ordinary multi-line command keeps today's line-wise behaviour.
 scan=$(strip_data_heredocs "$cmd")
-if printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$scan" "$SECRET_READ"; then
+secret_scan=$(strip_template_names "$scan")
+if printf '%s' "$secret_scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$secret_scan" "$SECRET_READ"; then
   deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
 fi
 
@@ -293,7 +362,7 @@ if echo "$cmd" | grep -qE 'security\s+find-generic-password|security\s+find-inte
   deny keychain-read "Keychain access would expose secrets to the AI context. Keychain reads belong in runtime code only, not in development commands."
 fi
 
-if echo "$cmd" | grep -qE 'docker\s+(exec|inspect).*env|docker\s+(exec|inspect).*\.env|docker\s+(exec|inspect).*secret|docker\s+(exec|inspect).*token|docker\s+(exec|inspect).*password'; then
+if echo "$cmd" | grep -qE 'docker\s+(exec|inspect).*env|docker\s+(exec|inspect).*\.[eE][nN][vV]|docker\s+(exec|inspect).*secret|docker\s+(exec|inspect).*token|docker\s+(exec|inspect).*password'; then
   deny container-secret-read "Extracting secrets from containers would expose them to the AI context. Use Secure Handoff instead."
 fi
 
