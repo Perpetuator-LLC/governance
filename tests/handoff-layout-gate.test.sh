@@ -54,6 +54,32 @@ check "R3 fires: 👤 You not last"                            1 "must be the LA
 check "R4 fires alone (no LOGGED marker)"                    1 "R4" "$(printf '%s' "$GOOD" | sed '/LOGGED/d')"
 check "🚫 NOT LOGGED satisfies R4"                           0 "ok" "$(printf '%s' "$GOOD" | sed 's/📝 LOGGED → ~\/.local\/state\/x.log/🚫 NOT LOGGED (no output)/')"
 
+# The header-table form (requested by Nik, 2026-10-25): a two-row table directly above the fence,
+# in place of the `► user@host · 🔑 PROMPTS · 📝 LOGGED` line.
+GOOD_TABLE="## 👤 You
+**Rotate the key**
+| 🖥️ workstation | 👤 alice | 📝 ~/.local/state/x.log |
+| --- | --- | --- |
+| 🔑 alice · password · workstation (sudo) | | |
+${F}bash
+sudo ./rotate.sh
+${F}"
+
+check "header table alone (no ► line) satisfies R1/R2/R4"    0 "ok" "$GOOD_TABLE"
+check "fence with NEITHER the ► line nor a table fails"      1 "R1" "## 👤 You
+Run this:
+${F}bash
+sudo ./rotate.sh
+${F}"
+check "table missing its 🔑 row fails R2 when the block prompts" 1 "R2" "## 👤 You
+| 🖥️ workstation | 👤 alice | 📝 no |
+| --- | --- | --- |
+${F}bash
+sudo ./rotate.sh
+${F}"
+check "table's 🔑 row says 'none' but the block prompts: R2 fires" 1 "R2" "$(printf '%s' "$GOOD_TABLE" | sed 's/🔑 alice · password · workstation (sudo)/🔑 none/')"
+check "table with 📝 cell 'no' still satisfies R4 (states the answer, need not BE logged)" 0 "ok" "$(printf '%s' "$GOOD_TABLE" | sed 's/📝 ~\/.local\/state\/x.log/📝 no/')"
+
 # Stop-hook channel: a transcript whose last assistant text is the exhibit
 mk() { python3 - "$1" "$2" <<'PY'
 import json,sys

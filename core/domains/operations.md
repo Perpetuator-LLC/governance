@@ -227,6 +227,27 @@ is wrong:** a check that cannot be scripted becomes two sittings with its result
 a read-only block needs no gate; and a rule that was read and misapplied because it is ambiguous is a
 wording defect, where rewording is the fix.
 
+### Command hand-off format
+
+**Directly above a command block handed to a human, state who runs it, what it will prompt for, and
+whether it is logged.** The primary form is a two-row table immediately above the fence:
+
+| 🖥️ \<host\> | 👤 \<user\> | 📝 \<logged path, or "no"\> |
+| --- | --- | --- |
+| 🔑 \<prompts the command raises, or "none"\> | | |
+
+Neither identity cell is ever blank — a block aimed at the wrong box is a different outage than the
+one the command is meant to fix. The 📝 cell states whether the run is logged and where; "no" is a
+complete answer, an empty cell is not. The 🔑 cell lists every prompt the command will raise, derived
+from its own flags (never guessed, never from a description of it) — a command that prompts and a
+cell reading "none" is a defect, not a convenience.
+
+**A single compact line directly above the block is an accepted alternative to the table:**
+`► <user>@<host> · 🔑 PROMPTS: <list> · 📝 LOGGED → <path>` (or `🚫 NOT LOGGED` when it is not).
+
+Enforced by `hooks/handoff-layout-gate.py`: a shell block preceded by neither form, or a table whose
+🔑 row is absent or reads "none" while the command actually prompts, is refused.
+
 ### A credential the human must create is handed over with its mint recipe, from the last run that worked
 
 A prompt such as `ADMIN token (hidden)` names what to paste, not how to get it, and a reader told
