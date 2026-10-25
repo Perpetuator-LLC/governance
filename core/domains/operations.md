@@ -195,8 +195,8 @@ Four tests, applied to every line in the human's section **in the first message*
    permissions. Measured: a script prompted for an admin token (hidden input) while the hand-off
    never said which token, where it is minted, or with what scope.
 3. **A credential created only for this piece of work is removed when the WORK ends, not after one
-   run.** Until then it is staged in the secret store with an expiry, and every retry and every later
-   step reads it from there (`security.md` → *Ask-once provisioning*). The work's last step deletes
+   run.** Until then it is staged in the secret store with an expiry set past the work's end, and every
+   retry and every later step reads it from there (`security.md` → *Ask-once provisioning*). The work's last step deletes
    the staged copy and revokes the credential: where, and how. A script that asks for it on every run
    and says to revoke it after each run turns every failed attempt into a re-mint. The mirror: a
    credential meant to persist, such as a service token stored for later use, gets no revoke step. It
@@ -226,6 +226,35 @@ thing that went unread. A checker for hand-off text fails loudly on a block it c
 is wrong:** a check that cannot be scripted becomes two sittings with its result reported between them;
 a read-only block needs no gate; and a rule that was read and misapplied because it is ambiguous is a
 wording defect, where rewording is the fix.
+
+### Command hand-off format
+
+**Directly above a command block handed to a human, state who runs it, what it will prompt for, and
+whether it is logged.** The primary form is a two-row table immediately above the fence:
+
+| 🖥️ \<host\> | 👤 \<user\> | 📝 \<logged path, or "no"\> |
+| --- | --- | --- |
+| 🔑 \<prompts the command raises, or "none"\> | | |
+
+Neither identity cell is ever blank — a block aimed at the wrong box is a different outage than the
+one the command is meant to fix. The 📝 cell states whether the run is logged and where; "no" is a
+complete answer, an empty cell is not. The 🔑 cell lists every prompt the command will raise, derived
+from its own flags (never guessed, never from a description of it) — a command that prompts and a
+cell reading "none" is a defect, not a convenience.
+
+**Two accepted alternatives to the 3-cell table carry the same three facts, differently arranged.** A
+2-cell table merges the identity cell into one `user@machine` value:
+
+| 👤 \<user\>@\<machine\> | 📝 \<logged path, or "no"\> |
+| --- | --- |
+| 🔑 \<prompts the command raises, or "none"\> | |
+
+A single compact line directly above the block carries all three in one row:
+`► <user>@<host> · 🔑 PROMPTS: <list> · 📝 LOGGED → <path>` (or `🚫 NOT LOGGED` when it is not).
+
+All three forms are checked independently — use whichever fits the surface; none retires the others.
+Enforced by `hooks/handoff-layout-gate.py`: a shell block preceded by none of the three, or a table
+whose 🔑 cell is absent or reads "none" while the command actually prompts, is refused.
 
 ### A credential the human must create is handed over with its mint recipe, from the last run that worked
 
@@ -844,6 +873,22 @@ used, and it misses silently: a zero from a near-miss query looks exactly like a
 repository. Measured twice in one week: one search returned 0 because the matching ticket's title used
 the plural; another returned 0 for a ticket filed a minute earlier whose title did not contain the word.
 
+- **Key a create-gate on an identifier the finding's CLASS always carries, not on a phrase describing
+  it.** "Dedupe by goal" names the intent; the query still needs a key, and a conscientious reader
+  otherwise keys it on whatever words they are already thinking in, while the earlier author chose
+  different ones. An identifier the finding owns and cannot paraphrase (the alert name, the metric or
+  series name, the KPI id, the branch or ref name, the file path, the upstream ticket reference)
+  matches every earlier report of the same thing. A routine that files from a measurement has such a
+  key by construction: give it a ledger keyed on that identifier (identifier → the item it opened)
+  instead of re-deriving a search string on every pass.
+- ⚠️ **An identifier that differs per occurrence cannot dedupe.** A run number, session or sandbox id,
+  a timestamp, a temporary path, a per-comment reference: each is unique to *this* instance, so a
+  search keyed on it returns 0 on every pass and files a duplicate every time, which is worse than the
+  phrase search it replaced. The key is what every occurrence of the finding shares, never what makes
+  this one distinct.
+- **When the finding has no such identifier** (a proposal, a question, a judgement call), search
+  several phrasings and record in the new item which ones were tried, so the next reader can tell a
+  real absence from an unlucky query.
 - **Corroborate on a different surface, not the same index twice.** A second query through the same
   tokeniser is the first check run again. Use a form that differs in the way the index could have
   failed, or leave the index: list the newest items unfiltered and read them. For a topic someone may
@@ -855,9 +900,20 @@ the plural; another returned 0 for a ticket filed a minute earlier whose title d
   documents: the measured corpus (numbers, environments, reproductions) often lives only there, and
   the docs are the curated subset. A closed item may be closed because it was wrong, so read its status
   and provenance; the rule widens the candidates, it does not raise their weight.
-- **Scope:** keyword or full-text search used as the precondition for *creating* something
-  (route-before-create, dedupe by goal). A lookup by a durable identifier (an id, a commit hash, a
-  ticket number) is exempt: there, a zero does mean absent.
+- **An empty answer keyed on a good identifier still gets a second source before you create.** A
+  filtered listing or search can return 0 while the item exists (a filter the backend ignored, a
+  paging or state default, an index lagging the write). Confirm the zero against an independent
+  source, such as the unfiltered newest list or the ledger, before concluding "no duplicate". A probe
+  that cannot tell its own failure from a negative is not evidence.
+- **Scope:** search used as the gate on *creating* something (file a ticket, open a change, add a
+  row), where a false negative produces a duplicate that looks correct and nobody notices
+  (route-before-create, dedupe by goal). Exploratory search is out of scope: a phrase is the right
+  query there, and a miss costs one more query. A direct fetch of one item by its durable identifier
+  (open item N, resolve this commit hash) is exempt: there, a not-found does mean absent.
+- **Where this would be wrong:** a person triaging an inbox of free-text reports has no identifiers to
+  key on and should search phrases broadly. Keying on identifiers there finds only what a machine filed
+  earlier and silently misses every human-written report of the same problem. The identifier rule is
+  for create-gates over findings that carry one, not for search in general.
 
 ## Routines are infrastructure — they migrate, or they silently die
 
@@ -1018,6 +1074,19 @@ horizon: perpetual | until-goal
 scope: <vault / engagement>
 review_cadence: "per worker-thread orientation + quarterly"
 ```
+
+**A North Star that is delivered by building things is DRAWN as well as written.** Pair the
+statement with one diagram of the system that delivers it. Every part carries a status (done ·
+partial · missing · tool not yet chosen, colour-coded with a legend) and names the work item that will
+change it. The diagram is the plan: it shows the human what is left at a glance, shows agents the
+dependencies between parts (including parts owned by other repositories), and an agent picks its next
+work from the parts that are not done. **Flip a part's status in the same change that flips the part,
+and re-render the image then.** A stale picture is worse than none, because it shows a finished plan.
+Commit the diagram's source with its rendered images, and embed the image in the North Star document.
+**Scope:** a goal that is met by behaviour rather than by building ("reduce spending") needs a measure
+and its trend, not a system diagram. **Mirror case:** a part marked done because its work item closed
+is not done until the result is verified where users meet it. Closing the ticket is evidence about
+the ticket, not about the part.
 
 **Home:** the instance lives in its domain's canonical place (e.g. a personal vault's finance North
 Star lives with its finance notes); the vault's instruction file points to it so every session finds
@@ -1243,3 +1312,116 @@ So write it so the expiry is detectable:
 - **Prefer pointing at the artefact over restating its state.** A pointer stays true as the artefact
   moves; a restatement is a copy that has to be maintained, and copies are what go stale.
 
+
+
+## A ticket comment carries the verdict or receipt first and stays under 1,200 characters
+
+**A ticket comment leads with its verdict or receipt, and analysis longer than that belongs in a
+document in the owning repo or vault, linked rather than pasted in full.** A comment thread that
+every later reader re-reads whole is a cost paid on every read, charged against whoever wrote the
+longest one.
+
+**Scope:** comments on work tickets; a ticket's body, a release notes line, and a post-mortem are
+exempt.
+
+**Where it is wrong:** a one-line comment that only says "done" without a receipt is worse, not
+better — the rule is receipt-first, not short. Length is the symptom; a terse comment that omits the
+verdict fails the rule while satisfying its letter.
+
+## A message to another seat states one change and links the artifact; it never restates what the artifact says
+
+**A message to another seat states one change and links the artifact it concerns, and never restates
+what the artifact already says.** A relay message that repeats a ticket's content costs a read on
+both ends for information the ticket already carries, and drifts from the ticket the moment either
+is edited.
+
+**Scope:** agent-to-agent messaging; a hand-off block to a human keeps the human message contract.
+
+**Where it is wrong:** when the artifact does not exist yet — an urgent finding with nowhere written
+down yet — the message carries the finding and files the artifact in the same turn, rather than
+pointing at a link that is not there.
+
+## An agent's status record is written on a state transition, not per turn
+
+**An agent's status record is updated when its task, current step, blocked state or held resources
+change — not on every turn — and its free-text "what I am doing" field stays short (a few hundred
+characters).** An update that rewrites a multi-thousand-character description with no state change
+is a write that recorded nothing new, and every reader of the record pays to re-read it.
+
+**Scope:** any shared record that reports what an agent is doing, for looping and interactive agents
+alike. Where liveness is judged from the record's freshness, keep a separate heartbeat timestamp,
+refreshed on its own interval, so that writing only on transitions does not make a healthy agent
+look stale.
+
+**Where it is wrong:** an agent whose heartbeat interval is shorter than the gap between its
+transitions still writes on the interval, with an unchanged step — the interval is the floor, not a
+reason to write on every turn once transitions are rare.
+
+## A seat's boot loads its tool roster in one search, not one search per first use
+
+**A seat's boot loads its tool roster in a single search named in the seat's skill, instead of
+discovering it one deferred-tool search at a time as each tool is first used.** The same top-named
+tools get reloaded, one search apiece, every session that needs them, for a roster that is already
+known in advance.
+
+**Scope:** harnesses with deferred tools, where a seat type's roster is stable enough to name once and
+maintained in its own skill, re-measured periodically from transcripts.
+
+**Where it is wrong:** a seat whose tool needs are genuinely unpredictable per task (a one-off
+exploratory investigation with no fixed roster) gains nothing from pre-loading a roster it will not
+use, and a stale pre-load becomes dead weight the seat never calls.
+
+## An inefficiency becomes a KPI, with a baseline, before a fix — and a regressing trend holds and reverses
+
+**An agent that identifies an inefficiency defines the measure and takes a baseline snapshot before
+changing anything; after the change it snapshots on cadence, and a trend in the wrong direction holds
+every other change on that measure, reverses this one, and monitors until the baseline returns.**
+Changing first and measuring later leaves no way to tell the fix from noise, and no way to tell a
+regression from the fix apart from a feeling.
+
+**Scope:** changes to process, tooling, cost or token use made by agents; an emergency fix ships
+first and is measured after.
+
+**Where it is wrong:** a measure that improves because the thing measured stopped being counted is a
+regression of the measure, not progress — the snapshot states its denominator, so a shrinking
+denominator cannot pass as a shrinking numerator.
+
+## Knowledge agents direct code lanes; the router routes by an owner table, holding no product context
+
+**A lane that owns a code repository takes work from the human and from the knowledge agent that
+owns the organisation's vault; a router seat sends each request to the accountable owner by a
+published RACI and verifies, holding no product context of its own.** A router that accumulates
+product knowledge becomes a second, competing source of truth about what a lane should do; its job is
+to route and verify, not to decide.
+
+**Scope:** fleets with at least one knowledge vault and at least two code lanes; a single-lane setup
+needs none of it.
+
+**Where it is wrong:** an emergency (prod down, data loss, security) goes straight to the lane,
+reviewed after — routing it through the owner table first spends the one resource an emergency
+cannot afford.
+
+## A registry row before creation — anything durable has a row before it exists
+
+**Before anything durable is created — an account, a credential, a host, a subscription, a
+repository, a purchased or built thing — it gets a registry row (`building` → `active` →
+`retired`),** and where the thing is a credential, it is stored through the blind pipeline as part
+of minting it, never after. A thing later found unused keeps its row, marked as such, rather than
+being deleted from the record along with its no-longer-needed existence.
+
+**Scope:** anything a human or agent creates on any surface; scratch files and throwaway environments
+are exempt.
+
+**Where it is wrong:** when another system of record already enumerates the things authoritatively —
+instances an autoscaler or orchestrator creates and destroys from a declared template, preview
+environments a pipeline spins up per change, accounts a directory provisions from a group — a
+hand-written row per instance is a second copy of that system's state, and it drifts from it within
+the hour. There the row belongs to the declaring thing (the template, the pool, the group), and it
+points at the system that lists the members.
+
+**This generalizes the credential-specific case already in canon**
+(`security.md` → *Rotation is a routine, not a ceremony*: its inventory, with the row written before
+the credential is minted) from credentials to any durable thing. Where the created thing is a credential, that section's inventory
+column requirements (one row per credential, who consumes it, the rotation script) apply in full;
+this rule is the reason the same discipline extends to the account, host or subscription the
+credential often lives beside.

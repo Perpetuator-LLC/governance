@@ -194,6 +194,14 @@ them to concrete tools in each repo's config):
 | **Cross-cutting** | Decision/ADR · RAID · Responsibility · Evidence | recorded closest to where enacted, linked upward |
 | **Registry & knowledge** | Instances · Knowledge Base (rules, protocols, learnings, contributors) | **Knowledge vault** |
 
+**The split exists so that retiring or migrating one project is a single move.** Every artifact that
+defines the project — its requirements, decisions, risks, evidence, work items — lives in that
+project's own repository or forge; delete or migrate the repo, and nothing elsewhere needs to change.
+The vault keeps only what outlives any one project: strategy, measures, registries, and the
+organisation's memory of it. This binds at **authoring time** — it does not retroactively relocate
+existing records without a ticket — and it excludes records more than one project needs, which are
+cross-cutting and belong in the vault under a theme (above, *a document that spans initiatives*).
+
 **Placement binds AUTHORING and REFERENCING alike:** a doc goes to its canonical home at birth, and a
 hand-off that records a path is a routing act — verify the home before propagating it
 (`domains/operations.md` → *Placement binds authoring and referencing*).

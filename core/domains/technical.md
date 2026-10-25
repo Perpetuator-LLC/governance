@@ -438,6 +438,21 @@ Rules:
 
 Copy the repo's existing end-to-end enum (there is usually one) rather than inventing a new pattern.
 
+### "We don't know" is a member of the vocabulary, never folded into a default
+
+**An enum derived from input a producer may omit carries an explicit unknown member.** Mapping the
+empty case onto a real member — the commonest, the catch-all, the first — makes the record assert
+something nobody measured, and nothing downstream can undo it: the two are now the same value. A
+report that aggregates the field shows the unknown bucket rather than distributing it. Where the
+bucket exists only because of a cutover (records written before the field existed), say so in the
+field's documentation, so it drains instead of becoming permanent.
+
+**Scope:** derived or denormalised fields (source, channel, category, tier, attribution) computed
+from optional input. **Where it is wrong:** an absence with one meaning BY CONTRACT, such as an
+omitted priority the schema defines as `normal` or an absent flag meaning `false`; there the empty
+value *is* the default, and an unknown member adds a state nothing can act on. The test is whether
+the producer *decided* to omit the value or *failed* to send it.
+
 ### A list put into a one-value slot becomes ONE value, with no error
 
 **When a text template has a slot for one value and the value can be a list, the list is stringified
@@ -615,6 +630,15 @@ Three things make the fix stick:
 - **Mutation-check the gate.** A suite that goes green *before* the gate is added proves nothing
   about it — it never rendered the control. Remove the guard, watch the new test fail, restore it.
   Without that step "tests pass" is compatible with the gate not existing.
+
+  **The restore has to survive the driver dying.** A script that edits the source in place and then
+  crashes, times out or is killed between "write the mutant" and "restore" leaves the mutant in the
+  tree. The next commit ships it, and if no test covers that line, nothing goes red. Where the
+  toolchain allows, mutate a copy and the tree is never touched: a scratch worktree, or an overlay
+  such as Go's `go test -overlay`. Otherwise check that every mutant applies before writing any,
+  restore in a `finally`, and compare the file with a saved copy before committing, because
+  `finally` does not run on SIGKILL. A mutation tool that never edits the tree in place needs none
+  of this.
 
 ⚠️ **A user reporting "I can do X" is usually reporting an AFFORDANCE, not a capability.** They saw
 the control; they may never have watched the request fail. Establish which before filing it as a
@@ -1075,6 +1099,53 @@ promotion: each lane proves its half, and the defect lives where the halves meet
 one walk record — who walked, environment, the artifact pair, steps, observed — and whoever declares
 readiness across lanes owns scheduling the walk and may not write *ready* without that link.
 *"Unwalked"* in a readiness line is a block, not a caveat.
+
+⚠️ **A WORK ITEM CLOSES ON VERIFICATION. A RELEASE CLOSES ON THE WALK. These are two different gates
+on two different records.** If a ticket is held open until a human walks it, the human becomes the
+queue: open tickets pile up waiting on one person, and nobody can tell finished work from unfinished.
+If a ticket closes on its merge, *merged* gets promoted to *done*. Neither failure happens when each
+gate sits on its own record.
+
+**A work item closes when both of these are on record in its closing comment:**
+1. **Tests check its done-when with known answers.** The expected values are derived from the inputs
+   by a route other than the code. Where the practice exists, they are written by a different model or
+   person than the one who built the change. The tests pass at a SHA on the default branch.
+2. **An independent verification pass.** Someone other than the builder breaks the guard the change
+   adds and shows that a test fails (mutation), or re-runs the tests and checks that they actually
+   cover the done-when. The pass names its coverage per file.
+
+**Two other closings are just as valid, each with its evidence in the closing comment:**
+- **No longer valid:** the decision, who made it, and why.
+- **Fixed by another change:** that change's commit on the default branch, and the ticket's own
+  reproduction re-run against it. The procedure:
+  `operations.md` → *Reproduce a bug before fixing it, on the current code, and record it on the ticket*.
+
+**Closing a ticket hands its human check to the release in the same act.** If anything about the work
+can be seen on the deployed candidate, the closer adds it to the next release ticket before closing,
+under the feature it belongs to. A ticket closed without that hand-off drops its check, and the
+release walk then cannot know what it should have looked at.
+
+**The human walk moves to ONE release ticket per release.** Each feature in the release is a bullet.
+Under each feature, its facets are sub-bullets, and each facet gives the steps to take on the deployed
+candidate and what a person should see. The walk record and the rule *"unwalked is a block"* attach
+to that ticket, with any other pre-promotion sweep the release process requires. **Only the release
+ticket's walk promotes the release.**
+
+**A facet that fails the walk** reopens nothing silently. It files a new linked ticket, which closes by
+the same two gates. The release ticket keeps the bullet unchecked until the re-walk passes.
+
+**Where this does NOT apply:**
+- **A work item whose done-when no test can observe.** Examples: visual judgement, copy tone, a
+  third-party portal step, a human-only gate. It closes when the facet passes on the release walk, and
+  the release ticket says so next to the bullet.
+- **A hotfix promoted without a release ticket.** The walk is on the hotfix ticket itself.
+- **No release train at all** (a repo that deploys every merge). The walk attaches to the deploy
+  record instead of a release ticket. The work item still closes on verification.
+
+**Why a walk per ticket is the wrong grain:** *merged is not walked* still holds, at the **release**
+level. A merge proves only that the change is in the candidate. A walk per ticket makes the human the
+closing step of every ticket. The verification pass is the check that a ticket really works, and the
+release walk checks the candidate as a whole.
 
 **A deploy is fully automated: the release pipeline alone sets the planned good state.** Every
 post-deploy seed, sync or catalog step lives in the pipeline's post-deploy hook or in infrastructure
@@ -1601,6 +1672,33 @@ of a fix.
 - **Scope:** any loop over linked worktrees or several checkouts of one repository. A command run in
   a single checkout, about that checkout, is not affected.
 
+## Once `worktreeConfig` is on, a new worktree gets a COPY of the creating one's per-worktree config
+
+**With `extensions.worktreeConfig=true`, `git worktree add` writes the creating worktree's
+`--worktree`-scoped values into the new worktree at creation time.** The new worktree does not merely
+fall back to shared config — it holds its own copy, and a later change to the original does not reach
+it. Measured, both arms: with the extension on and `core.hooksPath` set at `--worktree` scope in the
+primary checkout, `git worktree add` on a fresh worktree shows that same value for `git config
+--worktree --get core.hooksPath` — its OWN value, not an inherited fallback.
+
+**Why it matters:** it silently invalidates any test of "does my installer configure every worktree?"
+when the test creates the worktree *after* the installer has run — the new worktree already has the
+right value, for free. The test then measures a copy made by git itself and passes while the
+installer's own path handling is broken.
+
+**So: a test of per-worktree setup must create the worktree BEFORE the thing under test runs**, or it
+is measuring git's copy, not the installer. Run the known-bad variant (the installer with its bug
+restored) against the fixture and require a failure; if the bug still passes, the fixture is measuring
+the wrong thing.
+
+**Scope:** git worktrees with the `worktreeConfig` extension enabled, for config set at `--worktree`
+scope. **Where it is wrong:** do not generalise this into "a new worktree inherits everything, so
+per-worktree setup is unnecessary." The copy happens only for values already set when the worktree is
+created, and only with the extension already on — a worktree created *before* the value is set, or in
+a repo where the extension is off, gets nothing, and that is the case a long-running fleet actually
+hits most, because long-lived worktrees predate most config changes. The rule is about what a test can
+no longer prove, not a licence to skip the setup.
+
 ## Agents that share a scratch directory write unique paths, and a publish step proves the file is its own
 
 **Some harnesses give every background agent launched from a session that session's scratch
@@ -1719,6 +1817,18 @@ pre-pass's number **as if it were the model's** — a silent regex-only score ma
 score, which is **absence-as-health in eval flavor**. Assert non-empty output per item and fail the
 run; never let a missing answer be scored as an answer.
 
+**The same holds for any WRITER, not only a scorer: a step that persists a produced value checks the
+value is substantive before writing, and fails when it is not.** "The call returned" is not
+validation. A generated summary, rendered file or transformed record that comes back empty, once
+written, looks downstream exactly like a correct one. Worse, the write often consumes the marker that
+said *this still needs doing*, so a search for the marker reports the item done: **the write destroys
+the evidence that the write was needed.** **Scope:** steps that persist a value they did not compute
+deterministically, above all where a placeholder or pending marker is replaced by the write.
+**Where it is wrong:** a writer whose correct output can be empty (a diff with no changes, a log of a
+quiet interval, a report with no findings). There, tell an empty result from a failure by a
+**separate** signal (an exit code, an explicit no-op flag), never by length; a minimum-length check
+turns a correct quiet result into a manufactured error.
+
 ## An "exactly once per period" writer marks the no-op path too; a dry run emits no real side effects
 
 **A job that must act at most once per period records that the period was handled on EVERY path that
@@ -1828,6 +1938,31 @@ your mistakes.
 
 Same principle as *a probe that cannot distinguish the thing from a REFERENCE to it, or its own
 FAILURE from a negative, is not evidence* — one layer down, in the suite rather than the probe.
+
+## A test double's input matcher is exercised only by the inputs the product happens to send
+
+**Loosening the matcher INSIDE a stub or fake cannot be caught by the suite, because the product only
+ever sends the inputs it sends.** A double whose matching logic has drifted wide — a prefix match where
+an exact key was intended, a type coercion that accepts a near-miss — passes every existing assertion,
+because none of them was ever going to send the input that would expose the drift. The suite proves
+the product behaves correctly against the double; it proves nothing about whether the double still
+behaves like the thing it replaced.
+
+**So: mutation-test the DOUBLE, not only the product.** Change the double's own matching pattern and
+require a test to go red. A double is a second implementation of "how the real collaborator decides
+what to respond to," and a second implementation with no check on it drifts exactly like any other
+code with no check on it — except a passing suite is the one place nobody looks for the drift, since
+a passing suite is supposed to mean nothing is wrong.
+
+**Measured:** a stub's case label looked exact by eye. Because the product queries only its own exact
+key, a prefix-matching mutant introduced into the stub passed every existing assertion untouched — a
+false green, caught only by mutating the stub by hand and watching nothing fail.
+
+**Scope:** suites that assert behaviour through a hand-written double (a stub script, a fake server, an
+in-memory adapter) whose matching logic is part of the test fixture rather than the product under test.
+**Where it is wrong:** a double generated from a captured real response, whose matcher is the recorded
+request, is not helped by hand-mutating it — that tests the recorder, not the suite. There the control
+belongs on the capture step: re-capture and require a diff against the previous recording.
 
 ## A fixture built from a permission check depends on WHO RUNS IT
 
@@ -2994,6 +3129,69 @@ Calling it done is a false claim, not an optimistic one.
   one bucket while `restore.sh` read another, and secret-name drift (`DB_*` → `POSTGRES_*`)
   broke both. Only a restore rehearsal catches that class; no green deploy ever will.
 
+## Back up by REPLACEABILITY, not by size or source
+
+**Every stored file belongs to exactly one tier, and an unclassified file is treated as irreplaceable
+until it is classified (fail safe).**
+- **Irreplaceable** (records, personal photos and video, tax and financial documents): encrypted at
+  rest, plus **two backup legs written in parallel**, one local and one **off-site with enforced
+  retention (WORM)** that no credential, including the account owner's, can delete before it expires.
+  One leg failing must never stop the other. The writer credential can put objects but cannot delete
+  them or shorten retention.
+- **Replaceable** (media that can be re-acquired): encrypted at rest, with one local backup in a
+  **separate** bucket under its own credential, and no off-site copy. *Replaceable* means the source
+  will still be there. A file whose only source can disappear (a delisted purchase, a page that may
+  go offline) is irreplaceable.
+- **An index records what exists, its tier, and where every copy lives.** It is generated from the
+  backup jobs' own manifests, never kept by hand. An irreplaceable file with fewer than two verified
+  copies is a reported gap.
+- **Prove WORM by trying to break it:** on a canary object, a delete with the writer credential and
+  one with the admin credential, both inside retention, must both be refused. A provider's "lock"
+  feature is not WORM until it passes that test.
+
+**Where this does not apply:**
+- **A live database's point-in-time recovery** follows its own engine's rules. The tiers apply to its
+  exported snapshots.
+- **Scratch or cache data** is not backed up at all.
+- **Data you may be obliged to delete** (other people's personal data under an erasure right, a
+  retention limit in a contract). WORM makes deletion impossible, so set retention no longer than the
+  shortest such obligation, or encrypt that data under a key you can destroy and keep the key out of
+  the WORM leg.
+
+## A strangler migration terminates a service only on a MEASURED zero-use window
+
+**Terminate the old side of a strangler migration only after a measured zero-use window on the
+proxy in front of it, plus a reachability list (what still points at it) and a resurrection list
+(what would bring it back).** "We migrated everything" is a claim about the cutover; the zero-use
+window is the only thing that tests whether anything was missed. A stale client, a cached DNS
+record, a cron job pinned to the old host, or a hardcoded fallback all keep sending real traffic
+long after the migration is believed complete, and none of them shows up in a code review of the
+new side — only in what the proxy actually counted.
+
+- **The proxy's own counter is the evidence, not a grep for callers.** A caller inventory is a claim
+  about what *should* call the old service; the proxy's call count is a measurement of what *does*.
+  The gap between the two is exactly the set of callers nobody remembered to migrate.
+- **The window must be long enough to see every caller's own cycle** — a batch job that runs
+  monthly, a report that runs on quarter-end, a mobile client that only phones home when a user
+  reopens the app after weeks away. A zero-use window shorter than the slowest legitimate caller's
+  period reads "nothing called it" when the truth is "nothing called it yet."
+- **Reachability list**: everything a determined search can still find pointed at the old service —
+  DNS records, load-balancer rules, config files, cron entries, client SDKs pinned to an old
+  endpoint — named before termination, not discovered after something breaks.
+- **Resurrection list**: exactly what would need to happen to bring the old service back (the
+  backup, the image, the config, the data snapshot, and who can authorize it), named and reachable
+  *before* termination, because the question "can we still undo this" is cheap to answer in advance
+  and expensive to answer under pressure afterward — the same reason a rollback path is named at
+  ship time for any other change, applied here to a whole service rather than one change.
+
+**Scope:** a service sitting behind a proxy or gateway that counts calls to it. **Where it is
+wrong:** without such a proxy, this rule does not say "skip the measurement" — it says add the
+counter first, even a crude one (an access log grep, a request counter in the old service itself),
+because a termination decided on a code-level caller inventory alone is the same mistake this rule
+exists to prevent, just without the proxy that would have caught it. An emergency stop (a
+compromise, a legal order, active harm) is not a strangler termination: stop the service now, and
+write the reachability and resurrection lists immediately after, not before.
+
 ## Fix at the serving layer
 
 When a capability must reach a SET of clients (all LAN devices, all VPN devices, phones
@@ -3013,6 +3211,36 @@ per-device configuration:
 Litmus: if the fix would have to be repeated on the next device, it's at the wrong layer.
 Measured: an internal DNS name resolved on the LAN but died on the VPN; the answer was VPN
 split-DNS + DHCP, and the hand-made per-machine resolver file became removable.
+
+## A host's own infrastructure is not that infrastructure's safety net
+
+**A host must never depend on a single resolver for a lookup it cannot survive without, and
+never on one it hosts itself.** When the box that runs a DNS resolver, a rate limiter, or a
+monitoring/alert path is also a consumer of that same service, an outage on the host takes out
+the thing meant to report or route around it — the single point of failure and the system that
+would detect it collapse together.
+
+- **Resolution:** a host that is also its own resolver (or depends solely on one resolver
+  instance) loses name resolution exactly when that resolver fails, with no second path to fall
+  back to. At least one lookup path must not route through infrastructure that single host
+  provides.
+- **Rate limiting:** a resolver's rate limit must exempt or cap separately the host that runs
+  the resolver itself. A shared limit counts the resolver's own health checks, retries, and
+  internal calls against the same budget as every other client, so the resolver can rate-limit
+  itself into failure under its own load.
+- **Alerting:** the alert path (the pager, the notification channel) must not depend on the
+  host it monitors staying up. An alert whose delivery requires the very host that just went
+  down to still be reachable will not fire for the outage it exists to report.
+
+**Scope:** infrastructure a system depends on to detect, report, or route around its own
+failures — name resolution, rate limiting, and alerting/paging specifically; the same reasoning
+extends to any monitoring or circuit-breaking path.
+
+**Where it is wrong (the mirror):** a host that is NOT the resolver's own box. An ordinary
+client depending on a resolver it does not run has a normal, single-direction dependency, and
+provisioning a second resolver for every such client is pure redundancy cost with no
+circularity to fix. The rule binds the resolver's own host and the monitored host's own alert
+path — not every consumer of a shared service.
 
 ## A declared-state list that SHRINKS is a finding, not a diff
 
@@ -3085,6 +3313,56 @@ person. **Where it is wrong:** config the tool finds by walking upward from each
 when the root moves, and deleting it breaks the nested case. Establish which resolution the tool uses
 first; guessing fails silently one way and loudly the other.
 
+**Resolution happens one of three ways — from the invoking shell's cwd, from the tool's declared input
+root, or per file by walking upward from the target — and the tool's own *effective* setting is the
+evidence, never the config path it prints as resolved.** Measured: ruff 0.11.12, `sub/pyproject.toml`
+at line-length 200 and the root `pyproject.toml` at line-length 60, run from `sub/` against a file
+outside it, applied **60** — the config nearest the FILE — while its own `--show-settings` named
+`sub/`'s file as the "Settings path" used, which was not the config actually applied. **The mirror:**
+the same tool, the same file, run from two different directories gave the *same* verdict both times —
+for a per-file walker, the invocation directory was never the variable, so a CI/local mismatch is not
+explained by the working directory until the tool's actual resolution mode has been checked.
+
+## A process-memory probe names its field, and a process-name bucket is never truncated
+
+**Resident-set size is not the OS's own physical-footprint accounting, and the gap between them can be
+several-fold for a process fronting a virtual machine or a helper subsystem.** A monitoring probe that
+reports "memory" without naming which field it read is unfalsifiable — two probes on the same host can
+disagree while both are technically right.
+
+A second, unrelated way the same class of probe lies: a process listing that truncates the command
+name to a fixed width (16 characters is a common default) buckets several distinct processes under one
+label. Join against the untruncated name before bucketing, and give a process that exits mid-join its
+own bucket rather than silently dropping it.
+
+**So: a memory probe states which field it read, and a bucketing probe states how it obtained the
+untruncated name.** **Scope:** host-level process accounting whose number feeds an alert or a capacity
+decision. **Where it is wrong:** a rough "is it huge" eyeball check needs neither — either field
+answers that question well enough, and naming the field is overhead with nothing downstream to use it.
+Comparing one process against *itself* over time is also an exception: one field applied consistently
+beats switching to a "more correct" one mid-series, since changing the field is itself a break in the
+series — this rule names which field to report, never licenses re-basing a live trend.
+
+## A lock held across the action is held across the action's own verification too
+
+**Do-then-verify means the actor checks its own work; when the action is guarded by a mutex and the
+verification path re-enters the same guard, the verify step waits on a lock the actor is still
+holding.** The symptom shows up at the last step, so the diagnosis lands on the verification rather
+than on the lock — and the action itself usually did succeed, which makes the wrong diagnosis
+comfortable to accept.
+
+**So: when an operation holds a lock, its verification either runs inside the same critical section or
+runs after the lock is released — never as a fresh acquisition of the same guard.** A self-verifying
+script with a mutex is exercised by exactly one run: the one where the mutex is held throughout.
+
+**Scope:** non-reentrant, process-level guards — lock files, single-flight directories, advisory file
+locks. **Where it is wrong:** a reentrant lock held by the same thread is exempt, and so is a
+verification that reads a separate durable surface (a log, an API) rather than re-entering the guarded
+resource. The mirror matters too: releasing the lock *before* verifying lets a competing writer land
+between the action and the check, so the verification then describes someone else's state — where that
+race matters, checking inside the critical section is correct and "release first" is the bug. The rule
+permits both placements and forbids only the third, a fresh acquisition of the same non-reentrant lock.
+
 ## A price or cost table in code goes stale silently, then reports confident wrong money
 
 **An estimate of money, quota or capacity embedded as constants needs a source of truth before it
@@ -3140,6 +3418,32 @@ signal on its **absolute** value, and keep the ratio only for detecting the onse
 wrong:** a seasonal or traffic-driven series, where the absolute number means nothing and an absolute
 floor pages every quiet weekend. The deciding question is whether **zero is a legitimate value** for
 the series. If it is not, zero must trip an absolute rule.
+
+**The mirror: an alert on a BAD value resolves when its series VANISHES.** A threshold or freshness
+rule evaluates only the series that exist, so when the target becomes unreachable (the scrape fails,
+the exporter dies, a label changes) the expression returns nothing and the alert resolves: a recovery
+nobody observed. Pair each such rule with one that fires on the series being absent, and read a
+resolve with no series behind it as unmeasurable, never as healthy. **Scope:** threshold or freshness
+rules on a scraped or pulled series; a pushed or recording-rule input can fall silent in other ways,
+and each needs its own absence check. **Where it is wrong:** a series
+removed on purpose, such as a retired target; there the absence rule is retired in the same change.
+This is absence-as-health (a missing signal read as a healthy one) at the alerting layer.
+
+## A capability guard tests for the CAPABILITY, not the environment it used to imply
+
+**In code that runs in more than one runtime from one source** (server-side rendering, isomorphic
+libraries, shared packages, a CLI and a worker from one module), *am I in a browser?* often stands in
+for *does this API exist?*. The two agree only until the other runtime implements the API. From that
+release the guard passes and the code runs where it was never meant to, with no error, because
+nothing is broken: the API really is there. So guard on the behaviour you must avoid, and give any
+long-lived resource it opens (a channel, listener, subscription, handle) an owner that closes it on
+the path that owns its lifetime; the guard alone never bounds a resource.
+
+**Scope:** multi-runtime code; in single-runtime code the environment check is a constant. **Where
+it is wrong:** a DELIBERATE environment branch (prompt the user only on the client, read the
+filesystem only on the server). There the environment *is* the policy, and a capability check breaks
+it: the server may have the capability and still must not use it. The tell is whether the
+environment is used as evidence *about the API* or as the policy itself.
 
 ## A ticket looked up by an alert's NAME is the last incident of that name, not this one
 
@@ -3249,6 +3553,26 @@ harvest when it is not. On a long extraction you should expect to meet several o
   total is what catches silently-missing rows; without it, an export that skipped a whole class of
   items still looks finished.
 - **A tool-call timeout does not mean the work stopped.** Poll the store; do not restart the loop.
+
+## Any long unattended run checkpoints per unit of work and resumes by difference
+
+**The browser-harvest rule above is the specific case of a general one: a run expected to exceed a few
+minutes writes a durable record per completed unit, and on restart computes what is left as the
+difference between the plan and what is recorded.** The fragile part varies — a browser session, a
+host under memory pressure, a scheduler slot, an upstream rate limit — but a run whose only write is
+its final one loses everything to whichever fragile part gives out first. One measured case lost
+2 h 37 m of work this way.
+
+A timeout then stops being a lost run and becomes a resumable one, and progress is readable while the
+run is still going — the same property that makes the browser-harvest rule work, generalised past
+browsers.
+
+**Scope:** runs whose units are independent and whose partial output is useful. **Where it is wrong:**
+an operation that must be atomic — a transaction, a migration, a signing ceremony — is the opposite
+case: a half-written result there is worse than no result, and the correct shape is all-or-nothing
+with a clean abort, never a checkpoint. A short run (seconds) with expensive per-unit persistence is
+also an exception: the test is the ratio between the checkpoint's cost and the re-run it would save,
+not the ambition of the run.
 
 ## Reading a file at a ref must not WRITE the working tree
 
@@ -3431,3 +3755,196 @@ not that the references are identical.
 above code that reads `refs/remotes/origin/<default>`. The comment and the code contradict each
 other, and the comment is the one that gets believed, because it is the one written in the language
 of the thing the reader wanted to be true.
+
+## An automation that ACTS on a git ref reads that ref from the forge, never from a local tree
+
+**The rule above is about reading: measuring against the forge instead of a stale local pointer. The
+same rule applies again, harder, when a tool does not merely read a ref but DECIDES TO ACT on its
+presence** — cut a release, start a deploy, promote a build. A tag or branch that exists only in a
+local checkout has passed no review and been published to nobody, yet a working-tree read makes it
+indistinguishable from one the team agreed on.
+
+**Scope:** automation whose trigger condition is a ref's existence, in a repository where publishing a
+ref is itself the act of agreement (a push, a merge). **Where it is wrong:** a pre-push or pre-commit
+hook, and any tool whose entire job is to inspect uncommitted or unpushed local state, must read the
+working tree — reading the remote there measures the wrong thing entirely. The boundary is whether the
+local state is the SUBJECT of the check or merely its TRIGGER for acting on something else.
+
+## Verify-then-reopen is a time-of-check gap: the bytes verified must be the bytes used
+
+**A check that hashes or validates a file by path, then REOPENS that same path to execute, load or
+trust it, has verified a different object than the one it goes on to use.** Between the verifying read
+and the later read, the path is just a name; anything with write access to it can replace what sits
+behind it, and the second open has no way to know the two reads disagree.
+
+**So: hold the opened handle across both the check and the use, or verify the content already read
+into memory — never re-resolve the path a second time to get the thing you already proved safe once.**
+
+**Scope:** any "only verified artifacts run" promise where the verifier and the consumer each resolve
+the same path independently. It is a correctness rule wherever the filesystem is shared or writable by
+another process, and a security rule wherever an attacker can write that path between the two reads.
+**Where it is wrong:** on a read-only mount, or in a directory only the verifying process can write,
+re-opening is harmless and holding a handle open across the gap may be the worse design (file-descriptor
+pressure, a lock held longer than it needs to be). State the writability assumption the rule depends on,
+rather than applying it by reflex.
+
+## A working copy with no dependency environment of its own silently borrows another's
+
+**When several checkouts of one project share a machine, a checkout whose dependency environment is
+absent does not fail — the toolchain's own interpreter-discovery falls back to another environment
+found on the path, so gates run against versions that checkout never declared.** Nothing announces the
+substitution; the gate reports green or red as if it had run against what the checkout actually pins.
+
+**So: a checkout that runs gates installs its own locked environment first, and the gate reports which
+environment it used** — the interpreter path and the dependency lockfile's own identity, not just a
+pass/fail.
+
+**Scope:** per-project (not per-system) dependency managers with an interpreter-discovery fallback —
+virtualenv-style Python, per-directory Node, per-checkout Ruby — in setups with multiple working copies,
+worktrees or container mounts of the same repository. **Where it is wrong:** where the dependency set
+is deliberately global and single-versioned (a system package manager, a monorepo with one toolchain
+pinned at the root), demanding a per-checkout environment adds drift rather than removing it. The rule
+targets SILENT substitution, not shared environments as such.
+
+## A requirement naming distinct REQUIRED CATEGORIES is never satisfied by a count
+
+**When a rule says "A and B" — two independent legs, locations, approvers, signals — a check that
+counts items satisfies it falsely the moment two items land in one category.** "At least two copies"
+and "one copy in each of two places" are different requirements, and a count-based check cannot tell
+them apart: it reports healthy the moment the number is reached, whichever category supplied it.
+
+**So: the check asserts ONE PER NAMED CATEGORY, and its known-answer test is the case with N items and
+a missing category** — not just the case with too few items overall, which a count-based check would
+also catch and which therefore proves nothing about this specific bug.
+
+**Measured:** a durability rule stated as "one copy in object storage AND one off-site" was implemented
+as a bare copy count, so a file with two copies in one store and none off-site was reported healthy.
+
+**Scope:** any invariant whose statement enumerates categories — redundancy across distinct failure
+domains, two-party approval from distinct roles, corroboration from independent sources. **Where it is
+wrong:** where the requirement genuinely is a quantity ("at least three replicas," "any two of five"),
+per-category assertion over-constrains and refuses valid states. The tell is whether the written rule
+names the categories or only the number.
+
+## A process substitution's failure is invisible to `set -e`; the consumer just reads nothing
+
+**Under `set -euo pipefail`, a command that fails INSIDE `<( … )` does not fail the script.** The
+substitution's subshell dies, the reader is handed an empty stream, and the enclosing loop completes
+normally with exit 0. So `while read … ; done < <(producer)` reports success for a producer that never
+ran. `pipefail` does not help here: a process substitution is not a pipeline.
+
+**Why it matters more than it looks:** the failure mode is not an error, it is a plausible EMPTY
+result. A probe built this way writes a complete, well-formed, all-zero output, and every downstream
+check passes — the shape is right and the meaning is absent.
+
+**Measured, both arms (`bash 3.2.57`):**
+```
+set -euo pipefail
+while read -r l; do n=$((n+1)); done < <(false; echo x)   # -> 0 lines read, script continues, exit 0
+set -euo pipefail
+false; echo x                                              # -> exit 1, as expected
+```
+The second arm is the control: the same failing command outside a substitution does kill the script,
+so the probe can tell the two apart.
+
+**Scope:** bash/zsh process substitution feeding a reader — about the PRODUCER's exit status being
+discarded. **Where it is wrong:** do not conclude "therefore use a pipeline instead." A pipeline moves
+the loop into a subshell, so every variable the loop sets is lost at its end — the opposite bug, and
+the reason `< <( … )` is the recommended idiom in the first place. The fix is to keep the substitution
+and make the producer's own failure observable: have it write a sentinel the reader asserts on, or
+check a count the reader could not have produced from an empty stream. Switching idioms trades a
+silent-success bug for a silent-state-loss bug.
+
+## `pre-commit install` refuses outright when `core.hooksPath` is already set
+
+**`pre-commit install` exits with an error — "Cowardly refusing to install hooks with core.hooksPath
+set" — so a repo cannot have both a `core.hooksPath` hook directory and pre-commit's own `.git/hooks`
+installation.** Choosing `core.hooksPath` for one check silently drops every pre-commit-managed check
+unless the hooks in that directory delegate to `pre-commit run` explicitly.
+
+**Measured, both arms:** with no `core.hooksPath` set, `pre-commit install` succeeds normally; with
+`core.hooksPath` pointed at another directory, the same command refuses outright with the error above.
+
+**Scope:** repos using the `pre-commit` framework alongside any hand-written hook directory. **Where
+it is wrong:** do not resolve this by unsetting `core.hooksPath` because the error message suggests
+it. A hooks directory committed to the repo is what makes a hook arrive with a clone; `.git/hooks`
+does not travel. Where that is the reason `core.hooksPath` is set, the correct shape is the reverse —
+keep `core.hooksPath` and have its `pre-commit` hook exec `pre-commit run --hook-stage pre-commit`,
+degrading to a warning when the binary is absent so it does not hard-fail every commit on a machine
+that lacks it. Unsetting the path is right only when the framework is meant to be the single source of
+hooks.
+
+## Docker creates a missing bind-mount source as an empty directory, never a refusal
+
+**When a host path given as a bind-mount source does not exist, the daemon creates it as an empty
+directory rather than refusing.** A container reading a network share that failed to mount therefore
+sees a valid, readable, empty directory — and a job over it reports a clean, quiet run. "Not mounted"
+and "genuinely empty" are indistinguishable from inside the container.
+
+**So: any consumer of a mounted volume must verify the mount by content it did not create** — a marker
+file placed by whatever performs the mount, asserted before the first read, with a refusal rather than
+a zero result when it is absent. Checking that the directory exists, is readable, or that a listing
+succeeded, proves nothing.
+
+**Scope:** container bind mounts whose source is a network share, an external disk, or anything
+mounted by a separate step. **Where it is wrong:** the guard belongs at the READER, not as a refusal to
+start. Making the container fail to launch on a missing marker is attractive and wrong in the common
+case where the mount is established *after* first boot, or where the same image legitimately runs with
+that volume empty on a fresh install — a start-time refusal there turns a recoverable state into an
+outage. Refuse the operation that needs the data, and say which marker was missing.
+
+## A log file's mtime is the time of its LAST APPEND, so it cannot measure the age of its contents
+
+**Rotation, retention and staleness policies written as "when the file is older than N days" fail on
+exactly the files they are meant to govern: every append refreshes the mtime, so a busy log never
+looks old and never rotates, while an idle one rotates on schedule.** A policy about content age must
+read the content — the first record's own timestamp — not the file's metadata.
+
+**Second-order trap worth stating with it:** an age-triggered rotation that ages only the *current*
+file lets an entry survive up to roughly 2N days — N in the live file, then up to N more in the
+rotated copy until the next rotation touches it. If the policy is a retention promise, the rotated
+generations need the same cap, or the promise is wrong by a factor of two.
+
+**Scope:** append-only logs and journals under a time-based rotation or retention rule. **Where it is
+wrong:** do not invert this into "never trust mtime for time." For the question "when did this system
+last do anything," the mtime of a file it appends to is exactly the right reading, and cheaper than
+parsing. The distinction is last-write vs. oldest-content: mtime answers the first and is silent about
+the second. A heartbeat check should use mtime; a retention check must not.
+
+## A configured ceiling that only WARNS at its limit is not a limit
+
+**A library guard can accept a threshold and then enforce a multiple of it.** Pillow is a measured
+instance: `MAX_IMAGE_PIXELS` raises a warning at the configured value and an error only above TWICE
+it — so a service that sets a 50 MP ceiling actually accepts images up to 100 MP, and the code reads
+as if 50 were enforced.
+
+**The general rule, which is the part worth having: when you configure a resource ceiling in someone
+else's library, assert the refusal AT THE BOUNDARY, not the setting.** A test that feeds a value just
+over the limit and expects a rejection is the only thing that distinguishes a limit from a hint. The
+same shape appears wherever a threshold has two severities (warn/fail), a soft and a hard rlimit, or a
+quota with a burst allowance: the number you set is not necessarily the number that stops anything.
+
+**Scope:** third-party guards configured by a numeric threshold, where the library chooses the
+enforcement semantics. **Where it is wrong:** do not "fix" this by halving the setting so the hard stop
+lands where you wanted. That silences the warning tier, which is the half that tells you the ceiling
+is being approached at all — and it encodes a multiplier the next library version may change, leaving
+a ceiling nobody can explain. Set the threshold to the real intent and enforce the boundary yourself
+before handing the input to the library, so the policy lives in your code and the library's warning
+stays a warning.
+
+**Measure the refusal once, not forever.** Where the library documents its constant as the exact
+refusal point and a test already pins the boundary, keep the test and stop re-deriving it: the rule
+asks for one measurement of a delegated limit, not permanent suspicion of every configured value.
+It does not cover limits your own code compares; those are ordinary tests.
+
+## A cleanup hung on the user's EXIT misses every ending the user did not choose
+
+**When state must be cleared at the end of a session, list every way the session can end and attach
+the cleanup where it covers all of them:** explicit exit, timeout or expiry, crash, navigation away,
+process kill. Bound to the sign-out control, close button or menu item alone, it leaves the other
+endings uncovered, and those are usually the common ones. **Scope:** state that outlives its session
+and is visible to whoever comes next (cached pages, tokens, drafts, temp files, locks). **Where it is
+wrong:** an action that is only correct on a deliberate exit. "Commit the pending edit on close" must
+not fire on a crash or a timeout, because the user never confirmed it; binding it to the explicit
+action is the point, and widening it destroys data. Sort each end-of-session action first: *clear*
+(every ending) or *commit* (deliberate endings only).
