@@ -2994,6 +2994,35 @@ Calling it done is a false claim, not an optimistic one.
   one bucket while `restore.sh` read another, and secret-name drift (`DB_*` → `POSTGRES_*`)
   broke both. Only a restore rehearsal catches that class; no green deploy ever will.
 
+## Back up by REPLACEABILITY, not by size or source
+
+**Every stored file belongs to exactly one tier, and an unclassified file is treated as irreplaceable
+until it is classified (fail safe).**
+- **Irreplaceable** (records, personal photos and video, tax and financial documents): encrypted at
+  rest, plus **two backup legs written in parallel**, one local and one **off-site with enforced
+  retention (WORM)** that no credential, including the account owner's, can delete before it expires.
+  One leg failing must never stop the other. The writer credential can put objects but cannot delete
+  them or shorten retention.
+- **Replaceable** (media that can be re-acquired): encrypted at rest, with one local backup in a
+  **separate** bucket under its own credential, and no off-site copy. *Replaceable* means the source
+  will still be there. A file whose only source can disappear (a delisted purchase, a page that may
+  go offline) is irreplaceable.
+- **An index records what exists, its tier, and where every copy lives.** It is generated from the
+  backup jobs' own manifests, never kept by hand. An irreplaceable file with fewer than two verified
+  copies is a reported gap.
+- **Prove WORM by trying to break it:** on a canary object, a delete with the writer credential and
+  one with the admin credential, both inside retention, must both be refused. A provider's "lock"
+  feature is not WORM until it passes that test.
+
+**Where this does not apply:**
+- **A live database's point-in-time recovery** follows its own engine's rules. The tiers apply to its
+  exported snapshots.
+- **Scratch or cache data** is not backed up at all.
+- **Data you may be obliged to delete** (other people's personal data under an erasure right, a
+  retention limit in a contract). WORM makes deletion impossible, so set retention no longer than the
+  shortest such obligation, or encrypt that data under a key you can destroy and keep the key out of
+  the WORM leg.
+
 ## Fix at the serving layer
 
 When a capability must reach a SET of clients (all LAN devices, all VPN devices, phones
