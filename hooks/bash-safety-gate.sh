@@ -185,7 +185,6 @@ fi
 # `sample.environment.ts`, `.envoy.yaml`. Without it, any reader verb near such a word was refused.
 SECRET_NAME='\.env([^A-Za-z]|rc|$)'
 SECRET_READ="cat\s+.*$SECRET_NAME|grep\s+.*$SECRET_NAME|rg\s+.*$SECRET_NAME|head\s+.*$SECRET_NAME|tail\s+.*$SECRET_NAME|less\s+.*$SECRET_NAME|more\s+.*$SECRET_NAME"
-CRED_READ="cat\s+.*($CRED_PATH)|grep\s+.*($CRED_PATH)|rg\s+.*($CRED_PATH)|head\s+.*($CRED_PATH)|tail\s+.*($CRED_PATH)|less\s+.*($CRED_PATH)|more\s+.*($CRED_PATH)"
 
 # A shell removes an UNQUOTED backslash before an ordinary character (`.\env` runs as `.env`), and
 # adjacent quoted/unquoted word fragments concatenate (`'.e'nv`, `".en"v`, `$'\x2eenv'` all run as
@@ -345,11 +344,19 @@ fi
 # ~/.kube/config, a gh/git credential store, ~/.pgpass) is not caught by the name rule above — its name
 # says "config" or "credentials", never ".env" — so it gets its own rule on the same shared list the
 # write gate uses (hooks/credential-paths.sh), with its own deny reason so the log names which rule fired.
-if printf '%s' "$flat" | grep -qE "$CRED_READ" && ! only_across_subcommands "$scan" "$CRED_READ"; then
-  deny credential-path-read "Reading a well-known credential file (an AWS/SSH/Docker/Kubernetes/git/gh/Postgres credential store, or similar) would expose it to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
+#
+# Matched by NAME ALONE, not gated behind a reader-verb list (CISA review of governance#335, r2): a
+# verb list only ever enumerates the readers someone thought of, and `base64 ~/.aws/credentials`,
+# `cp ~/.aws/credentials /tmp/x`, `xxd`, `awk`, `sed -n p`, and `python3 -c "open(...)"` all expose the
+# file's content without being `cat`/`grep`/`rg`/`head`/`tail`/`less`/`more`. A path this specific needs
+# no subcommand check either: unlike `.env` (a name that also appears in harmless filenames, hence the
+# cross-subcommand false-positive concern), any command that so much as NAMES
+# `~/.aws/credentials` is treated as reaching it, wherever in the line it sits.
+if printf '%s' "$flat" | grep -qE "$CRED_PATH"; then
+  deny credential-path-read "This command names a well-known credential file (an AWS/SSH/Docker/Kubernetes/git/gh/Postgres credential store, or similar), which would expose it to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
 fi
 
-if echo "$cmd" | grep -qE 'security\s+find-generic-password|security\s+find-internet-password'; then
+if printf '%s' "$flat" | grep -qE 'security\s+find-generic-password|security\s+find-internet-password'; then
   deny keychain-read "Keychain access would expose secrets to the AI context. Keychain reads belong in runtime code only, not in development commands."
 fi
 
