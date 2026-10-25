@@ -219,12 +219,24 @@ gate_real_dir() {  # the directory of this script's REAL file, symlinks followed
   done
   cd -P "$(dirname "$src")" 2>/dev/null && pwd
 }
-for SECRET_NAMES_FILE in "$(gate_real_dir)/secret-names.sh" "$(dirname "${BASH_SOURCE[0]}")/secret-names.sh"; do
+# A list file with no code in it (empty, whitespace or comments only: a truncated or blanked file)
+# holds no list, so it counts as MISSING: the gate warns and keeps its built-in copy. Refusing on it
+# locked every seat out of Bash and Write, the repair included.
+SECRET_NAMES_FILE=""
+for secret_names_candidate in "$(gate_real_dir)/secret-names.sh" "$(dirname "${BASH_SOURCE[0]}")/secret-names.sh"; do
+  [[ -f "$secret_names_candidate" ]] || continue
+  if ! grep -qvE '^[[:space:]]*(#|$)' "$secret_names_candidate" 2>/dev/null; then
+    echo "safety gate: $secret_names_candidate is empty; ignored, using the built-in copy of the secret-name list in this gate. Restore it (git checkout -- hooks/secret-names.sh in the governance clone)." >&2
+    continue
+  fi
+  SECRET_NAMES_FILE="$secret_names_candidate"
   # shellcheck source=secret-names.sh
-  [[ -f "$SECRET_NAMES_FILE" ]] && . "$SECRET_NAMES_FILE" && break
+  . "$secret_names_candidate" && break
 done
+# A file that DOES load but leaves a value empty would check against no list. Refuse, and say how out:
+# every Bash and Write call is refused from here on, the agent's own repair included.
 if [[ -z "${SECRET_NAME:-}" || -z "${SECRET_TEMPLATES:-}" ]]; then
-  deny secret-names-missing "this safety gate's secret-name list is empty (secret-names.sh); refusing rather than allowing it unchecked."
+  deny secret-names-missing "this safety gate's secret-name list is empty: ${SECRET_NAMES_FILE:-the copy built into this gate} leaves SECRET_NAME or SECRET_TEMPLATES unset, so every call is refused rather than checked against no list. Way out: a human, in a terminal (this agent's Bash and Write are refused), restores that file (git checkout -- hooks/secret-names.sh in the governance clone, then reconcile) or deletes it; the gate then uses its built-in copy."
 fi
 SECRET_READ="$SECRET_NAME"
 
@@ -339,12 +351,25 @@ PY
 # `strip_secret_templates` in secret-names.sh, which the write gate runs, and the same ONE pass over the
 # original text: repeating the strip let `.env.sample.env.example` lose `.env.example`, then
 # `.env.sample`, and pass both gates as nothing.
-strip_template_names() {  # <cmd> -> <cmd> with every whole .env.<template> name removed
+#
+# Two more steps run on that same copy, before the template strip:
+#   - WINDOWS SEPARATORS. A path `\` becomes `/`, as write-safety-gate.sh does with the path it is
+#     given, so a template ends at `\` as it does at `/`: `C:\proj\.env.example\notes.txt` was refused
+#     to read and allowed to write. A backslash before whitespace, a quote or a shell separator is an
+#     ESCAPE, not a separator, and keeps its backslash, so `-exec … \;` still reads as nesting below.
+#   - CODE, NOT A FILE. `process.env` and `import.meta.env` are how JS/TS code reads its environment, and
+#     `rg process.env src/` reads no file. They are removed only with nothing but a separator on their
+#     left: `app/process.env` or `./process.env` is a path, and stays a name. Cost: a file literally
+#     named `process.env`, given with no directory, is not recognised.
+# Mapping or removing text can only drop a template or a code reference; a real name keeps its letters.
+strip_template_names() {  # <cmd> -> <cmd>: `\` paths as `/`, code env references and whole .env.<template> names removed
   if ! command -v python3 >/dev/null 2>&1; then printf '%s' "$1"; return 0; fi
   python3 -c '
 import re, sys
+s = re.sub(r"\\(?=[^\s;&|<>()\"\x27])", "/", sys.argv[1])
+s = re.sub(r"(?<![\w./\\-])(?:process|import\.meta)\.env(?![\w-])", "", s)
 rx = re.compile(r"\.env\.(" + sys.argv[2] + r")(?=\Z|[\s\"\x27/;&|<>)])", re.IGNORECASE)
-print(rx.sub("", sys.argv[1]), end="")
+print(rx.sub("", s), end="")
 ' "$1" "$SECRET_TEMPLATES" 2>/dev/null || printf '%s' "$1"
 }
 

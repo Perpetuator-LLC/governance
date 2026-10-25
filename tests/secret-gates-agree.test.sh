@@ -53,6 +53,7 @@ for p in app/.env.sample.env.example app/.env.example.env.example; do
 done
 # A DIRECTORY named after a template is not a secret file: the strip also ends a name at `/`.
 check ALLOW app/.env.example/notes.txt
+check ALLOW 'C:\proj\.env.example\notes.txt'   # the same with Windows separators: both gates map `\` to `/`
 for p in app/.env.example app/.env.sample app/.env.template app/.ENV.EXAMPLE \
          app/environment.md app/.envoy.yaml src/sample.environment.ts 'C:\proj\.env.example'; do
   check ALLOW "$p"

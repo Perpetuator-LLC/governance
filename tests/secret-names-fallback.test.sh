@@ -12,7 +12,10 @@
 #      secret name (the embedded copy);
 #   3. a gate SYMLINKED from a directory with no list loads the list beside its real file (a marker
 #      template only that list allows);
-#   4. a list that loads but is empty refuses, rather than checking nothing.
+#   4. an empty, whitespace-only or comment-only list file counts as MISSING: the built-in copy is used
+#      and a warning names the ignored file (a blanked file must not lock every seat out);
+#   5. a list that loads but leaves a value empty refuses, and the refusal names the file and the way
+#      out (a human restores or deletes it from a terminal).
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -88,20 +91,59 @@ else
   leg_not_run "3. symlinked install" "this host cannot create a real symlink, so link-following is unchecked"
 fi
 
-echo " ── 4. a list that loads but is EMPTY refuses everything, rather than checking nothing"
-X="$TMP/empty"; mkdir -p "$X"
+stderr_of() {  # stderr_of <gate-dir/gate> <tool> <field> <value>
+  python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"PreToolUse","tool_name":sys.argv[1],"tool_input":{sys.argv[2]:sys.argv[3]}}))'     "$2" "$3" "$4" | bash "$1" 2>&1 >/dev/null
+}
+
+echo " ── 4. an EMPTY or whitespace-only list file is treated as MISSING: the built-in copy, and a warning"
+# A truncated or blanked file must not lock every seat out. It holds no list, so the gate ignores it,
+# uses its built-in copy (secrets still refused) and says on stderr which file it ignored.
+for kind in empty blank comments; do
+  X="$TMP/$kind"; mkdir -p "$X"
+  cp -p "$ROOT/hooks/bash-safety-gate.sh" "$ROOT/hooks/write-safety-gate.sh" "$ROOT/hooks/deny-event.py" "$X/"
+  case $kind in
+    empty)    : > "$X/secret-names.sh" ;;
+    blank)    printf '  
+	
+
+' > "$X/secret-names.sh" ;;
+    comments) printf '# secret-names.sh
+
+# (nothing left)
+' > "$X/secret-names.sh" ;;
+  esac
+  expect_read  ALLOW "$X" "ls -la"           "$kind"
+  expect_read  BLOCK "$X" "cat $E"           "$kind"
+  expect_read  ALLOW "$X" "cat $E.example"   "$kind"
+  expect_write ALLOW "$X" "src/a.py"         "$kind"
+  expect_write BLOCK "$X" "app/$E"           "$kind"
+  for spec in "bash-safety-gate.sh Bash command ls" "write-safety-gate.sh Write file_path src/a.py"; do
+    set -- $spec
+    why="$(stderr_of "$X/$1" "$2" "$3" "$4")"
+    if printf '%s' "$why" | grep -qF "$X/secret-names.sh" && printf '%s' "$why" | grep -q "built-in"; then
+      ok "[$kind] $1 warns that it ignored $kind secret-names.sh and used its built-in copy"
+    else bad "[$kind] $1 gave no warning naming the ignored file: ${why:-<no stderr>}"; fi
+  done
+done
+
+echo " ── 5. a list that loads but leaves a value EMPTY refuses, and the refusal names the WAY OUT"
+X="$TMP/blanked"; mkdir -p "$X"
 cp -p "$ROOT/hooks/bash-safety-gate.sh" "$ROOT/hooks/write-safety-gate.sh" "$ROOT/hooks/deny-event.py" "$X/"
-printf "SECRET_NAME=''\n" > "$X/secret-names.sh"
-expect_read  BLOCK "$X" "ls -la"     empty
-expect_write BLOCK "$X" "src/a.py"   empty
-# An empty pattern matches every string, so the later name check would refuse too, but as a
-# "secret file" the call never named. The refusal must say the LIST is the problem.
+printf "SECRET_NAME=''
+" > "$X/secret-names.sh"
+expect_read  BLOCK "$X" "ls -la"     blanked
+expect_write BLOCK "$X" "src/a.py"   blanked
+# Every Bash and Write call is refused, the agent's own repair included, so the message must say which
+# file did it and what a human does about it: restore it or delete it, from a terminal.
 for spec in "bash-safety-gate.sh Bash command ls" "write-safety-gate.sh Write file_path src/a.py"; do
   set -- $spec
-  why="$(python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"PreToolUse","tool_name":sys.argv[1],"tool_input":{sys.argv[2]:sys.argv[3]}}))' \
-    "$2" "$3" "$4" | bash "$X/$1" 2>&1 >/dev/null)"
-  if printf '%s' "$why" | grep -q "secret-name list is empty"; then ok "[empty] $1 says the list is empty"
-  else bad "[empty] $1 refused without naming the empty list: ${why:-<no stderr>}"; fi
+  why="$(stderr_of "$X/$1" "$2" "$3" "$4")"
+  miss=""
+  for want in "secret-name list is empty" "$X/secret-names.sh" "human" "terminal" "restore" "delete" "built-in copy"; do
+    printf '%s' "$why" | grep -qiF -- "$want" || miss="$miss [$want]"
+  done
+  if [ -z "$miss" ]; then ok "[blanked] $1's refusal names the file and the way out"
+  else bad "[blanked] $1's refusal lacks$miss: ${why:-<no stderr>}"; fi
 done
 
 echo

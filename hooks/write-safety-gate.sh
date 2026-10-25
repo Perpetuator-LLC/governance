@@ -87,6 +87,44 @@ fi
 # refused. Canonicalise once, before any match.
 path="${path//\\//}"
 
+# Windows opens one file under many spellings, and every `$`-anchored or `dir/` rule below missed them
+# (#300): a trailing dot or space on any component (`.env.`, `.kube.\config`), an NTFS stream suffix
+# (`.env::$DATA`, `.npmrc:$DATA`, `.env:name`), a doubled separator (`.kube\/config`), and an 8.3 short
+# name (`KUBE~1\config`). win_canon spells the path the way Windows resolves it, ONCE; every rule then
+# runs on BOTH spellings and refuses if either matches. The original spelling stays a candidate because
+# on Linux/macOS `notes:x.env` or `.env.` is a real, distinct name: the union only ever adds refusals.
+# (`\\?\`, `\\.\`, UNC and `C:` drive-relative prefixes need no rewrite: no rule anchors the start.)
+# Same function, line for line, as the #300 change, so the two cannot disagree.
+win_canon() {  # win_canon <slash-separated path> -> the path Windows would open
+  local p="$1" lead="" drive="" out="" c i n
+  [[ "$p" == //* ]] && lead=/                    # keep a UNC / device prefix's double slash
+  p="$lead$(printf '%s' "$p" | tr -s '/')"       # a separator run is one separator
+  local IFS=/
+  local -a parts
+  read -r -a parts <<< "$p"
+  n=${#parts[@]}
+  for ((i = 0; i < n; i++)); do
+    c=${parts[i]}
+    drive=""
+    if (( i == 0 )) && [[ "$c" == [A-Za-z]:* ]]; then drive=${c:0:2}; c=${c:2}; fi
+    (( i == n - 1 )) && c=${c%%:*}               # the last component's stream suffix (`:x`, `::$DATA`)
+    [[ "$c" == *[!.\ ]* ]] && c=${c%"${c##*[!.\ ]}"}   # trailing dots/spaces; `.` and `..` stay
+    parts[i]="$drive$c"
+  done
+  out="${parts[*]}"
+  # 8.3 short names (`PROGRA~1`) resolve only against the disk: expand the longest existing prefix.
+  if [[ "$out" == *"~"* ]] && command -v cygpath >/dev/null 2>&1; then
+    local head="$out" tail=""
+    while [[ -n "$head" && "$head" == */* && ! -e "$head" ]]; do
+      tail="/${head##*/}$tail"; head=${head%/*}
+    done
+    [[ -n "$head" && -e "$head" ]] && out="$(cygpath -l -m "$head" 2>/dev/null || printf '%s' "$head")$tail"
+  fi
+  printf '%s' "$out"
+}
+wpath=$(win_canon "$path")
+hit() { printf '%s\n%s\n' "$path" "$wpath" | grep -qiE "$1"; }   # a rule matches either spelling
+
 # Every secret-path match below is CASE-INSENSITIVE (`grep -i`). Windows and default macOS (APFS)
 # filesystems are case-insensitive, so `.ENV`, `.Env` or `ID_RSA` open the very same file as the
 # lowercase name; a case-sensitive pattern let those spellings write it unrefused.
@@ -123,14 +161,26 @@ gate_real_dir() {  # the directory of this script's REAL file, symlinks followed
   done
   cd -P "$(dirname "$src")" 2>/dev/null && pwd
 }
-for SECRET_NAMES_FILE in "$(gate_real_dir)/secret-names.sh" "$(dirname "${BASH_SOURCE[0]}")/secret-names.sh"; do
+# A list file with no code in it (empty, whitespace or comments only: a truncated or blanked file)
+# holds no list, so it counts as MISSING: the gate warns and keeps its built-in copy. Refusing on it
+# locked every seat out of Bash and Write, the repair included.
+SECRET_NAMES_FILE=""
+for secret_names_candidate in "$(gate_real_dir)/secret-names.sh" "$(dirname "${BASH_SOURCE[0]}")/secret-names.sh"; do
+  [[ -f "$secret_names_candidate" ]] || continue
+  if ! grep -qvE '^[[:space:]]*(#|$)' "$secret_names_candidate" 2>/dev/null; then
+    echo "safety gate: $secret_names_candidate is empty; ignored, using the built-in copy of the secret-name list in this gate. Restore it (git checkout -- hooks/secret-names.sh in the governance clone)." >&2
+    continue
+  fi
+  SECRET_NAMES_FILE="$secret_names_candidate"
   # shellcheck source=secret-names.sh
-  [[ -f "$SECRET_NAMES_FILE" ]] && . "$SECRET_NAMES_FILE" && break
+  . "$secret_names_candidate" && break
 done
+# A file that DOES load but leaves a value empty would check against no list. Refuse, and say how out:
+# every Bash and Write call is refused from here on, the agent's own repair included.
 if [[ -z "${SECRET_NAME:-}" || -z "${SECRET_TEMPLATES:-}" ]]; then
-  deny secret-names-missing "this safety gate's secret-name list is empty (secret-names.sh); refusing rather than allowing it unchecked."
+  deny secret-names-missing "this safety gate's secret-name list is empty: ${SECRET_NAMES_FILE:-the copy built into this gate} leaves SECRET_NAME or SECRET_TEMPLATES unset, so every call is refused rather than checked against no list. Way out: a human, in a terminal (this agent's Bash and Write are refused), restores that file (git checkout -- hooks/secret-names.sh in the governance clone, then reconcile) or deletes it; the gate then uses its built-in copy."
 fi
-if strip_secret_templates "$path" | grep -qE "$SECRET_NAME"; then
+if strip_secret_templates "$path" | grep -qE "$SECRET_NAME" || strip_secret_templates "$wpath" | grep -qE "$SECRET_NAME"; then
   deny env-file-write "Cannot write to environment files. These may contain secrets. Edit manually."
 fi
 
@@ -138,13 +188,13 @@ fi
 # token: `.netrc` (machine passwords), `.npmrc` (registry auth tokens), `.pgpass` (PostgreSQL
 # passwords), the Docker and Kubernetes client configs (registry auths, cluster tokens), and the GnuPG
 # home (private keys). `.git-credentials` is already caught by `credentials`.
-if echo "$path" | grep -qiE '(credentials|secrets|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|id_rsa|id_ed25519|\.ssh/|\.aws/|\.gcloud/)' \
-  || echo "$path" | grep -qiE '(\.netrc$|\.npmrc$|\.pgpass$|\.docker/config\.json$|\.kube/config$|\.gnupg/)'; then
+if hit '(credentials|secrets|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|id_rsa|id_ed25519|\.ssh/|\.aws/|\.gcloud/)' \
+  || hit '(\.netrc$|\.npmrc$|\.pgpass$|\.docker/config\.json$|\.kube/config$|\.gnupg/)'; then
   deny credential-file-write "Cannot write to credential or key files. Edit manually."
 fi
 
 # Block writes to CI/CD secrets
-if echo "$path" | grep -qiE '(\.github/.*secret|vault\.y[a]?ml|\.vault-pass)'; then
+if hit '(\.github/.*secret|vault\.y[a]?ml|\.vault-pass)'; then
   deny ci-secret-write "Cannot write to CI/CD secrets files. Edit manually."
 fi
 

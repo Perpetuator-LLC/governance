@@ -84,6 +84,39 @@ check_allowed 'C:\proj\.env.example' 'backslash .env.example (a template stays a
 check_allowed 'C:\proj\docker\config.json' "backslash docker\\config.json (not the client's .docker)"
 check_allowed 'C:\proj\src\main.py' 'backslash ordinary source file'
 
+echo " · Windows path forms: every spelling Windows opens as the same file (win_canon, shared with the #300 fix)"
+# `$DATA` sits in single quotes: escaping it (`\$`) would put an invalid JSON escape in the payload, and
+# the gate's unparseable-input refusal would pass the check for the wrong reason.
+check_blocked 'C:\r\.env.' "trailing dot (Windows strips it)"
+check_blocked 'C:\r\.env  ' "trailing spaces (Windows strips them)"
+check_blocked 'C:.npmrc.' "drive-relative C: with a trailing dot"
+check_blocked 'C:\r\.env::$DATA' "NTFS default stream ::\$DATA"
+check_blocked 'C:\Users\x\.npmrc:$DATA' "NTFS stream :\$DATA"
+check_blocked 'C:\r\.env:foo:$DATA' "NTFS named stream :foo:\$DATA"
+check_blocked 'C:\r\.env:foo' "NTFS named stream :foo"
+check_blocked 'C:.env:$DATA' "drive-relative C: with a stream (the drive colon is not the stream colon)"
+check_blocked 'C:\Users\x\.kube.\config' "trailing dot on a directory component"
+check_blocked 'C:\Users\x\.docker \config.json' "trailing space on a directory component"
+check_blocked 'C:\Users\x\.gnupg..\pubring.kbx' "trailing dots on a directory component"
+check_blocked 'C:\Users\x\.kube\/config' "mixed separators \\/ (one separator to Windows)"
+check_blocked 'C:/Users/x/.kube//config' "doubled separator //"
+if command -v cygpath >/dev/null 2>&1; then
+  mkdir "$TMP/.kube"
+  short=$(cygpath -s -m "$TMP/.kube" 2>/dev/null)
+  if [[ "${short##*/}" == *"~"* ]]; then
+    check_blocked "$short/config" "8.3 short name ${short##*/} for .kube"
+  else
+    echo "  SKIP  8.3 short name: this volume generates none"
+  fi
+else
+  echo "  SKIP  8.3 short name: no cygpath (not a Windows host)"
+fi
+# The env rule is an ALLOWLIST and runs on BOTH spellings, so `.env.example.` is refused: on Linux and
+# macOS it is a real file distinct from the template, and not a template name.
+check_blocked 'C:\r\.env.example.' "a template with a trailing dot (a distinct non-template name off Windows)"
+check_allowed 'C:\r\notes:2026.md' "a colon in an ordinary name"
+check_allowed 'C:\Users\x\project\.\README.md' "a . component stays an ordinary path"
+
 echo " · credential-file-write"
 check_blocked "app/credentials.json" "bare 'credentials' substring"
 check_blocked "app/secrets.yaml" "bare 'secrets' substring"

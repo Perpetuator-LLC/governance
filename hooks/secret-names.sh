@@ -14,7 +14,10 @@
 # quoting (`cat ./.e''nv`), or a symlink with another name. It is a floor for the common case, not a
 # boundary against a determined reader. The COST runs the other way: any command that merely NAMES
 # the file is refused too, including ones that read nothing (`echo .env >> .gitignore`,
-# `git rm --cached .env`, `test -f .env`).
+# `git rm --cached .env`, `test -f .env`). Two code spellings are NOT a file and the read gate lets
+# them through: `process.env` and `import.meta.env` with only a separator on their left (`rg
+# process.env src/`), so a file literally named `process.env`, given with no directory, goes unseen.
+# Both gates read a Windows `\` as `/`, so a backslash path gets the same verdict as the slash form.
 
 # `.env` followed by a non-letter, `rc`, or the end: matches `.env`, `.env.local`, `.env_x`,
 # `.envrc`, `.envrc.local`; not `.environment`, `.envoy.yaml`. Bracket classes, not a case flag,

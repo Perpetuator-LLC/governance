@@ -120,6 +120,23 @@ cases = [
     (BLOCK, f"cat {E.upper()}"), (BLOCK, "cat .Env"), (BLOCK, "grep KEY app/.eNv.local"),
     (BLOCK, f"head -1 {E.upper()}RC"), (BLOCK, "tail .Env.Production"), (BLOCK, f"cat {E}RC"),
     (BLOCK, f"docker exec app od -c /srv/{E.upper()}"),   # the container-secret-read rule's name, too
+    # ... and ONLY that rule refuses an uppercase TEMPLATE read inside a container: the name floor strips
+    # the template, and the rule's lowercase `env` arm does not see `.ENV`. The lowercase spelling is
+    # refused by that arm already, so a case-sensitive `\.env` arm would let the same file through.
+    (BLOCK, f"docker exec app cat /srv/{E.upper()}.EXAMPLE"), (BLOCK, f"docker exec app cat /srv/{E}.example"),
+    # WINDOWS SEPARATORS: the read gate turns a path `\` into `/` before matching, as the write gate does,
+    # so a template ends at `\` too and the two gates agree on backslash paths. An escaped separator
+    # (`\;`), an escaped space or quote, and a backslash-newline keep their backslash.
+    (BLOCK, f"cat C:\\proj\\{E}"), (BLOCK, f"type C:\\proj\\{E}rc.local"), (BLOCK, f"cat .\\{E}.local"),
+    (BLOCK, f"cat C:\\proj\\{E}.example.local"), (BLOCK, f"cat C:\\proj\\{E}.example\\..\\{E}"),
+    (FP, f"cat C:\\proj\\{E}.example"), (FP, f"cat C:\\proj\\{E}.example\\notes.txt"),
+    (BLOCK, "find . -name x -exec cat {} \\; -o -name C:\\p\\" + E),
+    # CODE, NOT A FILE: `process.env` and `import.meta.env` are how JS/TS code reads its environment, and
+    # searching code for them reads no file. Removed (python3 only, so FP) when nothing but a separator
+    # stands on their left; a PATH spelling (`app/process.env`, `./process.env`) is still a file name.
+    (FP, "rg process.env src/"), (FP, "grep -rn import.meta.env src/"), (FP, 'rg "process.env.API_KEY" src/'),
+    (BLOCK, "cat app/process" + E), (BLOCK, "cat ./process" + E), (BLOCK, f"rg process.env {E}"),
+    (BLOCK, "cat PROCESS" + E.upper()),
     # ... and a longer word that merely STARTS with the letters is not the file. The whole-string pattern
     # no longer matches, so these are allowed on every leg, python3 or not.
     (ALLOW, "git worktree add ../wt && grep -q foo package.json && cp src/sample.environment.ts src/environment.ts"),
