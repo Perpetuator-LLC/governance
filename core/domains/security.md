@@ -905,9 +905,9 @@ either admits everyone or locks everyone out, and nothing says which until someo
 
 ## A gate that accepts exceptions bounds them, and a missing field is never "no finding"
 
-**Applies to** any gate with an operator-supplied waiver list: dependency and vulnerability scanners,
-licence checks, lint suppressions, policy engines, alert silences. Two fail-opens appear
-independently, and each turns the gate green while the thing it guards is unguarded:
+**Applies to** dependency and vulnerability scanners, licence checks, lint suppressions, policy
+engines, alert silences. Two fail-opens appear independently, each with its own scope, and each turns
+the gate green while the thing it guards is unguarded:
 
 1. **An unbounded expiry is accepted.** A waiver is dated, so the gate enforces a maximum horizon, not
    merely *a* date; a far-future date is a permanent exemption wearing a deadline's clothes.
@@ -918,7 +918,9 @@ independently, and each turns the gate green while the thing it guards is unguar
 **The rule:** the gate states its maximum horizon itself, and reports an unevaluable finding as a
 third outcome beside pass and fail. Each fail-open gets a test that constructs the bad input and
 expects a refusal, with the expected refusal derived from the input, never read back from the
-gate's own output. **Scope:** a gate with no exception mechanism has nothing to bound. **Where it is
-wrong:** a field optional *in the domain*, or a permanent exemption declared as permanent, with a
+gate's own output. **Scope:** leg 1 applies to a gate with an operator-supplied waiver list; a gate
+with no exception mechanism has no expiry to bound. Leg 2 applies to any gate that evaluates findings
+from a source that may omit fields, with or without waivers: a scanner with no waiver list that keys
+on an advisory URL fails open the same way. **Where it is wrong:** a field optional *in the domain*, or a permanent exemption declared as permanent, with a
 reason, and reviewed as such; the defect is absent silently equalling pass, and permanence smuggled
 in through a deadline field.

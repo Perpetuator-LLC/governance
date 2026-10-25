@@ -3164,6 +3164,7 @@ resolve with no series behind it as unmeasurable, never as healthy. **Scope:** t
 rules on a scraped or pulled series; a pushed or recording-rule input can fall silent in other ways,
 and each needs its own absence check. **Where it is wrong:** a series
 removed on purpose, such as a retired target; there the absence rule is retired in the same change.
+This is absence-as-health (a missing signal read as a healthy one) at the alerting layer.
 
 ## A capability guard tests for the CAPABILITY, not the environment it used to imply
 
