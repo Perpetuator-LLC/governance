@@ -616,6 +616,15 @@ Three things make the fix stick:
   about it — it never rendered the control. Remove the guard, watch the new test fail, restore it.
   Without that step "tests pass" is compatible with the gate not existing.
 
+  **The restore has to survive the driver dying.** A script that edits the source in place and then
+  crashes, times out or is killed between "write the mutant" and "restore" leaves the mutant in the
+  tree. The next commit ships it, and if no test covers that line, nothing goes red. Where the
+  toolchain allows, mutate a copy and the tree is never touched: a scratch worktree, or an overlay
+  such as Go's `go test -overlay`. Otherwise check that every mutant applies before writing any,
+  restore in a `finally`, and compare the file with a saved copy before committing, because
+  `finally` does not run on SIGKILL. A mutation tool that never edits the tree in place needs none
+  of this.
+
 ⚠️ **A user reporting "I can do X" is usually reporting an AFFORDANCE, not a capability.** They saw
 the control; they may never have watched the request fail. Establish which before filing it as a
 hole in the server — the remedies are unrelated, and the wrong one sends people to audit a
