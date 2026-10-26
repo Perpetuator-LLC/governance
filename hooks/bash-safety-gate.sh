@@ -15,6 +15,10 @@ input=""
 # refused text, never the text. The trail fails OPEN (no helper, no python3, an unwritable log) and never
 # changes the verdict.
 DENY_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/deny-event.py"
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+LIBDIR="$HOOK_DIR/lib"
+# shellcheck source=credential-paths.sh
+[[ -f "$HOOK_DIR/credential-paths.sh" ]] && source "$HOOK_DIR/credential-paths.sh"
 deny() {  # deny <rule-id> <reason>: refuse, record, exit 2
   echo "BLOCKED: $2" >&2
   if [[ -f "$DENY_HELPER" ]] && python3 -c '' >/dev/null 2>&1; then
@@ -228,6 +232,30 @@ if [[ -z "${SECRET_NAME:-}" || -z "${SECRET_TEMPLATES:-}" ]]; then
 fi
 SECRET_READ="$SECRET_NAME"
 
+# A shell removes an UNQUOTED backslash before an ordinary character (`.\env` runs as `.env`), and
+# adjacent quoted/unquoted word fragments concatenate (`'.e'nv`, `".en"v`, `$'\x2eenv'` all run as
+# `.env`). The match above is literal text, so each of those reached a reader verb unmatched and was
+# ALLOWED (governance#335). This resolves a copy toward what the shell would actually see, for
+# MATCHING only — never executed, never the text a reader verb points at.
+#
+# python3 does the real job (hooks/lib/shell_normalize.py): quote concatenation and `$'...'` ANSI-C
+# escapes both need to see a `\` still next to the character it escapes, so the sed fallback below
+# MUST NOT run first — it would eat `\x` out of `$'\x2eenv'` before normalize() ever saw it formed a
+# hex escape. Without python3, sed alone (drop a backslash before a letter/digit/dot/slash) is run
+# instead: the issue's own "at minimum" fix, which alone defeats the plain backslash-escape case
+# (`.\env`) but not quote concatenation or `$'...'` — the same "less precise without python3" shape as
+# strip_data_heredocs and only_across_subcommands below.
+normalize_escapes() {  # <text> -> text with escapes/quoting resolved toward what the shell would see
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHONPATH="$LIBDIR" python3 -c '
+import sys
+from shell_normalize import normalize
+sys.stdout.write(normalize(sys.stdin.read()))
+' <<<"$1" 2>/dev/null && return
+  fi
+  printf '%s' "$1" | sed -E 's/\\([A-Za-z0-9./])/\1/g'
+}
+
 # A heredoc BODY given to `cat` or `tee` is DATA: those two only copy their stdin, so prose in the body
 # that names the file reads nothing. Refusing it blocked a seat's hand-off append (`cat >> <file> <<EOF`
 # whose note said the file was absent), and the successor booted from a stale note. Such a body is
@@ -293,36 +321,58 @@ PY
 # Quote-aware: `grep "a && b" .env` is ONE sub-command. A naive split on `&&` would allow it.
 only_across_subcommands() {  # <cmd> <regex> -> 0 iff it tokenises cleanly and NO sub-command matches
   command -v python3 >/dev/null 2>&1 || return 1
-  python3 - "$1" "$2" <<'PY' 2>/dev/null
-import re, shlex, sys
+  python3 - "$1" "$2" "$LIBDIR" <<'PY' 2>/dev/null
+import re, sys
+sys.path.insert(0, sys.argv[3])
+from shell_normalize import normalize
 cmd, pat = sys.argv[1], sys.argv[2]
 if re.search(r"[`()]|\\[;&|\n]", cmd):   # nesting; an escaped separator; a backslash-continued line
     sys.exit(1)
-try:
-    # posix=False KEEPS the quotes on a token. In posix mode a quoted `";"` or a quoted newline comes
-    # back as the bare `;` / newline — indistinguishable from a real separator — so `grep ";" .env`
-    # split into two clean halves and was ALLOWED. Caught by the probe before it shipped.
-    # An UNQUOTED newline ends a command, so it is a separator token; a QUOTED one stays inside its
-    # word, so `grep "KEY<newline>" .env` remains one sub-command and still matches (DOTALL below).
-    lex = shlex.shlex(cmd, posix=False, punctuation_chars="();<>|&\n")
-    lex.whitespace = " \t\r"
-    lex.whitespace_split = True
-    toks = list(lex)
-except ValueError:
+
+# Split on UNQUOTED separators, keeping each segment's ORIGINAL substring — not a token list rejoined
+# with inserted spaces, which loses ADJACENCY: shlex tokenises `'.e'nv` as two tokens, `'.e'` and `nv`,
+# and " ".join() puts a space back between them that was never there, so normalize() reads "e nv", not
+# "env" (governance#335). Scanning the raw string and slicing it keeps every character, including the
+# absence of one, exactly where the source had it.
+# posix=False's own reason still applies here, manually: a quoted `";"` or quoted newline is inside a
+# word, not a real separator — `grep ";" .env` is ONE sub-command, and this tracks quote state itself
+# rather than asking shlex to, so it can slice rather than reassemble.
+i, n, q = 0, len(cmd), None   # q: None outside quotes, "'" single-quoted, '"' double-quoted
+segs, start, ambiguous = [], 0, False
+while i < n:
+    c = cmd[i]
+    if q == "'":
+        q = None if c == "'" else q
+        i += 1; continue
+    if q == '"':
+        if c == "\\" and i + 1 < n:
+            i += 2; continue
+        if c == '"':
+            q = None
+        i += 1; continue
+    if c == "'":
+        q = "'"; i += 1; continue
+    if c == '"':
+        q = '"'; i += 1; continue
+    if c == "$" and cmd[i + 1:i + 2] == "'":   # $'...' ANSI-C: no separator can hide inside it
+        j = cmd.find("'", i + 2)
+        i = n if j == -1 else j + 1
+        continue
+    if c in "{}":   # a brace GROUP's own braces are only ever seen as bare tokens upstream; staying
+        ambiguous = True; i += 1; continue   # strict here can only turn an allow into a block
+    if c in ";|&\n":
+        segs.append(cmd[start:i])
+        i += 2 if cmd[i:i + 2] in ("&&", "||", "|&") else 1
+        start = i
+        continue
+    i += 1
+if q is not None:   # an unterminated quote: the rest of the string is not what it looks like
+    ambiguous = True
+segs.append(cmd[start:])
+if ambiguous:
     sys.exit(1)
-if any(t in ("{", "}") for t in toks):
-    sys.exit(1)
-SEP = {"&&", "||", ";", "|", "&", "|&", "\n"}
-segs, cur = [], []
-for t in toks:
-    if t in SEP:
-        segs.append(cur)
-        cur = []
-    else:
-        cur.append(t)
-segs.append(cur)
 rx = re.compile(pat, re.DOTALL)
-sys.exit(1 if any(rx.search(" ".join(s)) for s in segs) else 0)
+sys.exit(1 if any(rx.search(normalize(s)) for s in segs) else 0)
 PY
 }
 
@@ -353,12 +403,34 @@ print(rx.sub("", sys.argv[1]), end="")
 # line and the gate ALLOWED it. Joining the lines closes that; the per-sub-command check above then
 # splits on UNQUOTED newlines, so an ordinary multi-line command keeps today's line-wise behaviour.
 scan=$(strip_data_heredocs "$cmd")
+# Template-stripping runs BEFORE escape normalisation, on text that still has its real quotes: it is a
+# literal substring removal (safe to do before subcommand-splitting, unlike escape resolution — see
+# only_across_subcommands's own note on why rejoining tokens or pre-stripping quotes there breaks
+# separator detection) and secret_scan, not scan, is what only_across_subcommands receives, so a
+# template mention never has to be re-recognised per sub-command.
 secret_scan=$(strip_template_names "$scan")
-if printf '%s' "$secret_scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$secret_scan" "$SECRET_READ"; then
+flat=$(normalize_escapes "$secret_scan" | tr '\n\r' '  ')
+if printf '%s' "$flat" | grep -qE "$SECRET_READ" && ! only_across_subcommands "$secret_scan" "$SECRET_READ"; then
   deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
 fi
 
-if echo "$cmd" | grep -qE 'security\s+find-generic-password|security\s+find-internet-password'; then
+# A well-known credential PATH (~/.aws/credentials, ~/.netrc, an SSH private key, ~/.docker/config.json,
+# ~/.kube/config, a gh/git credential store, ~/.pgpass) is not caught by the name rule above — its name
+# says "config" or "credentials", never ".env" — so it gets its own rule on the same shared list the
+# write gate uses (hooks/credential-paths.sh), with its own deny reason so the log names which rule fired.
+#
+# Matched by NAME ALONE, not gated behind a reader-verb list (CISA review of governance#335, r2): a
+# verb list only ever enumerates the readers someone thought of, and `base64 ~/.aws/credentials`,
+# `cp ~/.aws/credentials /tmp/x`, `xxd`, `awk`, `sed -n p`, and `python3 -c "open(...)"` all expose the
+# file's content without being `cat`/`grep`/`rg`/`head`/`tail`/`less`/`more`. A path this specific needs
+# no subcommand check either: unlike `.env` (a name that also appears in harmless filenames, hence the
+# cross-subcommand false-positive concern), any command that so much as NAMES
+# `~/.aws/credentials` is treated as reaching it, wherever in the line it sits.
+if printf '%s' "$flat" | grep -qE "$CRED_PATH"; then
+  deny credential-path-read "This command names a well-known credential file (an AWS/SSH/Docker/Kubernetes/git/gh/Postgres credential store, or similar), which would expose it to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
+fi
+
+if printf '%s' "$flat" | grep -qE 'security\s+find-generic-password|security\s+find-internet-password'; then
   deny keychain-read "Keychain access would expose secrets to the AI context. Keychain reads belong in runtime code only, not in development commands."
 fi
 

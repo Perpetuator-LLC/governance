@@ -15,6 +15,9 @@ input=""
 # refused text, never the text. The trail fails OPEN (no helper, no python3, an unwritable log) and never
 # changes the verdict.
 DENY_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/deny-event.py"
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=credential-paths.sh
+[[ -f "$HOOK_DIR/credential-paths.sh" ]] && source "$HOOK_DIR/credential-paths.sh"
 deny() {  # deny <rule-id> <reason>: refuse, record, exit 2
   echo "BLOCKED: $2" >&2
   if [[ -f "$DENY_HELPER" ]] && python3 -c '' >/dev/null 2>&1; then
@@ -141,6 +144,14 @@ fi
 if echo "$path" | grep -qiE '(credentials|secrets|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|id_rsa|id_ed25519|\.ssh/|\.aws/|\.gcloud/)' \
   || echo "$path" | grep -qiE '(\.netrc$|\.npmrc$|\.pgpass$|\.docker/config\.json$|\.kube/config$|\.gnupg/)'; then
   deny credential-file-write "Cannot write to credential or key files. Edit manually."
+fi
+
+# The same well-known credential PATHS the read gate refuses (hooks/credential-paths.sh, governance#335)
+# — named here too so the two gates can't drift apart on exactly this list; tests/credential-path-gates-
+# agree.test.sh is the KAT. Most of these already match the broader rule above; ~/.netrc, ~/.docker/
+# config.json, ~/.kube/config, ~/.config/gh/hosts.yml, ~/.git-credentials and ~/.pgpass do not.
+if [[ -n "${CRED_PATH:-}" ]] && echo "$path" | grep -qE "$CRED_PATH"; then
+  deny credential-path-write "Cannot write to a well-known credential file (an AWS/SSH/Docker/Kubernetes/git/gh/Postgres credential store, or similar). Edit manually."
 fi
 
 # Block writes to CI/CD secrets
