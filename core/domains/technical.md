@@ -957,6 +957,20 @@ providers: none"* reads as *"nothing here to protect"*.
   container healthcheck) and `/health/ready/` = readiness (DB reachable + no unapplied
   migrations, 503 on fail — what MONITORING probes). A liveness-only monitor watched a
   total functional outage stay green.
+- **A restart WAITS for the stop to finish before it starts again, and ASSERTS the service is running
+  afterward.** A restart block that issues stop-then-start as two commands in sequence assumes the
+  stop is synchronous. Where it is not — an async-capable service manager whose stop command returns
+  before the process has actually exited — the start command can race the still-draining stop, and
+  the service ends up down with no stop or start command reporting an error. The fix is two
+  independent waits, never a fixed sleep: poll until the stopped process is confirmed gone (by PID,
+  socket, or supervisor status) before issuing start, and after start, poll until the service is
+  independently confirmed running (a health check, a port, a supervisor status) — never the start
+  command's own exit code, which only means the manager accepted the request. **Scope:** any hand-off
+  block or script that stops and restarts a long-running service through an async-capable manager
+  (launchd, systemd with `--no-block`, a container orchestrator's rolling update). **Where it is
+  wrong:** a manager whose restart command is itself synchronous and atomic (blocks until the new
+  instance is confirmed up, or guarantees ordering) needs no external wait; wrapping it anyway is
+  redundant, not harmful.
 - **Monitoring must not share fate with what it watches**: in-app dead-men (celery/beat)
   are a layer; the authoritative probe is external (blackbox → Alertmanager).
   The same holds for any **detector and the corrector it guards**: on one host, timer, agent or

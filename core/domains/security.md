@@ -411,6 +411,19 @@ runtime**, and the exposure that matters is usually created by a change that pri
    directories) of every agent-readable store — run logs, agent transcripts, knowledge-base exports,
    backups — so an exposure that slips past the gate is found in a day, not by luck. A hit is a
    disclosure: rotate, then purge.
+4. **A secret CENSUS over a set of repositories is the same shape-only discipline as the scan
+   above, run on the BARE MIRROR, with a positive control.** Classify a hit by shape — length, a
+   character-class pattern, or a comparison against a known public key or fingerprint — and its
+   location, never the matched value. Clone and scan the bare mirror (`git clone --mirror`), never a
+   working checkout: a repository that may be exposed cannot be trusted to open cleanly, and an
+   editor-auto-run payload (a workspace task, a hook, a config file some editor or IDE executes on
+   open) can fire the moment a normal clone is checked out and opened, turning the census itself into
+   the next compromise. The census needs its own positive control: plant one known secret-shaped
+   value in a throwaway fixture repository before the run, and confirm the census reports it — a
+   census never proven to fire on a real hit is unverified in the one direction that matters. **Where
+   it is wrong:** a single repository already checked out and trusted for other work does not need
+   re-cloning as a bare mirror to run this scan locally; the risk is in acting on an untrusted
+   repository's working tree, not in scanning one you already use safely.
 
 ## Found a hardcoded secret — rotation order matters
 
@@ -458,6 +471,17 @@ every exposure becomes a severity debate and a backlog item.
   Measurement scopes the cleanup; it does not decide whether to rotate. This does not override
   *rotate nothing until "is this a credential?" has an answer* above: that question decides what is
   a credential, and this rule decides what happens once one may be exposed.
+- **The exposure set a stolen credential's "measure later" step scopes to is everything the
+  credential's GRANT could read, not what an access log shows it DID read.** A log answers "what did
+  this credential touch," bounded by whatever retention window happens to be configured — commonly far
+  shorter than the credential's own lifetime — so scoping the exposure set to the log window
+  undercounts: a long-lived credential could have been read, copied, or used silently outside that
+  window, or through a path that is not logged at all (a cache, a replica, an export). Enumerate the
+  full grant — every scope, resource and permission the credential's own definition carries — and
+  treat that entire set as exposed, pending evidence that narrows it; the logs' silence is evidence of
+  what was logged, never of safety. **Where it is wrong:** once the exposure set is established from
+  the grant, logs are still the right tool to PRIORITISE response — what was actually touched,
+  investigated first — they are wrong only as the boundary of what counts as exposed.
 
 **A credential that can CHANGE the infrastructure is parked between changes; the one that RUNS it
 stays on, scoped to its job.** Changes are rare and operations are daily, so give each platform two
