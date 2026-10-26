@@ -16,8 +16,34 @@ input=""
 # changes the verdict.
 DENY_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/deny-event.py"
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
-# shellcheck source=credential-paths.sh
-[[ -f "$HOOK_DIR/credential-paths.sh" ]] && source "$HOOK_DIR/credential-paths.sh"
+gate_real_dir() {  # the directory of this script's REAL file, symlinks followed (portable: no readlink -f)
+  local src="${BASH_SOURCE[0]}" dir
+  while [[ -L "$src" ]]; do
+    dir="$(cd -P "$(dirname "$src")" 2>/dev/null && pwd)" || return 0
+    src="$(readlink "$src")" || return 0
+    [[ "$src" == /* ]] || src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" 2>/dev/null && pwd
+}
+# A gate COPIED or SYMLINKED somewhere with no credential-paths.sh beside it must still refuse a known
+# credential path, not silently match EVERY path (an empty CRED_PATH makes `grep -qE "$CRED_PATH"`
+# match any non-empty string). CRED_PATH gets an embedded default first, then an external
+# credential-paths.sh (real dir, then beside the link) overrides it when present.
+# tests/credential-path-gates-agree.test.sh diffs this copy against the file.
+# >>> embedded copy of credential-paths.sh (code lines only; keep identical)
+CRED_PATH='(^|[/~])\.aws/(credentials|config)([^A-Za-z0-9._/-]|$)'
+CRED_PATH+='|(^|[/~])\.netrc([^A-Za-z0-9._/-]|$)'
+CRED_PATH+='|(^|[/~])\.ssh/(id_[A-Za-z0-9_-]+|[A-Za-z0-9_-]+_key)([^A-Za-z0-9._/-]|$)'
+CRED_PATH+='|(^|[/~])\.docker/config\.json([^A-Za-z0-9._/-]|$)'
+CRED_PATH+='|(^|[/~])\.kube/config([^A-Za-z0-9._/-]|$)'
+CRED_PATH+='|(^|[/~])\.config/gh/hosts\.yml([^A-Za-z0-9._/-]|$)'
+CRED_PATH+='|(^|[/~])\.git-credentials([^A-Za-z0-9._/-]|$)'
+CRED_PATH+='|(^|[/~])\.pgpass([^A-Za-z0-9._/-]|$)'
+# <<< end of embedded copy
+for CRED_PATHS_FILE in "$(gate_real_dir)/credential-paths.sh" "$(dirname "${BASH_SOURCE[0]}")/credential-paths.sh"; do
+  # shellcheck source=credential-paths.sh
+  [[ -f "$CRED_PATHS_FILE" ]] && . "$CRED_PATHS_FILE" && break
+done
 deny() {  # deny <rule-id> <reason>: refuse, record, exit 2
   echo "BLOCKED: $2" >&2
   if [[ -f "$DENY_HELPER" ]] && python3 -c '' >/dev/null 2>&1; then
@@ -117,15 +143,6 @@ strip_secret_templates() {
   printf '%s' "${s//$mark/}"
 }
 # <<< end of embedded copy
-gate_real_dir() {  # the directory of this script's REAL file, symlinks followed (portable: no readlink -f)
-  local src="${BASH_SOURCE[0]}" dir
-  while [[ -L "$src" ]]; do
-    dir="$(cd -P "$(dirname "$src")" 2>/dev/null && pwd)" || return 0
-    src="$(readlink "$src")" || return 0
-    [[ "$src" == /* ]] || src="$dir/$src"
-  done
-  cd -P "$(dirname "$src")" 2>/dev/null && pwd
-}
 for SECRET_NAMES_FILE in "$(gate_real_dir)/secret-names.sh" "$(dirname "${BASH_SOURCE[0]}")/secret-names.sh"; do
   # shellcheck source=secret-names.sh
   [[ -f "$SECRET_NAMES_FILE" ]] && . "$SECRET_NAMES_FILE" && break
@@ -150,7 +167,12 @@ fi
 # — named here too so the two gates can't drift apart on exactly this list; tests/credential-path-gates-
 # agree.test.sh is the KAT. Most of these already match the broader rule above; ~/.netrc, ~/.docker/
 # config.json, ~/.kube/config, ~/.config/gh/hosts.yml, ~/.git-credentials and ~/.pgpass do not.
-if [[ -n "${CRED_PATH:-}" ]] && echo "$path" | grep -qE "$CRED_PATH"; then
+# An external credential-paths.sh that loaded but blanked CRED_PATH must refuse, not silently skip this
+# whole rule (the embedded default above means CRED_PATH is otherwise never actually empty).
+if [[ -z "$CRED_PATH" ]]; then
+  deny credential-paths-missing "this safety gate's credential-path list is empty (credential-paths.sh); refusing rather than allowing it unchecked."
+fi
+if echo "$path" | grep -qE "$CRED_PATH"; then
   deny credential-path-write "Cannot write to a well-known credential file (an AWS/SSH/Docker/Kubernetes/git/gh/Postgres credential store, or similar). Edit manually."
 fi
 
