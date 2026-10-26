@@ -145,11 +145,61 @@ doing it twice for the same service is a violation.** Before any token prompt:
    write) and is then consumed from the store, so that service never prompts again. New tokens always
    land in the store at mint time — a token that only lives in a shell/history/CI var is a bug.
 
+**Plan for the failure, because there is always one: the mint is its own step, and it ends at the
+store.** A hand-off or script that both captures a credential and USES it puts the capture first and
+alone, ending at the secret store, and every step after it reads the store and is safe to re-run. Any
+failure after the capture (a hang, a red check, a typo, a timeout, a wrong account) is retried from the
+failed step with zero prompts. Chaining a mint in front of steps that can fail, with `&&` in one
+pasted block, turns the first downstream error into a second mint, and every one after it into another.
+- **A cache that expires recreates the ask.** Keep a captured credential until the credential itself
+  expires or is rotated, or, if it was created only for this piece of work, until the work's last step
+  revokes it (`operations.md` → *Hand the human a SCRIPT, not steps — self-logging by design*, test 3).
+  Never for a fixed window: a "kept 24 h" cache makes tomorrow's retry a re-mint. Where a long-held
+  credential is too strong to keep, mint it short-lived at the source (an expiry on the token), not
+  short-lived in the store.
+- **Never recommend re-minting a stored credential "to be safe".** Re-mint only on evidence: proven
+  exposure (the value was printed where an agent or log could read it), proven revocation, or a
+  store check showing it absent. An unproven re-mint is a repeat ask with no benefit.
+- **Mirror case: the store is the problem.** When the store write itself failed, the rule above
+  applies: say the human pastes once more, and why. The plan for failure covers the mint step too:
+  the capture validates shape and length before it writes, so a cut-off paste is refused on the
+  spot instead of discovered three steps later.
+
 **A fix to the storing step does not recover a value collected before it shipped.** Before telling
 the human a credential "is kept", check that the store holds it (its metadata, never its value). If
 it is empty, say so plainly: they will paste once more, and because most services show a token only
 at creation, one they did not save is revoked and minted again. Never write that an earlier token
 "still works": that is true only if the human still holds it, which is the store's job.
+
+## An agent connects to one MCP front door; the door injects secrets, never the agent
+
+**An agent connects to one MCP front door. The door injects secrets server-side at call time; an
+agent never holds a key.** A tool that needs a credential reads it from the store at call time, into
+memory, on the door's own side of the connection — not into the agent's context, and not into a
+config file the agent can read. This is the same "never in agent context" boundary as *Secrets in
+code* and *Ask-once provisioning* above, pushed one layer further back: those rules say the agent
+never *handles* a secret's value; this one says the agent never even has a *path* to request one
+directly, because there is exactly one door, and the door is what holds the key.
+
+- **One front door, not one-per-tool.** An agent with direct credentials to several backing
+  services is several places a leaked context compromises; an agent with one MCP connection and no
+  credentials of its own is one place, and that place never held what it would leak.
+- **Server-side, at call time, into memory.** The secret is fetched when the call is made, held only
+  for the call's duration, and never written to disk or returned to the agent as a value — the same
+  shape as a service fetching from the secret store at runtime, moved to the door instead of the
+  service.
+- **Mirror case — reading is not the same as holding:** an agent reading a secret's *metadata*
+  (its name, its version, its age) is fine; the value is not. A tool that answers "is there a token
+  for X, and how old is it" without returning the token itself has not violated this rule — the
+  question this rule answers is never "can the agent know a secret exists," only "can the agent read
+  its value."
+
+**Scope:** an agent's own calls into backing services and tools. **Where it is wrong:** a human's own
+CLI session on their workstation is not routed through the door — a person authenticating as
+themselves is not the case this rule is about. Nor is the single, network-locked credential the door
+itself uses to authenticate each agent seat: that credential identifies the connection to the door,
+it is not one the door hands out, and a front door has to hold at least that much to be a door at
+all.
 
 ## A first-run setup endpoint is claimed by the deploy, before anyone else can reach it
 
@@ -285,8 +335,9 @@ exists in ANY store, the human's command reads it from that store (`"$(store get
 Only a value that exists nowhere yet is typed, and then into a **silent prompt** (`read -rs`),
 never argv. A ceremony that PRINTS a secret is worse than one that asks for it.
 
-- **Probe credential files with `grep -c` / `grep -o`, never whole** — you need to know a key is
-  present and well-shaped, not what it is.
+- **Probe credential files with `grep -c` / `grep -q`, never whole, and never `grep -o`** — you need
+  to know a key is present and well-shaped, not what it is. `-o` prints the text it matched, so a shape
+  regex run with `-o` prints the secret it found.
 - **Never grep FOR a secret — search by SHAPE.** A literal search puts the value in your own
   command line and your own history, which is the disclosure you were checking for.
 - **The clipboard is not a secret channel: no `pbpaste`, `pbcopy`, `xclip` or `wl-paste` in a command
@@ -335,10 +386,20 @@ never argv. A ceremony that PRINTS a secret is worse than one that asks for it.
 ⚠️ **CODE that prints a secret — and the day its output gains a reader.** The rules above bind what an
 agent does and the commands it hands a human; they say nothing about **code that prints a secret at
 runtime**, and the exposure that matters is usually created by a change that prints nothing new.
-1. **Automation reports a secret's PRESENCE, never its value or any part of it.** Print
-   `present / missing`, a length, or a verification result. A masked prefix-and-suffix is still a
-   fragment. A step that holds a raw value suppresses its own output (for example a task-level
-   no-log flag), because verbose modes and failure dumps print task results.
+1. **Automation and every probe report a secret's PRESENCE, never its value or any part of it.**
+   This binds an ad-hoc command an agent runs while diagnosing as much as code that runs unattended.
+   Print `present / missing`, a length, counts of character classes, the truth of a named predicate
+   (`starts with "Bearer "`: true/false), or a verification result. **Never a substring: not a
+   "scheme", a prefix or a suffix, even when you believe you know the format.** The format is what
+   you are probing because you do not know it, and a slice written for the expected shape prints the
+   value under any other. A masked prefix-and-suffix is still a fragment.
+   - **Whether a value is secret-bearing is decided by its SOURCE** (a secret store, a credential
+     file, an auth header, a helper that emits one, a token-named variable), never by what you expect
+     it to look like.
+   - **Scope:** a value that is not secret-bearing by source (a URL's host, a public-key fingerprint,
+     an ordinary config field) may be printed.
+   - A step that holds a raw value suppresses its own output (for example a task-level no-log flag),
+     because verbose modes and failure dumps print task results.
 2. **Widening who can read an output is a secret-exposure change.** Terminal → file → agent-read
    file → transcript → export → backup: each step outlives and out-reaches the one before. The change
    that widens a channel must, **in the same change**, audit every producer that writes to it and add
@@ -902,3 +963,37 @@ either admits everyone or locks everyone out, and nothing says which until someo
 - **Build time is not run time.** A rename or delete after the bind breaks the gate the same way, and
   the build check cannot see it. Pair the build check with a periodic report that reads each bound
   gate and resolves its names again.
+
+## A test of a LATER auth gate needs a principal that PASSES every earlier one
+
+**A sequential, short-circuiting auth chain (password, then role, then second factor, …) refuses at
+its first failing gate, so the later gates never run for that principal.** A test asserting "the
+second factor was required" proves nothing when its principal was already refused by the role check,
+and a suite built only from such principals reports the second factor as enforced when no request has
+ever reached it. **The rule:** each gate's test uses a principal that passes every gate before it, and
+asserts the refusal came from the gate under test (its reason or error code), not merely that access
+was denied. **Scope:** chains that stop at the first refusal. **Where it is wrong:** evaluators that
+run every check and collect all violations (form validation, policy engines that return every failed
+rule). There every gate does run, and assuming a short-circuit would hide a real check.
+
+## A gate that accepts exceptions bounds them, and a missing field is never "no finding"
+
+**Applies to** dependency and vulnerability scanners, licence checks, lint suppressions, policy
+engines, alert silences. Two fail-opens appear independently, each with its own scope, and each turns
+the gate green while the thing it guards is unguarded:
+
+1. **An unbounded expiry is accepted.** A waiver is dated, so the gate enforces a maximum horizon, not
+   merely *a* date; a far-future date is a permanent exemption wearing a deadline's clothes.
+2. **A finding missing an optional field is dropped.** Where the gate keys on a field the source does
+   not always fill (an advisory URL, an identifier, a severity), the absent value takes the "nothing
+   here" path. New, severe findings are the ones most likely to have incomplete metadata.
+
+**The rule:** the gate states its maximum horizon itself, and reports an unevaluable finding as a
+third outcome beside pass and fail. Each fail-open gets a test that constructs the bad input and
+expects a refusal, with the expected refusal derived from the input, never read back from the
+gate's own output. **Scope:** leg 1 applies to a gate with an operator-supplied waiver list; a gate
+with no exception mechanism has no expiry to bound. Leg 2 applies to any gate that evaluates findings
+from a source that may omit fields, with or without waivers: a scanner with no waiver list that keys
+on an advisory URL fails open the same way. **Where it is wrong:** a field optional *in the domain*, or a permanent exemption declared as permanent, with a
+reason, and reviewed as such; the defect is absent silently equalling pass, and permanence smuggled
+in through a deadline field.
