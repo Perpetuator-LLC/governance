@@ -366,7 +366,33 @@ write the number with its source. A blank the human has to look up is a hand-ove
 lookup. **Scope:** facts a system records. A judgement, a preference or a commitment only the human
 can make stays a blank, marked as theirs.
 
-## A blocked outward send goes to the surface's owning seat, never to the human as a paste
+## Every ask from your human is a tracked item before you reply — the mirror of the rule above
+
+**The section above is an agent's ask TO a human. This is the other direction: an ask from your
+human that implies work they expect to come back to, in any thread, is recorded as a tracked item
+with an owner, in the same step you record it anywhere else** (a reply, a PR comment, a ticket, a
+report) **— before you reply.** Use the orchestration engine's own directive record where one exists;
+otherwise, a ticket. Name the item to the human by its link. Link it to whatever change or ticket
+carries it out, and close it with an outcome when it is done or dropped. An ask that lives only in a
+chat transcript or in an agent's own private notes is a defect waiting to happen, not a convenience:
+threads deepen, contexts rotate between sessions, and the ask still sitting in prose is the first
+thing a successor fails to find — uncarded and unfindable is the same failure as never asked.
+
+**Scope:** an ask from the human principal that implies work they expect to come back to — not every
+utterance in the imperative mood. **Four neighbouring cases where recording would be wrong:**
+- **A message from another agent or a third party** is not this rule's concern — it routes through
+  the ordinary ticket and bus flow instead, same as any other inter-agent request.
+- **A question answered in the same turn, with no follow-up work left behind**, records nothing: the
+  mirror of this rule is that an empty turn produces no new item, never that every message becomes
+  one.
+- **An ask retracted or answered by the human in the same breath** ("actually never mind", "do X —
+  no, I'll do it myself") records nothing either. Recording it anyway produces a tracked item for work
+  nobody wants, which is the opposite failure from the one this rule exists to close, and a fleet can
+  carry both at once: an under-capture problem in one direction does not excuse over-capture in the
+  other.
+- **A question about work already recorded** is answered from the existing item, never filed as a
+  second one — the same dedupe-by-GOAL discipline that applies to any other item, not a new exception
+  for this one.
 
 **Each outward messaging surface has one owning seat**: the one that holds the harness permission to
 operate it, such as a bridge to a chat network, a mail account or a posting tool. When another seat's
