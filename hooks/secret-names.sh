@@ -32,7 +32,8 @@ SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
 
 # The only `.env.<suffix>` names that hold no secret. A template counts only as a WHOLE name: it ends
 # the string or is followed by a path or shell separator, so `.env.example.local` and `.env.sample2`
-# are real names. Matched case-insensitively.
+# are real names. A `)` is an end only when a real end (the end, whitespace, `;&|<>`) follows it or
+# a run of them: `$(echo .env.example).local` joins `.local` to the name. Matched case-insensitively.
 SECRET_TEMPLATES='example|sample|template'
 
 # strip_secret_templates <text> -> <text> with every whole template name removed, in ONE pass over the
@@ -41,7 +42,7 @@ SECRET_TEMPLATES='example|sample|template'
 # templates (a repeat-until-none strip allowed it on both gates). The read gate does the same in
 # python: one `re.sub` over the original text.
 strip_secret_templates() {
-  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>)].*)\$" nocase=0 mark=$'\001'
+  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>].*|\\)+(\$|[[:space:];&|<>].*))\$" nocase=0 mark=$'\001'
   shopt -q nocasematch && nocase=1
   shopt -s nocasematch
   while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${mark}${BASH_REMATCH[3]}"; done

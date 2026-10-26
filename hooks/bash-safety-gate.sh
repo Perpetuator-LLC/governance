@@ -202,7 +202,7 @@ fi
 SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
 SECRET_TEMPLATES='example|sample|template'
 strip_secret_templates() {
-  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>)].*)\$" nocase=0 mark=$'\001'
+  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>].*|\\)+(\$|[[:space:];&|<>].*))\$" nocase=0 mark=$'\001'
   shopt -q nocasematch && nocase=1
   shopt -s nocasematch
   while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${mark}${BASH_REMATCH[3]}"; done
@@ -347,7 +347,12 @@ PY
 # `strip_data_heredocs` above.
 # Only a WHOLE template name is removed: it must end the text or be followed by whitespace, a quote,
 # `/` or a shell separator. A template prefix followed by more name (`.env.example.local`,
-# `.env.sample2`) is a real file, refused here and by the write gate alike. Same pattern as
+# `.env.sample2`) is a real file, refused here and by the write gate alike.
+# A `)` ends it only when a real end follows the `)` (or a run of them): the end of the text,
+# whitespace, `;`, `&`, `|`, `<` or `>`. A `)` that closes `$( )` joins whatever comes next to the
+# substitution's output, so `cat $(echo .env.example).local` reads the real `.env.example.local`; r1
+# to r6 ended the name at that `)` and ALLOWED it (main refused it). `$(cat .env.example) x`,
+# `(cat .env.example); ls` and `$(echo $(cat .env.example))` stay allowed. Same pattern as
 # `strip_secret_templates` in secret-names.sh, which the write gate runs, and the same ONE pass over the
 # original text: repeating the strip let `.env.sample.env.example` lose `.env.example`, then
 # `.env.sample`, and pass both gates as nothing.
@@ -364,6 +369,10 @@ PY
 #                literal reading). Pinned by `cat C:\process.env.local`, which only it refuses.
 #       bash:    quotes AND escapes removed, `$'...'` decoded: the name bash passes on. Pinned by
 #                `cat .e\nv`, which only it refuses.
+#     Inside double quotes a `\` is KEPT in both spellings (r6's bash spelling dropped it before `$`,
+#     `` ` ``, `"`, `\` and a newline). None of those can form a secret name, and the written spelling,
+#     which keeps it, is in the union anyway: the drop changed 0 of 14,460 double-quoted verdicts, so
+#     it was removed (N7, r7). A kept `\` never ends a template, so keeping it only adds refusals.
 #     Quote removal only deletes quote characters (and the `$` opening `$'` or `$"`); it never hides
 #     text. A backslash before whitespace, a quote or a shell separator is kept in both, so
 #     `-exec ... \;` still reads as nesting below. r5's other two spellings are gone: the text AS GIVEN
@@ -413,7 +422,7 @@ def spell(s):
             j, buf = i + (2 if c == "$" else 1), []
             while j < n and s[j] != D:
                 if s[j] == B and j + 1 < n:
-                    buf.append(s[j + 1] if drop and s[j + 1] in "$`\n" + D + B else s[j:j + 2]); j += 2
+                    buf.append(s[j:j + 2]); j += 2   # kept in BOTH spellings (N7 above)
                 else:
                     buf.append(s[j]); j += 1
             out.append("".join(buf)); i = j + 1
@@ -422,7 +431,7 @@ def spell(s):
     return "".join(out)
 s = spell(s)
 s = re.sub(r"(?<![\w./\\-])(?:process|import\.meta)\.env(?![\w-])", "", s)
-rx = re.compile(r"\.env\.(" + tmpl + r")(?=\Z|[\s\"\x27/;&|<>)])", re.IGNORECASE)
+rx = re.compile(r"\.env\.(" + tmpl + r")(?=\Z|[\s\"\x27/;&|<>]|\)+(?:\Z|[\s;&|<>]))", re.IGNORECASE)
 print(rx.sub("", s), end="")
 ' "$1" "$SECRET_TEMPLATES" "$2" 2>/dev/null || printf '%s' "$1"
 }

@@ -70,6 +70,11 @@ for p in "app/.env.example''.local" 'app/.env.example"".local' "app/'.env.exampl
          "app/.e''nv.example''.local" 'app/.e"n"v' "app/\$'.env.example'.local"; do
   check BLOCK "$p"
 done
+# r7: a `)` ends a template only when a real end follows it (or a run of them), on both gates. These
+# write a file whose name continues past the `)`; r6's write gate stripped the template at the `)`.
+for p in 'app/.env.example).local' 'app/.env.example)).local' 'app/.env.sample)2'; do
+  check BLOCK "$p"
+done
 check ALLOW "app/'.env.example'"
 check ALLOW 'app/".env.example"'
 for p in app/.env.example app/.env.sample app/.env.template app/.ENV.EXAMPLE \

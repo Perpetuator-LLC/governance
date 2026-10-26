@@ -157,6 +157,20 @@ cases = [
     (BLOCK, "cat C:\\process" + E + ".local"), (BLOCK, "cat process\\" + E + ".example\\.local"),
     #   bash (escapes removed too): unquoted `\n` is `n`, so bash reads `.env` and `.env.local`
     (BLOCK, "cat .e\\nv"), (BLOCK, "cat .en\\v.local"),
+    #   KEEP (r7): an escaped quote stays `\'` / `\"` in the bash spelling, so it never ends a template.
+    #   Bash reads these as `.env.example'` / `.env.example"`; a KEEP without the quotes ALLOWED them.
+    (BLOCK, "cat .e\\nv.example\\'"), (BLOCK, "cat .e\\nv.example\\\""),
+    # r7 `)`: it ends a template only when a real end follows it. A `)` closing `$( )` joins what comes
+    # next to the output, so each of these reads the real `.env.example.local` (or `.env.sample2`, ...);
+    # r1 to r6 ALLOWED them, main refused them. The nested one needs the `)` RUN rule.
+    (BLOCK, f"cat $(echo {E}.example).local"), (BLOCK, f"cat $(printf {E}.example).local"),
+    (BLOCK, f'cat "$(echo {E}.example)".local'), (BLOCK, f"cat `echo {E}.example`.local"),
+    (BLOCK, f"cat $(echo {E}.sample)2"), (BLOCK, f"cat $(printf %s {E}.template).prod"),
+    (BLOCK, f"cat app/$(echo {E}.example).local"), (BLOCK, f"cat $(echo $(echo {E}.example)).local"),
+    # ... and a template whose `)` is followed by a real end is still a template
+    (FP, f"cat $(echo {E}.example)"), (FP, f"echo $(cat {E}.example) ok"), (FP, f"(cat {E}.example); ls"),
+    (FP, f"echo $(cat {E}.example)|wc -l"), (FP, f"echo $(echo $(cat {E}.example))"),
+    (FP, f"diff <(cat {E}.example) <(cat {E}.sample)"), (FP, f'git commit -m "$(cat {E}.example)"'),
     # COST, fail closed: a backslash path INSIDE a template directory is refused, because bash would read
     # it as `C:proj.env.examplenotes.txt` (r4 allowed it). Quote it or use `/`.
     (BLOCK, f"cat C:\\proj\\{E}.example\\notes.txt"),
