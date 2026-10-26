@@ -53,7 +53,14 @@ for p in app/.env.sample.env.example app/.env.example.env.example; do
 done
 # A DIRECTORY named after a template is not a secret file: the strip also ends a name at `/`.
 check ALLOW app/.env.example/notes.txt
-check ALLOW 'C:\proj\.env.example\notes.txt'   # the same with Windows separators: both gates map `\` to `/`
+# A `\` is read as a Windows `/` AND as written (the read gate also as a bash escape), refused if any
+# spelling matches. `cat .env.example\.local` reads `.env.example.local` in bash; on Linux the same
+# Write path is one non-template file. So these are refused by both gates — including, fail closed, a
+# backslash path inside a template directory, which bash reads as `C:proj.env.examplenotes.txt`.
+for p in 'app/.env.example\.local' 'app/.env.sample\2' 'app/.env.template\x' 'app/.env.example\.prod' \
+         'app/.ENV.EXAMPLE\.LOCAL' 'C:\proj\.env.example\.local' 'C:\proj\.env.example\notes.txt'; do
+  check BLOCK "$p"
+done
 for p in app/.env.example app/.env.sample app/.env.template app/.ENV.EXAMPLE \
          app/environment.md app/.envoy.yaml src/sample.environment.ts 'C:\proj\.env.example'; do
   check ALLOW "$p"

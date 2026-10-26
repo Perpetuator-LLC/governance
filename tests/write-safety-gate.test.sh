@@ -114,6 +114,21 @@ fi
 # The env rule is an ALLOWLIST and runs on BOTH spellings, so `.env.example.` is refused: on Linux and
 # macOS it is a real file distinct from the template, and not a template name.
 check_blocked 'C:\r\.env.example.' "a template with a trailing dot (a distinct non-template name off Windows)"
+# The env rule's 8.3 leg, on any host: a stub cygpath expands a `~1` name the way Windows would, to a
+# secret name the path as given never spells. Only the Windows spelling can refuse it (it killed the
+# mutant that drops that leg, which no other row did).
+mkdir -p "$TMP/w83/bin" && : > "$TMP/w83/ABCDEF~1"
+printf '#!/bin/sh\nfor a; do :; done\nprintf "%%s" "${a%%/*}/.env.local"\n' > "$TMP/w83/bin/cygpath"
+chmod +x "$TMP/w83/bin/cygpath"
+if PATH="$TMP/w83/bin:$PATH" blocked "$TMP/w83/ABCDEF~1"; then pass "8.3 name a stub cygpath expands to .env.local: blocked"
+else fail "8.3 name a stub cygpath expands to .env.local: NOT blocked (should be)"; fi
+# A `\` is read as a Windows `/` AND as written (a real name character off Windows): refused if either
+# spelling matches. `.env.example\.local` is one non-template file on Linux; and, fail closed, a Windows
+# path inside a template directory is refused too (write it with `/`).
+check_blocked 'app/.env.example\.local' "a template name, a backslash, then more name (one real file off Windows)"
+check_blocked 'app/.env.sample\2' "a template name, a backslash, then more name"
+check_blocked 'C:\proj\.env.example\notes.txt' "a backslash path inside a template directory (fail closed)"
+check_allowed 'app/.env.example/notes.txt' "a slash path inside a template directory stays allowed"
 check_allowed 'C:\r\notes:2026.md' "a colon in an ordinary name"
 check_allowed 'C:\Users\x\project\.\README.md' "a . component stays an ordinary path"
 

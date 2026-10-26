@@ -129,7 +129,17 @@ cases = [
     # (`\;`), an escaped space or quote, and a backslash-newline keep their backslash.
     (BLOCK, f"cat C:\\proj\\{E}"), (BLOCK, f"type C:\\proj\\{E}rc.local"), (BLOCK, f"cat .\\{E}.local"),
     (BLOCK, f"cat C:\\proj\\{E}.example.local"), (BLOCK, f"cat C:\\proj\\{E}.example\\..\\{E}"),
-    (FP, f"cat C:\\proj\\{E}.example"), (FP, f"cat C:\\proj\\{E}.example\\notes.txt"),
+    (FP, f"cat C:\\proj\\{E}.example"),
+    # ... but a `\` is ALSO a bash escape: unquoted `\.` is `.`, so `cat .env.example\.local` reads the
+    # real `.env.example.local`. Mapping `\` to `/` alone made it a template directory and ALLOWED it
+    # (r4). The check now runs as written, `\` as `/`, and `\` removed, and refuses if ANY matches.
+    (BLOCK, f"cat {E}.example\\.local"), (BLOCK, f"cat {E}.sample\\2"), (BLOCK, f"cat {E}.template\\x"),
+    (BLOCK, f"cp {E}.example\\.prod /tmp/o"), (BLOCK, f"cat {E.upper()}.EXAMPLE\\.LOCAL"),
+    (BLOCK, f"cat app/{E}.example\\.local && echo ok"), (BLOCK, f"cat C:\\proj\\{E}.example\\.local"),
+    (BLOCK, f"cat '{E}.example\\.local'"), (BLOCK, f"cat {E}\\.local"),
+    # COST, fail closed: a backslash path INSIDE a template directory is refused, because bash would read
+    # it as `C:proj.env.examplenotes.txt` (r4 allowed it). Quote it or use `/`.
+    (BLOCK, f"cat C:\\proj\\{E}.example\\notes.txt"),
     (BLOCK, "find . -name x -exec cat {} \\; -o -name C:\\p\\" + E),
     # CODE, NOT A FILE: `process.env` and `import.meta.env` are how JS/TS code reads its environment, and
     # searching code for them reads no file. Removed (python3 only, so FP) when nothing but a separator

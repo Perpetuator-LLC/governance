@@ -353,24 +353,32 @@ PY
 # `.env.sample`, and pass both gates as nothing.
 #
 # Two more steps run on that same copy, before the template strip:
-#   - WINDOWS SEPARATORS. A path `\` becomes `/`, as write-safety-gate.sh does with the path it is
-#     given, so a template ends at `\` as it does at `/`: `C:\proj\.env.example\notes.txt` was refused
-#     to read and allowed to write. A backslash before whitespace, a quote or a shell separator is an
-#     ESCAPE, not a separator, and keeps its backslash, so `-exec … \;` still reads as nesting below.
+#   - BACKSLASH SPELLINGS. A `\` means two things and the gate cannot tell which: a Windows separator
+#     (`C:\proj\.env.example`) or a bash ESCAPE, where unquoted `\.` is just `.`, so
+#     `cat .env.example\.local` reads the real `.env.example.local`. Mapping `\` to `/` alone turned
+#     that read into `.env.example/.local`, a template directory, and ALLOWED it (r4; r3 and main
+#     refused it). So the check runs on THREE spellings and refuses if ANY matches, the union rule
+#     write-safety-gate.sh's `hit()` uses: as written, `\` as `/`, and `\` removed the way bash does.
+#     A backslash before whitespace, a quote or a shell separator is left alone in all three, so
+#     `-exec … \;` still reads as nesting below. The union only ever adds refusals. COST: a backslash
+#     path INSIDE a template directory (`cat C:\proj\.env.example\notes.txt`) is refused, because bash
+#     would read it as `C:proj.env.examplenotes.txt`; quote it or use `/`.
 #   - CODE, NOT A FILE. `process.env` and `import.meta.env` are how JS/TS code reads its environment, and
 #     `rg process.env src/` reads no file. They are removed only with nothing but a separator on their
 #     left: `app/process.env` or `./process.env` is a path, and stays a name. Cost: a file literally
 #     named `process.env`, given with no directory, is not recognised.
-# Mapping or removing text can only drop a template or a code reference; a real name keeps its letters.
-strip_template_names() {  # <cmd> -> <cmd>: `\` paths as `/`, code env references and whole .env.<template> names removed
+strip_template_names() {  # <cmd> <raw|slash|drop> -> <cmd> in that backslash spelling, code env references and whole .env.<template> names removed
   if ! command -v python3 >/dev/null 2>&1; then printf '%s' "$1"; return 0; fi
   python3 -c '
 import re, sys
-s = re.sub(r"\\(?=[^\s;&|<>()\"\x27])", "/", sys.argv[1])
+esc = r"\\(?=[^\s;&|<>()\"\x27])"
+s = sys.argv[1]
+if sys.argv[3] == "slash": s = re.sub(esc, "/", s)
+elif sys.argv[3] == "drop": s = re.sub(esc, "", s)
 s = re.sub(r"(?<![\w./\\-])(?:process|import\.meta)\.env(?![\w-])", "", s)
 rx = re.compile(r"\.env\.(" + sys.argv[2] + r")(?=\Z|[\s\"\x27/;&|<>)])", re.IGNORECASE)
 print(rx.sub("", s), end="")
-' "$1" "$SECRET_TEMPLATES" 2>/dev/null || printf '%s' "$1"
+' "$1" "$SECRET_TEMPLATES" "$2" 2>/dev/null || printf '%s' "$1"
 }
 
 # FLATTEN before matching. `grep -E` matches line by line, so a newline between the reader and the file
@@ -378,10 +386,12 @@ print(rx.sub("", s), end="")
 # line and the gate ALLOWED it. Joining the lines closes that; the per-sub-command check above then
 # splits on UNQUOTED newlines, so an ordinary multi-line command keeps today's line-wise behaviour.
 scan=$(strip_data_heredocs "$cmd")
-secret_scan=$(strip_template_names "$scan")
-if printf '%s' "$secret_scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$secret_scan" "$SECRET_READ"; then
-  deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
-fi
+for spelling in raw slash drop; do
+  secret_scan=$(strip_template_names "$scan" "$spelling")
+  if printf '%s' "$secret_scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$secret_scan" "$SECRET_READ"; then
+    deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
+  fi
+done
 
 if echo "$cmd" | grep -qE 'security\s+find-generic-password|security\s+find-internet-password'; then
   deny keychain-read "Keychain access would expose secrets to the AI context. Keychain reads belong in runtime code only, not in development commands."

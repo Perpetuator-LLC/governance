@@ -17,7 +17,8 @@
 # `git rm --cached .env`, `test -f .env`). Two code spellings are NOT a file and the read gate lets
 # them through: `process.env` and `import.meta.env` with only a separator on their left (`rg
 # process.env src/`), so a file literally named `process.env`, given with no directory, goes unseen.
-# Both gates read a Windows `\` as `/`, so a backslash path gets the same verdict as the slash form.
+# Both gates read a `\` as a Windows `/` AND as written (the read gate also as a bash escape, removed),
+# and refuse if any spelling matches: `cat .env.example\.local` reads `.env.example.local` in bash.
 
 # `.env` followed by a non-letter, `rc`, or the end: matches `.env`, `.env.local`, `.env_x`,
 # `.envrc`, `.envrc.local`; not `.environment`, `.envoy.yaml`. Bracket classes, not a case flag,

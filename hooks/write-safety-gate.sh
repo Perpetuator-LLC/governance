@@ -84,7 +84,12 @@ fi
 
 # A Windows path names the same file with `\` as with `/`, and every directory rule below is written
 # with `/`: `C:\Users\me\.ssh\config` and `.kube\config` were writable while the slash forms were
-# refused. Canonicalise once, before any match.
+# refused. Canonicalise once, before any match, and keep the path AS GIVEN too: on Linux and macOS a
+# `\` is an ordinary name character, so `.env.example\.local` is one real non-template file there,
+# while the `/` spelling reads it as a template directory. Every rule runs on both and refuses if either
+# matches (the union only adds refusals). COST: a Windows path inside a template directory
+# (`C:\proj\.env.example\notes.txt`) is refused; write it with `/`.
+rawpath="$path"
 path="${path//\\//}"
 
 # Windows opens one file under many spellings, and every `$`-anchored or `dir/` rule below missed them
@@ -123,7 +128,7 @@ win_canon() {  # win_canon <slash-separated path> -> the path Windows would open
   printf '%s' "$out"
 }
 wpath=$(win_canon "$path")
-hit() { printf '%s\n%s\n' "$path" "$wpath" | grep -qiE "$1"; }   # a rule matches either spelling
+hit() { printf '%s\n%s\n%s\n' "$rawpath" "$path" "$wpath" | grep -qiE "$1"; }   # a rule matches any spelling
 
 # Every secret-path match below is CASE-INSENSITIVE (`grep -i`). Windows and default macOS (APFS)
 # filesystems are case-insensitive, so `.ENV`, `.Env` or `ID_RSA` open the very same file as the
@@ -180,7 +185,8 @@ done
 if [[ -z "${SECRET_NAME:-}" || -z "${SECRET_TEMPLATES:-}" ]]; then
   deny secret-names-missing "this safety gate's secret-name list is empty: ${SECRET_NAMES_FILE:-the copy built into this gate} leaves SECRET_NAME or SECRET_TEMPLATES unset, so every call is refused rather than checked against no list. Way out: a human, in a terminal (this agent's Bash and Write are refused), restores that file (git checkout -- hooks/secret-names.sh in the governance clone, then reconcile) or deletes it; the gate then uses its built-in copy."
 fi
-if strip_secret_templates "$path" | grep -qE "$SECRET_NAME" || strip_secret_templates "$wpath" | grep -qE "$SECRET_NAME"; then
+if strip_secret_templates "$rawpath" | grep -qE "$SECRET_NAME" || strip_secret_templates "$path" | grep -qE "$SECRET_NAME" \
+  || strip_secret_templates "$wpath" | grep -qE "$SECRET_NAME"; then
   deny env-file-write "Cannot write to environment files. These may contain secrets. Edit manually."
 fi
 
