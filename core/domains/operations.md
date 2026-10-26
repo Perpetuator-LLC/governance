@@ -385,26 +385,26 @@ legitimate; and a send that must go out under the human's own identity, such as 
 notice. It assumes a harness that gates tool calls per seat. Where every seat holds the same
 permission, there is no owner to route to, and the refused seat simply retries.
 
-## An ask about a system another lane owns is ROUTED, not worked
+## An ask about a system another agent owns is ROUTED, not worked
 
-**Applies when** agents work in lanes with declared owners, and a lane can message another. The
+**Applies when** agents have declared owners, and an agent can message another. The
 sibling rule above covers sending. This one covers investigating.
 
-When the human asks you about work that has an owning lane, send the owner one message: the ask
+When the human asks you about work that has an owning agent, send the owner one message: the ask
 verbatim, plus only the facts you already hold, each marked *measured* or *not checked*. Then tell
 the human in one line where it went. Do not investigate further, build, or answer in the owner's
-place. The owner holds the context, the tickets and the decisions, and a second lane working the same
+place. The owner holds the context, the tickets and the decisions, and a second agent working the same
 question splits the record: two partial answers, neither one the system of record.
 
 **Scope:**
-- You still answer from your own lane's data and probes.
+- You still answer from your own agent's data and probes.
 - If the owner is absent, route to the coordinator. A P0 goes to the coordinator the same turn.
 - A human who tells you to work it yourself has decided. Do it, and copy the owner on what you find.
 - Without declared owners, or with no way to reach them, there is no one to route to, and the ask is
   yours.
 
-**The mirror:** an ask about your OWN system that touches another lane's data is still yours. Do your
-part and route only the other lane's part.
+**The mirror:** an ask about your OWN system that touches another agent's data is still yours. Do your
+part and route only the other agent's part.
 
 ## An agent team is organised like an executive team, not around a router
 
@@ -418,10 +418,10 @@ them:
 | Role | Owns | Measured by (baseline set) |
 |---|---|---|
 | **Chief of staff** | the human's queue: triage, batch, draft the answer, present a short daily list of decisions in plain words; who owes whom; research on request | size of the human's queue; decisions turned per day; human round-trips per verified item |
-| **Operations assistant** | intake priority across lanes (the final word on order); the measurement discipline; cross-cutting KPIs; waste; **arbitration when two assistants' KPIs conflict** | verified throughput; rework rate; lesson recurrence; human-attention cost |
+| **Operations assistant** | intake priority across agents (the final word on order); the measurement discipline; cross-cutting KPIs; waste; **arbitration when two assistants' KPIs conflict** | verified throughput; rework rate; lesson recurrence; human-attention cost |
 | **Executive assistants**, one per function the organisation actually has (for example security & internal operations, legal & compliance, finance, product technology, marketing) | that function's KPI set and its standing queue; a verdict on every item in its domain | per function, e.g. secret-shaped files on disk → 0 · unreviewed terms changes → 0 · cash runway · CI queue wait · cost per acquisition |
-| **Knowledge-vault agent**, one per organisation | the organisation's context; requirements; registries; the lanes under it | — |
-| **Worker lanes**, one per repository | the code and its work items | the repository's own gates |
+| **Knowledge-vault agent**, one per organisation | the organisation's context; requirements; registries; the agents under it | — |
+| **Worker agents**, one per repository | the code and its work items | the repository's own gates |
 
 **Why this shape.** Businesses converge on these roles because each one is a chunk of delegated
 work that stays manageable. A **router** is not one of them. It holds no context and owns no
@@ -431,9 +431,9 @@ ownership table and a message bus, not a thinking seat. An item the table cannot
 or two) goes to the chief of staff, and its answer becomes a new row in the table, so the same item
 never needs judgement twice.
 
-**Who may hand a lane work:** the human, the lane's knowledge-vault agent, the chief of staff, and
+**Who may hand an agent work:** the human, the agent's knowledge-vault agent, the chief of staff, and
 the executive assistant accountable for that artifact type. Everyone else proposes through one of
-them. Exception: a P0 goes straight to the lane and is reviewed afterwards.
+them. Exception: a P0 goes straight to the agent and is reviewed afterwards.
 
 **Measure before you fix (every role).** Each inefficiency becomes a KPI with a baseline snapshot
 before the change. If the trend then goes the wrong way, hold every other change on that KPI,
@@ -456,7 +456,7 @@ it is reversed.
 
 ## Exactly one Responsible and one Accountable for every system
 
-**Scope.** This applies wherever work is split across lanes, people or teams, and an ownership table
+**Scope.** This applies wherever work is split across agents, people or teams, and an ownership table
 (a RACI) says who does what. A single agent working alone has nothing to split.
 
 **Each system or artifact has exactly one R, who does the work, and one A, who answers for the
@@ -475,9 +475,9 @@ assumes the other has it, and the gap stays invisible until something fails.
 on it and R for their own verdict. A P0 handled by whoever is present (the exception above) is
 logged to the R afterwards, and the R stays the R.
 
-## A lane that serves people runs AHEAD of them, not behind them
+## An agent that serves people runs AHEAD of them, not behind them
 
-**Scope:** any agent lane whose people (a team, or clients) need its approvals, reviews, answers,
+**Scope:** any agent whose people (a team, or clients) need its approvals, reviews, answers,
 access or next task in order to make progress. The rule is about their waiting, not the agent's own
 idleness.
 
@@ -502,7 +502,7 @@ one-word answer with a recommendation.
 - **A principal's decisions stay the principal's.**
 
 **The miss loop.** Anyone who waited more than one cycle, or a client who had to chase first, is a
-**miss**. Log it, and send it to whoever owns the lane's routines. A miss that recurs is a defect in
+**miss**. Log it, and send it to whoever owns the agent's routines. A miss that recurs is a defect in
 the routine. The fix is a change to the routine, not more effort in the next pass.
 
 ## Shine a light on a near miss: name the adjustment that would make it work
@@ -783,7 +783,7 @@ authors, one only by luck.
 
 ## Reproduce a bug before fixing it, on the current code, and record it on the ticket
 
-**A bug ticket describes the code as it was when it was filed.** Where several lanes land changes in
+**A bug ticket describes the code as it was when it was filed.** Where several agents land changes in
 parallel, a reported defect is often already gone, removed as a side effect of another fix. A fix
 written against the report then fixes nothing, or solves a solved problem a second time in a shape
 that conflicts with the first.
@@ -848,20 +848,20 @@ the surface. **Two boundaries:**
 ## Declare a cross-repository dependency as a LABEL the sequencer reads, not as prose
 
 When work in one repository cannot land before work in another, record it where a scheduler looks: a
-label, not a sentence in a comment. An orchestrator sequences many lanes by filtering, and a dependency
+label, not a sentence in a comment. An orchestrator sequences many agents by filtering, and a dependency
 stated in a ticket's fifth comment is invisible to a filter. The same fact as a label is one query.
 Two meanings cover it (shown in scoped-label form):
 
 | label | means | set by | cleared |
 |---|---|---|---|
-| `Status/Blocked` on a ticket | work cannot start until the linked ticket lands | the lane that learns of the dependency, the moment it learns it, with the blocking ticket linked | as part of landing the blocker, or by a check that reads the link and sees it closed |
+| `Status/Blocked` on a ticket | work cannot start until the linked ticket lands | the agent that learns of the dependency, the moment it learns it, with the blocking ticket linked | as part of landing the blocker, or by a check that reads the link and sees it closed |
 | `Compat/Breaking` on a change | deploying this change alone breaks a partner; the named partner repository lands first (for example, a frontend that reads a field its backend does not serve yet) | the change's author, before review | never: it records a property of that change and gates the deploy order |
 
-**The mirror: a stale `Blocked` label is its own outage.** Set and never cleared, it parks a lane on
+**The mirror: a stale `Blocked` label is its own outage.** Set and never cleared, it parks an agent on
 work that is already free, and nothing about the label looks wrong. That is why the label must name its
 blocker, and why clearing it belongs to landing the blocker.
 
-**Scope:** dependencies between repositories or lanes. Inside one repository, branch order already
+**Scope:** dependencies between repositories or agents. Inside one repository, branch order already
 sequences the work. It depends on something reading the labels to sequence; where nothing does, they are
 still the most compact statement of the dependency, but they gate nothing.
 
@@ -1031,7 +1031,7 @@ directly, in the same pass as it reads the record:
 - **An empty result counts only beside a control** read in the same pass, such as the number of
   targets the alerting system is scraping. A dead alerting system also returns no alerts.
 
-**Scope:** roles that own alert response. A lane that never answers alerts has nothing to inherit.
+**Scope:** roles that own alert response. An agent that never answers alerts has nothing to inherit.
 
 **Distil, do not dump.** The record a successor reads holds the reduced fact (what is true, what to
 do) with a one-way link to the raw source, never the raw source pasted in. The raw material is for
@@ -1268,7 +1268,7 @@ consult the declaration**, or it goes on resolving the retired entry, correctly,
 hook, a default, an auto-selector — because it is the one that gets obeyed. **Measured:** a registry
 of agent seats kept each retired seat's working directory by design. Three readers honoured a separate
 retired-list. The fourth, the hook that tells a freshly cleared session what to run, did not — and
-told it, in wording written to suppress hesitation, to boot the retired lane. The lookup was right.
+told it, in wording written to suppress hesitation, to boot the retired agent. The lookup was right.
 It was simply the only reader nobody had told.
 
 **So adding a declaration means enumerating every reader of the records it qualifies, and gating
@@ -1386,18 +1386,18 @@ first and is measured after.
 regression of the measure, not progress — the snapshot states its denominator, so a shrinking
 denominator cannot pass as a shrinking numerator.
 
-## Knowledge agents direct code lanes; the router routes by an owner table, holding no product context
+## Knowledge agents direct code agents; the router routes by an owner table, holding no product context
 
-**A lane that owns a code repository takes work from the human and from the knowledge agent that
+**An agent that owns a code repository takes work from the human and from the knowledge agent that
 owns the organisation's vault; a router seat sends each request to the accountable owner by a
 published RACI and verifies, holding no product context of its own.** A router that accumulates
-product knowledge becomes a second, competing source of truth about what a lane should do; its job is
+product knowledge becomes a second, competing source of truth about what an agent should do; its job is
 to route and verify, not to decide.
 
-**Scope:** fleets with at least one knowledge vault and at least two code lanes; a single-lane setup
+**Scope:** fleets with at least one knowledge vault and at least two code agents; a single-agent setup
 needs none of it.
 
-**Where it is wrong:** an emergency (prod down, data loss, security) goes straight to the lane,
+**Where it is wrong:** an emergency (prod down, data loss, security) goes straight to the agent,
 reviewed after — routing it through the owner table first spends the one resource an emergency
 cannot afford.
 

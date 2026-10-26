@@ -231,3 +231,7 @@ repo.
 
 A project-management tool MAY *mirror* the spine for tracking, but the **authoritative source** for
 each artifact is its home above — the mirror is a convenience, not the record.
+
+## Glossary
+
+- **lane**: retired word for agent (2026-10-26); still used as a machine key.
