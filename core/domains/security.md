@@ -997,3 +997,32 @@ from a source that may omit fields, with or without waivers: a scanner with no w
 on an advisory URL fails open the same way. **Where it is wrong:** a field optional *in the domain*, or a permanent exemption declared as permanent, with a
 reason, and reviewed as such; the defect is absent silently equalling pass, and permanence smuggled
 in through a deadline field.
+
+## Secure by default: free controls are always on, costly ones sit on a dial the user sets
+
+**A security control that costs the user no productivity is on by default, cannot be switched off,
+and is never asked about.** Examples: refusing force-push to default and release branches, running a
+malware and secret scan before every commit and in CI, skipping package install scripts, and opening
+a repository without running its editor tasks. Asking about these teaches people that security is
+negotiable. Leaving them off teaches nothing at all.
+
+**A control that does cost time goes on a friction dial the user chooses**, with a stated default
+that is the strongest level that keeps routine work fast. Examples: requiring signed commits
+everywhere, short token lifetimes, two reviewers, a hardware key per push. The user is told the
+level they are on and what the next level would buy them; they are not nagged.
+
+**A baseline that someone must remember to copy is not a default.** If the secure configuration
+lives in a template repository and new projects start without it, the organisation has a document,
+not a control. Ship it in the first commit of every repository the tooling creates or adopts, and
+prove it holds with a test that attempts the forbidden action and requires a refusal.
+
+**When a control fails anyway, work the stages in order:** observe, preserve, contain, assess,
+eradicate, rotate, verify, learn. Preserve the evidence first, because providers expire their audit
+and push logs within days and a cleanup rewrites what remains.
+
+**Scope, and its mirror.** "Always on" is for controls with no real cost. Forcing a costly control
+on everyone is the mirror failure: people route around it (a shared hardware key, a long-lived
+token pasted into a script), and the result is weaker than the dial would have been. And "preserve
+first" means nothing *destructive* happens before the evidence is copied. When harm is still
+spreading, a non-destructive containment step (freeze the branch, suspend the token) may go first,
+because it changes nothing an investigator needs.
