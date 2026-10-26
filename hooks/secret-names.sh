@@ -20,7 +20,15 @@
 # `.envrc`, `.envrc.local`; not `.environment`, `.envoy.yaml`. Bracket classes, not a case flag,
 # because the read gate also runs this pattern in python's `re`. Windows and default macOS (APFS)
 # filesystems are case-insensitive, so `.ENV` opens the same file as `.env`.
-SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
+#
+# LEFT boundary (governance#349): `.env` must start a path component — preceded by the start of the
+# text or a non-word character (`/`, `~`, a quote, whitespace, `$`, another `.`, …) — never a letter,
+# digit or underscore immediately before the dot. Without it `process.env` (an ordinary JS/Node
+# property access, not a file) matched: `rg process.env src/` was refused in any JS/TS repo once #301
+# dropped the reader-verb gate. No lookbehind (grep -E and python's re both compile this, and POSIX
+# ERE has none): the boundary character is consumed by the alternation instead, which is harmless for
+# a boolean `-q`/`re.search` match.
+SECRET_NAME='(^|[^A-Za-z0-9_])\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
 
 # The only `.env.<suffix>` names that hold no secret. A template counts only as a WHOLE name: it ends
 # the string or is followed by a path or shell separator, so `.env.example.local` and `.env.sample2`

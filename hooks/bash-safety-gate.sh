@@ -230,7 +230,7 @@ fi
 # neither has it, the copy embedded below is used, so a missing file still yields the right list, never
 # a refuse-everything gate. tests/secret-names-fallback.test.sh diffs this copy against the file.
 # >>> embedded copy of secret-names.sh (code lines only; keep identical)
-SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
+SECRET_NAME='(^|[^A-Za-z0-9_])\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
 SECRET_TEMPLATES='example|sample|template'
 strip_secret_templates() {
   local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>)].*)\$" nocase=0 mark=$'\001'
@@ -390,7 +390,11 @@ segs.append(cmd[start:])
 if ambiguous:
     sys.exit(1)
 rx = re.compile(pat, re.DOTALL)
-sys.exit(1 if any(rx.search(normalize(s)) for s in segs) else 0)
+# Raw-or-normalised, same union as the bash-level prefilter (governance#349): normalize() resolves
+# SHELL escaping, which can erase a boundary a Windows-style path never meant as an escape (`\.` in
+# `C:\proj\.env` is a path separator, not `\` + an escaped dot) — checking the segment before
+# normalisation too means that union never narrows what #335's escape-evasion fix already caught.
+sys.exit(1 if any(rx.search(s) or rx.search(normalize(s)) for s in segs) else 0)
 PY
 }
 
@@ -428,7 +432,15 @@ scan=$(strip_data_heredocs "$cmd")
 # template mention never has to be re-recognised per sub-command.
 secret_scan=$(strip_template_names "$scan")
 flat=$(normalize_escapes "$secret_scan" | tr '\n\r' '  ')
-if printf '%s' "$flat" | grep -qE "$SECRET_READ" && ! only_across_subcommands "$secret_scan" "$SECRET_READ"; then
+# The prefilter checks the RAW text too, not just the escape-normalised one (governance#349): a
+# Windows-style command argument such as `C:\proj\.env` has a real left boundary before escape
+# resolution (a backslash, same as any other path separator), and normalize_escapes — built to
+# resolve SHELL escaping — reads `\p` and `\.` as escaped characters and drops both backslashes,
+# turning the boundary into the letter `j` from `proj`. Checking raw-or-normalised is a union, so it
+# only ever adds matches: the governance#335 escape-evasion cases still need the normalised check,
+# this just stops normalisation from erasing a boundary that was never shell syntax to begin with.
+if printf '%s\n%s' "$(printf '%s' "$secret_scan" | tr '\n\r' '  ')" "$flat" | grep -qE "$SECRET_READ" \
+   && ! only_across_subcommands "$secret_scan" "$SECRET_READ"; then
   deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
 fi
 

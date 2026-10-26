@@ -132,7 +132,7 @@ path="${path//\\//}"
 # refused every write on a machine whose links predated secret-names.sh. Same loader as
 # bash-safety-gate.sh; tests/secret-names-fallback.test.sh diffs this copy against the file.
 # >>> embedded copy of secret-names.sh (code lines only; keep identical)
-SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
+SECRET_NAME='(^|[^A-Za-z0-9_])\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
 SECRET_TEMPLATES='example|sample|template'
 strip_secret_templates() {
   local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>)].*)\$" nocase=0 mark=$'\001'

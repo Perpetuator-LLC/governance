@@ -148,6 +148,17 @@ cases = [
     (BLOCK, "cat > f <<'EOF'\ncat " + E),                     # unterminated: nothing is removed
     (BLOCK, "cat > f <<'EOF'\nx\nEOF2\ncat " + E),            # the terminator must match exactly
     (BLOCK, "cat <<'A' <<'B'\n" + E + "\nA\ncat " + E + "\nB"),  # two heredocs on a line: nothing removed
+    # governance#349: SECRET_NAME gained a LEFT boundary so `process.env` (a JS/Node property access,
+    # not a file) stops matching; `.env` must still start a path component. Needs no python3: the
+    # boundary is a plain character class, checked on every leg.
+    (ALLOW, "rg process.env src/"), (ALLOW, "grep -r process.env ."), (ALLOW, "cat processenv.txt"),
+    # governance#349: a Windows-style backslash path in a command argument has a real left boundary
+    # (the backslash) BEFORE escape resolution; normalize_escapes (built to resolve SHELL escaping)
+    # reads `\.` as an escaped dot and drops the backslash, which would erase that boundary and leave
+    # `proj.env` with the letter `j` touching the dot. The prefilter and only_across_subcommands both
+    # check the raw segment too, so this stays BLOCKED — a union with the escape-evasion check, which
+    # can only add matches, never remove the governance#335 ones.
+    (BLOCK, r"cat C:\proj\.env"), (BLOCK, r"cat C:\proj\.envrc.local"),
     # controls
     (ALLOW, "ls -la"), (ALLOW, "git status"),
 ]
