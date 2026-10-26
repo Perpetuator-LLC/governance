@@ -61,6 +61,17 @@ for p in 'app/.env.example\.local' 'app/.env.sample\2' 'app/.env.template\x' 'ap
          'app/.ENV.EXAMPLE\.LOCAL' 'C:\proj\.env.example\.local' 'C:\proj\.env.example\notes.txt'; do
   check BLOCK "$p"
 done
+# r6: a quote is not a name boundary. Bash removes it (`cat app/.env.example''.local` reads
+# `app/.env.example.local`), and in a Write path it is an ordinary character, so a template followed by
+# a quote is not a whole template on either gate. The first row is refused by the write gate's
+# quote-removed spelling ONLY: its raw, `/` and Windows spellings all strip the template at the quote.
+for p in "app/.env.example''.local" 'app/.env.example"".local' "app/'.env.example'.local" \
+         'app/".env.example".local' "app/.env.example'.local'" "app/'.env.example'\".local\"" \
+         "app/.e''nv.example''.local" 'app/.e"n"v' "app/\$'.env.example'.local"; do
+  check BLOCK "$p"
+done
+check ALLOW "app/'.env.example'"
+check ALLOW 'app/".env.example"'
 for p in app/.env.example app/.env.sample app/.env.template app/.ENV.EXAMPLE \
          app/environment.md app/.envoy.yaml src/sample.environment.ts 'C:\proj\.env.example'; do
   check ALLOW "$p"

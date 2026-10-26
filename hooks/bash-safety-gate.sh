@@ -353,30 +353,76 @@ PY
 # `.env.sample`, and pass both gates as nothing.
 #
 # Two more steps run on that same copy, before the template strip:
-#   - BACKSLASH SPELLINGS. A `\` means two things and the gate cannot tell which: a Windows separator
-#     (`C:\proj\.env.example`) or a bash ESCAPE, where unquoted `\.` is just `.`, so
-#     `cat .env.example\.local` reads the real `.env.example.local`. Mapping `\` to `/` alone turned
-#     that read into `.env.example/.local`, a template directory, and ALLOWED it (r4; r3 and main
-#     refused it). So the check runs on THREE spellings and refuses if ANY matches, the union rule
-#     write-safety-gate.sh's `hit()` uses: as written, `\` as `/`, and `\` removed the way bash does.
-#     A backslash before whitespace, a quote or a shell separator is left alone in all three, so
-#     `-exec … \;` still reads as nesting below. The union only ever adds refusals. COST: a backslash
-#     path INSIDE a template directory (`cat C:\proj\.env.example\notes.txt`) is refused, because bash
-#     would read it as `C:proj.env.examplenotes.txt`; quote it or use `/`.
+#   - SPELLINGS. Bash removes quotes and backslash escapes before a program sees a name, and a match on
+#     the text as written misses what that removal joins. A quote ended the template strip, so
+#     `cat .env.example''.local` (or `'.env.example'.local`) read the real `.env.example.local` and was
+#     ALLOWED (r3 to r5; main refused it). Unquoted `\.` is just `.`, so `cat .env.example\.local`
+#     reads the same file (r4). But a `\` is also a Windows separator (`C:\proj\.env`). The gate cannot
+#     tell which, so the check runs on TWO spellings and refuses if EITHER matches (the union only adds
+#     refusals):
+#       written: quotes removed the way bash removes them, every `\` kept as written (the Windows or
+#                literal reading). Pinned by `cat C:\process.env.local`, which only it refuses.
+#       bash:    quotes AND escapes removed, `$'...'` decoded: the name bash passes on. Pinned by
+#                `cat .e\nv`, which only it refuses.
+#     Quote removal only deletes quote characters (and the `$` opening `$'` or `$"`); it never hides
+#     text. A backslash before whitespace, a quote or a shell separator is kept in both, so
+#     `-exec ... \;` still reads as nesting below. r5's other two spellings are gone: the text AS GIVEN
+#     refuses nothing the written spelling misses except names bash never reads (`.env'x'` is `.envx`),
+#     and `\` read as `/` can only END a template sooner (`/` is a boundary, `\` is not), so it refused
+#     nothing on its own (0 of 3,744 fuzzed commands).
+#     COST: a backslash path INSIDE a template directory (`cat C:\proj\.env.example\notes.txt`) is
+#     refused, because bash would read it as `C:proj.env.examplenotes.txt`; quote it or use `/`.
+#     LIMIT: a QUOTED space or separator right after a template (`".env.example .x"`) still ends it.
 #   - CODE, NOT A FILE. `process.env` and `import.meta.env` are how JS/TS code reads its environment, and
 #     `rg process.env src/` reads no file. They are removed only with nothing but a separator on their
 #     left: `app/process.env` or `./process.env` is a path, and stays a name. Cost: a file literally
 #     named `process.env`, given with no directory, is not recognised.
-strip_template_names() {  # <cmd> <raw|slash|drop> -> <cmd> in that backslash spelling, code env references and whole .env.<template> names removed
-  if ! command -v python3 >/dev/null 2>&1; then printf '%s' "$1"; return 0; fi
+strip_template_names() {  # <cmd> <written|bash> -> <cmd> in that spelling, code env references and whole .env.<template> names removed
+  # No python3: nothing is removed (every template name stays a match, fail closed), and the bash
+  # spelling deletes every quote and backslash, so `cat .e''nv` and `cat .e\nv` still match.
+  if ! command -v python3 >/dev/null 2>&1; then
+    if [[ "$2" == bash ]]; then printf '%s' "$1" | tr -d "\"'\\\\"; else printf '%s' "$1"; fi
+    return 0
+  fi
   python3 -c '
-import re, sys
-esc = r"\\(?=[^\s;&|<>()\"\x27])"
-s = sys.argv[1]
-if sys.argv[3] == "slash": s = re.sub(esc, "/", s)
-elif sys.argv[3] == "drop": s = re.sub(esc, "", s)
+import codecs, re, sys
+s, tmpl, drop = sys.argv[1], sys.argv[2], sys.argv[3] == "bash"
+Q, D, B = "\x27", "\x22", "\\"
+KEEP = set(" \t\r\n\f\v;&|<>()" + Q + D)   # an escape before these stays: nesting, separators, quotes
+def ansi(t):  # what bash makes of the body of $Q...Q
+    try:
+        return codecs.decode(t.encode("latin-1", "backslashreplace"), "unicode_escape")
+    except Exception:
+        return t
+def spell(s):
+    out, i, n = [], 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == B and i + 1 < n:
+            out.append(s[i + 1] if drop and s[i + 1] not in KEEP else s[i:i + 2]); i += 2
+        elif c == Q:
+            j = s.find(Q, i + 1); j = n if j < 0 else j
+            out.append(s[i + 1:j]); i = j + 1
+        elif s.startswith("$" + Q, i):
+            j = i + 2
+            while j < n and s[j] != Q:
+                j += 2 if s[j] == B else 1
+            body = s[i + 2:min(j, n)]
+            out.append(ansi(body) if drop else body); i = j + 1
+        elif c == D or s.startswith("$" + D, i):
+            j, buf = i + (2 if c == "$" else 1), []
+            while j < n and s[j] != D:
+                if s[j] == B and j + 1 < n:
+                    buf.append(s[j + 1] if drop and s[j + 1] in "$`\n" + D + B else s[j:j + 2]); j += 2
+                else:
+                    buf.append(s[j]); j += 1
+            out.append("".join(buf)); i = j + 1
+        else:
+            out.append(c); i += 1
+    return "".join(out)
+s = spell(s)
 s = re.sub(r"(?<![\w./\\-])(?:process|import\.meta)\.env(?![\w-])", "", s)
-rx = re.compile(r"\.env\.(" + sys.argv[2] + r")(?=\Z|[\s\"\x27/;&|<>)])", re.IGNORECASE)
+rx = re.compile(r"\.env\.(" + tmpl + r")(?=\Z|[\s\"\x27/;&|<>)])", re.IGNORECASE)
 print(rx.sub("", s), end="")
 ' "$1" "$SECRET_TEMPLATES" "$2" 2>/dev/null || printf '%s' "$1"
 }
@@ -386,7 +432,7 @@ print(rx.sub("", s), end="")
 # line and the gate ALLOWED it. Joining the lines closes that; the per-sub-command check above then
 # splits on UNQUOTED newlines, so an ordinary multi-line command keeps today's line-wise behaviour.
 scan=$(strip_data_heredocs "$cmd")
-for spelling in raw slash drop; do
+for spelling in written bash; do
   secret_scan=$(strip_template_names "$scan" "$spelling")
   if printf '%s' "$secret_scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$secret_scan" "$SECRET_READ"; then
     deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."

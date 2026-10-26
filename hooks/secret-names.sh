@@ -10,15 +10,19 @@
 # this file; tests/secret-names-fallback.test.sh fails when they differ.
 #
 # SCOPE: this matches a NAME as written in the text of the tool call. It cannot see a file reached
-# through an indirection: a variable (`f=.e; cat ${f}nv`), a glob (`cat .e*`, `cat .en[v]`), split
-# quoting (`cat ./.e''nv`), or a symlink with another name. It is a floor for the common case, not a
+# through an indirection: a variable (`f=.e; cat ${f}nv`), a glob (`cat .e*`, `cat .en[v]`), or a
+# symlink with another name. It is a floor for the common case, not a
 # boundary against a determined reader. The COST runs the other way: any command that merely NAMES
 # the file is refused too, including ones that read nothing (`echo .env >> .gitignore`,
 # `git rm --cached .env`, `test -f .env`). Two code spellings are NOT a file and the read gate lets
 # them through: `process.env` and `import.meta.env` with only a separator on their left (`rg
 # process.env src/`), so a file literally named `process.env`, given with no directory, goes unseen.
-# Both gates read a `\` as a Windows `/` AND as written (the read gate also as a bash escape, removed),
-# and refuse if any spelling matches: `cat .env.example\.local` reads `.env.example.local` in bash.
+# Both gates check more than one SPELLING of a name and refuse if any matches. The read gate checks the
+# command with quotes removed the way bash removes them, once with every `\` kept (a Windows separator)
+# and once with escapes removed too: `cat .env.example''.local` and `cat .env.example\.local` both read
+# `.env.example.local`, and split quoting (`cat ./.e''nv`) reads `./.env`. The write gate checks the path
+# as given, with `\` as `/`, as Windows resolves it, and with quotes removed: in a path a quote is a
+# name character, so `.env.example''.local` is not a whole template there either.
 
 # `.env` followed by a non-letter, `rc`, or the end: matches `.env`, `.env.local`, `.env_x`,
 # `.envrc`, `.envrc.local`; not `.environment`, `.envoy.yaml`. Bracket classes, not a case flag,

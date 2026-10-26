@@ -66,7 +66,7 @@ shim_path() {
 python3 - "$TMP/cases.jsonl" <<'PY'
 import json, sys
 E = "." + "env"
-BLOCK, ALLOW, FP = "BLOCK", "ALLOW", "FP"   # FP: ALLOW with python3, BLOCK (fail closed) without
+BLOCK, ALLOW, FP, PY = "BLOCK", "ALLOW", "FP", "PY"   # FP: ALLOW with python3, BLOCK (fail closed) without; PY: the reverse
 cases = [
     # real reads — must stay blocked
     (BLOCK, f"grep KEY {E}"), (BLOCK, f"cat {E} | head"), (BLOCK, f"head {E} && echo ok"),
@@ -137,6 +137,26 @@ cases = [
     (BLOCK, f"cp {E}.example\\.prod /tmp/o"), (BLOCK, f"cat {E.upper()}.EXAMPLE\\.LOCAL"),
     (BLOCK, f"cat app/{E}.example\\.local && echo ok"), (BLOCK, f"cat C:\\proj\\{E}.example\\.local"),
     (BLOCK, f"cat '{E}.example\\.local'"), (BLOCK, f"cat {E}\\.local"),
+    # r6 QUOTES: bash removes quotes, so a quote does not end a name. Each of these reads the real
+    # `.env.example.local` (or `.env`), and r3 to r5 ALLOWED them because the template strip stopped at the
+    # quote. The check now also runs on the text with quotes removed the way bash removes them.
+    (BLOCK, f"cat {E}.example''.local"), (BLOCK, f'cat {E}.example"".local'), (BLOCK, f"cat '{E}.example'.local"),
+    (BLOCK, f'cat "{E}.example".local'), (BLOCK, f"cat {E}.example'.local'"),
+    (BLOCK, f"cat '{E}.example'\".local\""), (BLOCK, f"cat \"{E}.example\"'.local'"),    # mixed quotes
+    (BLOCK, "cat .e''nv"), (BLOCK, "cat .e\"n\"v.example''.local"),                     # quotes inside the name
+    (BLOCK, f"cat $'{E}.example'.local"), (BLOCK, f'cat $"{E}.example".local'),       # ANSI-C and locale quoting
+    (BLOCK, f"cp '{E}.sample'2 /tmp/o"), (BLOCK, "cat .e\\n'v'"),                     # an escape AND a split quote
+    # decoding `$'\x..'` needs python3, so without it this one is read as written (PY: BLOCK only with python3)
+    (PY, "cat $'.e\\x6ev'"),
+    # ... a quoted template alone is still a template, and a quote INSIDE double quotes stays a character
+    (FP, f"cat '{E}.example'"), (FP, f'cat "{E}.example"'), (FP, f"cat $'{E}.example'"),
+    (FP, f"git commit -m \"docs: mention '{E}.example'\""), (FP, f"git commit -m \"the {E}.example's role\""),
+    # LEG PINS: each row is refused by ONE spelling only, so a gate without that spelling fails here.
+    #   written (quotes removed, every `\` kept): a Windows path whose last part starts `process.env`;
+    #   the bash spelling reads `C:process.env.local` / `process.env.example.local` as code
+    (BLOCK, "cat C:\\process" + E + ".local"), (BLOCK, "cat process\\" + E + ".example\\.local"),
+    #   bash (escapes removed too): unquoted `\n` is `n`, so bash reads `.env` and `.env.local`
+    (BLOCK, "cat .e\\nv"), (BLOCK, "cat .en\\v.local"),
     # COST, fail closed: a backslash path INSIDE a template directory is refused, because bash would read
     # it as `C:proj.env.examplenotes.txt` (r4 allowed it). Quote it or use `/`.
     (BLOCK, f"cat C:\\proj\\{E}.example\\notes.txt"),
@@ -201,6 +221,8 @@ for line in open(cases):
     # Without python3 the sub-command check cannot run: every whole-string match must stay BLOCKED.
     if want == "FP":
         want = "BLOCK" if mode == "failclosed" else "ALLOW"
+    elif want == "PY":   # needs python3 to see the name at all
+        want = "ALLOW" if mode == "failclosed" else "BLOCK"
     r = subprocess.run(["bash", gate], input=json.dumps(c["payload"]), env=env,
                        capture_output=True, text=True)
     got = {2: "BLOCK", 0: "ALLOW"}.get(r.returncode, f"EXIT{r.returncode}")
