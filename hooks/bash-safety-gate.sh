@@ -202,25 +202,13 @@ fi
 SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
 SECRET_TEMPLATES='example|sample|template'
 strip_secret_templates() {
-  local s="$1" out="" c i=0 n=${#1} stk="" tick=0 nocase=0
-  local re="^\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>]|\\)+(\$|[[:space:];&|<>]))"
+  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>].*|\\)+(\$|[[:space:];&|<>].*))\$" nocase=0 mark=$'\001'
+  case "$s" in *'$('*|*'`'*) printf '%s' "$s"; return 0 ;; esac   # a substitution: no template is removed
   shopt -q nocasematch && nocase=1
   shopt -s nocasematch
-  while (( i < n )); do
-    c="${s:i:1}"
-    if [[ "$c" == . && "$tick" == 0 && "$stk" != *'$'* && "${s:i}" =~ $re ]]; then
-      i=$(( i + 5 + ${#BASH_REMATCH[1]} )); continue
-    fi
-    case "$c" in
-      \$) if [[ "${s:i+1:1}" == "(" ]]; then stk+='$'; out+='$('; i=$(( i + 2 )); continue; fi ;;
-      \() stk+='(' ;;
-      \)) stk="${stk%?}" ;;
-      \`) tick=$(( 1 - tick )) ;;
-    esac
-    out+="$c"; i=$(( i + 1 ))
-  done
+  while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${mark}${BASH_REMATCH[3]}"; done
   [ "$nocase" = 1 ] || shopt -u nocasematch
-  printf '%s' "$out"
+  printf '%s' "${s//$mark/}"
 }
 # <<< end of embedded copy
 gate_real_dir() {  # the directory of this script's REAL file, symlinks followed (portable: no readlink -f)
@@ -361,20 +349,20 @@ PY
 # Only a WHOLE template name is removed: it must end the text or be followed by whitespace, a quote,
 # `/` or a shell separator. A template prefix followed by more name (`.env.example.local`,
 # `.env.sample2`) is a real file, refused here and by the write gate alike.
-# A name INSIDE a command substitution, `$( )` or backticks, is NEVER a template. What the inner
-# command prints becomes the name, so a template there reaches the real file however it is spelled:
-# `cat $(echo .env.example).local`, `$(echo .env.example ).local`, `$(printf %s.local .env.example)`
-# all read `.env.example.local`. r1 to r6 stripped them at the `)`, r7 at a space or `;`; each round
-# patched one spelling and the next was found (main refused them all). So the strip tracks nesting
-# instead: `$(` and a backtick open a substitution, `(` opens a plain group, `)` closes the innermost.
-# Single quotes and `$'...'` hide all three; inside double quotes `$(` and backticks still open one,
-# and a `)` there closes only a substitution opened inside the same quotes. An unclosed `$(` runs to
-# the end (fail closed). A subshell `( )` and a process substitution `<( )` are not command
-# substitutions: their output never becomes a name.
-#   COST: a template inside a substitution is refused even when harmless (`echo $(cat .env.example)`);
-#   name it outside the substitution.
-#   LIMIT: a `case` pattern's `)` inside `$( )` closes the substitution early in this count.
-# Outside a substitution a `)` ends a template only when a real end follows it (or a run of them):
+# SUBSTITUTION: a command holding `$(` or a backtick ANYWHERE gets NO template removal (and no code-
+# reference removal below), so any `.env` name in it is refused, as on main. What a substitution
+# prints becomes the name, so a template inside one reaches the real file however it is spelled:
+# `cat $(echo .env.example).local`, `$(echo .env.example ).local`, `$(printf %s.local .env.example)`,
+# `$(case a in a) echo .env.example;; esac).local` all read `.env.example.local`. r1 to r7 patched one
+# spelling per round; r8 counted `$(`/`(`/`)` depth, and a `case` pattern's `)` or a `#)` comment
+# closed the count early and ALLOWED the read. No parse is attempted now: the test is a substring
+# match on the text the gate checks (heredoc data bodies already removed), so it cannot close early.
+#   COST: a template in any command with a substitution is refused, even when harmless
+#   (`echo $(cat .env.example)`) and even when the `$(` is quoted text (`git commit -m 'see $(x)
+#   .env.example'`). Run the template read as its own command, without a substitution.
+#   A subshell `( )` or a process substitution `<( )` is not a command substitution: those commands
+#   keep the template allowance.
+# Without a substitution, a `)` ends a template only when a real end follows it (or a run of them):
 # the end of the text, whitespace, `;`, `&`, `|`, `<` or `>`. Same rule as `strip_secret_templates` in
 # secret-names.sh, which the write gate runs, and the same ONE pass over the original text: repeating
 # the strip let `.env.sample.env.example` lose `.env.example`, then `.env.sample`, and pass both gates
@@ -426,60 +414,37 @@ def ansi(t):  # what bash makes of the body of $Q...Q
         return codecs.decode(t.encode("latin-1", "backslashreplace"), "unicode_escape")
     except Exception:
         return t
-def spell(s):  # -> [(char, inside)]: inside = within $( ) or backticks, nesting tracked across quotes
-    out, i, n, stk, tick = [], 0, len(s), [], [False]
-    def emit(t):
-        inside = tick[0] or "$" in stk
-        out.extend((ch, inside) for ch in t)
-    def nest(c, nxt, base):  # $( pushes, ( pushes a plain group, ) pops one pushed past base, ` toggles
-        if c == "$" and nxt == "(":
-            stk.append("$"); return 2
-        if c == "(" and base is None:
-            stk.append("(")
-        elif c == ")" and len(stk) > (base or 0):
-            stk.pop()
-        elif c == "`":
-            tick[0] = not tick[0]
-        return 0
+def spell(s):
+    out, i, n = [], 0, len(s)
     while i < n:
         c = s[i]
         if c == B and i + 1 < n:
-            emit(s[i + 1] if drop and s[i + 1] not in KEEP else s[i:i + 2]); i += 2
+            out.append(s[i + 1] if drop and s[i + 1] not in KEEP else s[i:i + 2]); i += 2
         elif c == Q:
             j = s.find(Q, i + 1); j = n if j < 0 else j
-            emit(s[i + 1:j]); i = j + 1
+            out.append(s[i + 1:j]); i = j + 1
         elif s.startswith("$" + Q, i):
             j = i + 2
             while j < n and s[j] != Q:
                 j += 2 if s[j] == B else 1
             body = s[i + 2:min(j, n)]
-            emit(ansi(body) if drop else body); i = j + 1
+            out.append(ansi(body) if drop else body); i = j + 1
         elif c == D or s.startswith("$" + D, i):
-            j, base = i + (2 if c == "$" else 1), len(stk)
+            j, buf = i + (2 if c == "$" else 1), []
             while j < n and s[j] != D:
                 if s[j] == B and j + 1 < n:
-                    emit(s[j:j + 2]); j += 2   # kept in BOTH spellings (N7 above)
+                    buf.append(s[j:j + 2]); j += 2   # kept in BOTH spellings (N7 above)
                 else:
-                    k = nest(s[j], s[j + 1:j + 2], base)
-                    emit(s[j:j + (k or 1)]); j += k or 1
-            i = j + 1
+                    buf.append(s[j]); j += 1
+            out.append("".join(buf)); i = j + 1
         else:
-            k = nest(c, s[i + 1:i + 2], None)
-            emit(s[i:i + (k or 1)]); i += k or 1
-    return out
-def drop_matches(rx, s, mask, keep):  # remove each match of rx unless keep(start, mask); mask follows the text
-    o, om, last = [], [], 0
-    for m in rx.finditer(s):
-        if keep(m.start(), mask):
-            continue
-        o.append(s[last:m.start()]); om.extend(mask[last:m.start()]); last = m.end()
-    o.append(s[last:]); om.extend(mask[last:])
-    return "".join(o), om
-pairs = spell(s)
-s, mask = "".join(c for c, _ in pairs), [m for _, m in pairs]
-s, mask = drop_matches(re.compile(r"(?<![\w./\\-])(?:process|import\.meta)\.env(?![\w-])"), s, mask, lambda k, m: False)
-rx = re.compile(r"\.env\.(" + tmpl + r")(?=\Z|[\s\"\x27/;&|<>]|\)+(?:\Z|[\s;&|<>]))", re.IGNORECASE)
-s, mask = drop_matches(rx, s, mask, lambda k, m: m[k])   # a name inside $( ) or backticks is never a template
+            out.append(c); i += 1
+    return "".join(out)
+subst = "$(" in s or "`" in s   # a command substitution anywhere: nothing is removed (see SUBSTITUTION above)
+s = spell(s)
+if not subst:
+    s = re.sub(r"(?<![\w./\\-])(?:process|import\.meta)\.env(?![\w-])", "", s)
+    s = re.sub(r"\.env\.(" + tmpl + r")(?=\Z|[\s\"\x27/;&|<>]|\)+(?:\Z|[\s;&|<>]))", "", s, flags=re.IGNORECASE)
 print(s, end="")
 ' "$1" "$SECRET_TEMPLATES" "$2" 2>/dev/null || printf '%s' "$1"
 }

@@ -75,9 +75,10 @@ done
 for p in 'app/.env.example).local' 'app/.env.example)).local' 'app/.env.sample)2'; do
   check BLOCK "$p"
 done
-# r8: a name inside `$( )` or backticks is never a template, on both gates, however the `)` is spelled.
+# r9: a name holding `$(` or a backtick anywhere has no template, on both gates, however it is spelled.
 for p in 'app/$(echo .env.example ).local' 'app/$(echo .env.example;).local' 'app/`echo .env.example `.local' \
-         'app/$(printf %s.local .env.example)'; do
+         'app/$(printf %s.local .env.example)' 'app/$(case a in a) echo .env.example;; esac).local' \
+         'app/$( (x) .env.example ).local'; do
   check BLOCK "$p"
 done
 check ALLOW "app/'.env.example'"

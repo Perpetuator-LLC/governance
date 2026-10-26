@@ -33,33 +33,22 @@ SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
 # The only `.env.<suffix>` names that hold no secret. A template counts only as a WHOLE name: it ends
 # the string or is followed by a path or shell separator, so `.env.example.local` and `.env.sample2`
 # are real names. A `)` is an end only when a real end (the end, whitespace, `;&|<>`) follows it or
-# a run of them. A name inside `$( )` or backticks is NEVER a template: the inner command's output
-# becomes the name (`$(echo .env.example ).local`). Matched case-insensitively.
+# a run of them. Text holding `$(` or a backtick anywhere has NO template: a substitution's output
+# becomes the name (`$(echo .env.example ).local`), so nothing is removed from it. Matched
+# case-insensitively.
 SECRET_TEMPLATES='example|sample|template'
 
-# strip_secret_templates <text> -> <text> with every whole template name removed, in ONE walk over the
-# text as given. Each name is judged by the text that follows it in the ORIGINAL, so removing one name
-# cannot make the text before it a whole name: `.env.sample.env.example` is a real file, not two
-# templates (a repeat-until-none strip allowed it on both gates). The walk counts `$(`, `(`, `)` and
-# backticks, and keeps every name inside a substitution. The read gate does the same in python.
+# strip_secret_templates <text> -> <text> with every whole template name removed, in ONE pass over the
+# text as given, or the text unchanged when it holds `$(` or a backtick. Each removed name first
+# becomes a mark that is not a separator, so removing one name cannot make the text before it a whole
+# name: `.env.sample.env.example` is a real file, not two templates (a repeat-until-none strip allowed
+# it on both gates). The read gate does the same in python: one `re.sub` over the original text.
 strip_secret_templates() {
-  local s="$1" out="" c i=0 n=${#1} stk="" tick=0 nocase=0
-  local re="^\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>]|\\)+(\$|[[:space:];&|<>]))"
+  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>].*|\\)+(\$|[[:space:];&|<>].*))\$" nocase=0 mark=$'\001'
+  case "$s" in *'$('*|*'`'*) printf '%s' "$s"; return 0 ;; esac   # a substitution: no template is removed
   shopt -q nocasematch && nocase=1
   shopt -s nocasematch
-  while (( i < n )); do
-    c="${s:i:1}"
-    if [[ "$c" == . && "$tick" == 0 && "$stk" != *'$'* && "${s:i}" =~ $re ]]; then
-      i=$(( i + 5 + ${#BASH_REMATCH[1]} )); continue
-    fi
-    case "$c" in
-      \$) if [[ "${s:i+1:1}" == "(" ]]; then stk+='$'; out+='$('; i=$(( i + 2 )); continue; fi ;;
-      \() stk+='(' ;;
-      \)) stk="${stk%?}" ;;
-      \`) tick=$(( 1 - tick )) ;;
-    esac
-    out+="$c"; i=$(( i + 1 ))
-  done
+  while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${mark}${BASH_REMATCH[3]}"; done
   [ "$nocase" = 1 ] || shopt -u nocasematch
-  printf '%s' "$out"
+  printf '%s' "${s//$mark/}"
 }
