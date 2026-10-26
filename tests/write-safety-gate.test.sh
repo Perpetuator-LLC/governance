@@ -135,6 +135,22 @@ echo " · controls: ordinary files are never blocked"
 check_allowed "app/README.md" "an ordinary markdown file"
 check_allowed "app/src/main.py" "an ordinary source file"
 
+echo " · win_canon (governance#300): Windows opens one file under many further spellings"
+check_blocked 'C:\r\.env.' "trailing dot on the last component (.env.)"
+check_blocked 'C:\r\.env  ' "trailing spaces on the last component"
+check_blocked 'C:\r\.env::$DATA' "the default NTFS stream suffix (::\$DATA)"
+check_blocked 'C:\Users\x\.npmrc:$DATA' "a single-colon stream suffix (:\$DATA)"
+check_blocked 'C:\Users\x\.env:foo' "a NAMED stream suffix (:foo)"
+check_blocked 'C:\Users\x\.env:foo:$DATA' "a named stream's own \$DATA suffix"
+check_blocked 'C:.env:$DATA' "a drive-relative path (no backslash after the colon)"
+check_blocked 'C:\Users\x\.kube.\config' "a trailing dot on an INTERMEDIATE component (.kube.\\config)"
+check_blocked 'C:\Users\x\.docker \config.json' "a trailing space on an intermediate component"
+check_blocked 'C:\Users\x\.kube\/config' "a mixed separator run (\\/ )"
+check_blocked 'C:\Users\x\.kube//config' "a doubled forward-slash separator"
+check_blocked 'app/.env.example.' "a trailing dot AFTER a template name is not a recognised template on POSIX (fail closed on the unstripped original, even though win_canon's copy would allow it)"
+check_blocked 'notes:x.env' "a POSIX file literally named with a colon still contains .env in the UNMODIFIED original — win_canon's own stream-suffix strip of this same string is harmless because the union only adds refusals"
+check_allowed 'app/normal.' "an ordinary file's own trailing dot, alone, is not a secret shape"
+
 echo
 if [[ $fails -eq 0 ]]; then echo "  ✅ all checks passed"; exit 0
 else echo "  ❌ $fails failed"; exit 1
