@@ -64,9 +64,12 @@ SHAPE_PATTERNS = [
      "a government/registration identifier — personal or entity data"),
 ]
 
-# Comment lines, shell-prompt lines and fence markers legitimately carry shapes; a checker that flags
-# its own explanation trains people to ignore it.
-SKIP_LINE = re.compile(r"^\s*(?:#|//)|^\s{4,}[$>]|^\s*```")
+# A fence marker and a shell-prompt illustration line carry no prose of their own; a checker that
+# flags its own formatting trains people to ignore it. A `#` or `//` COMMENT line, and a Markdown
+# ATX HEADING (which also starts with `#`), are not exempted (governance#299): a Markdown heading is
+# prose, and a comment inside a fenced example is exactly where a pasted "context" ticket ref or
+# service name leaks, the same as prose does.
+SKIP_LINE = re.compile(r"^\s{4,}[$>]|^\s*```")
 # A test's own FIXTURE data is not live rule text: a mutation-coverage suite asserting "vault.yml is
 # blocked, deploy.yml is not" needs the concrete filename on the line the assertion reads, the same way
 # a known-bad control needs the real shape to prove the gate fires on it. Scoped to tests/*.test.sh only

@@ -91,14 +91,36 @@ check "a nonexistent path ⇒ exit 2" "[ '$rc' = '2' ]"
 mkdir -p "$TMP/cm"; printf '#!/bin/sh\n# deploys to acme-fe after the gate\necho ok\n' > "$TMP/cm/commented.sh"
 printf 'literal:acme-fe\n' > "$TMP/mpriv"
 rc="$(run --json --private-patterns "$TMP/mpriv" "$TMP/cm/commented.sh")"
-check "a private name on a '#' comment line is caught (comment lines skip SHAPES only)" "kind 'instance-name:1'"
+check "a private name on a '#' comment line is caught" "kind 'instance-name:1'"
+
+# --- governance#299: a '#'/'//' comment line and a Markdown heading are no longer exempt from the
+# SHAPE legs — only a fence marker and a shell-prompt illustration line are. Before this fix, a
+# planted ref on each of these three line shapes passed the gate; now each is caught, and a heading
+# that is a plain title still produces nothing.
+printf '# Runs mcp__gw__deploy_status on every push\n// cites widget#412 in the generated client\n' \
+  > "$TMP/cm/comment-shapes.md"
+rc="$(run --json "$TMP/cm/comment-shapes.md")"
+check "governance#299: a SHAPE on a '# ...' comment line is caught" "kind mcp-tool-path"
+check "governance#299: a SHAPE on a '// ...' comment line is caught" "kind ticket-ref"
+printf '## Reading widget#412 from mcp__gw__deploy_status\n' > "$TMP/cm/heading-shape.md"
+rc="$(run --json "$TMP/cm/heading-shape.md")"
+check "governance#299: a SHAPE inside a Markdown ATX heading is caught" \
+  "kind ticket-ref && kind mcp-tool-path"
+printf '## Overview\n\nPlain prose, no shapes here.\n' > "$TMP/cm/plain-heading.md"
+rc="$(run --json "$TMP/cm/plain-heading.md")"
+check "governance#299: a plain heading with no shape content is not flagged" \
+  "grep -q '\"findings\": \[\]' '$TMP/out'"
+printf '    $ grep widget#412 ci.yml\n```redaction-instances\n```\n' > "$TMP/cm/prompt-and-fence.md"
+rc="$(run --json "$TMP/cm/prompt-and-fence.md")"
+check "governance#299 regression control: a shell-prompt line and a fence marker line are still exempt" \
+  "grep -q '\"findings\": \[\]' '$TMP/out'"
 
 # --- a test fixture's own SHAPE-matching data is not live rule text (cos decision, 2026-10-14) -----
 # tests/*.test.sh files are exempt from the SHAPE legs only, because a mutation-coverage suite needs
 # the concrete filename/ticket-ref/etc. its assertion reads. The private-name leg must still see every
 # line of a test file — the exemption must never widen into hiding a real instance name. Neither
-# fixture line starts with '#': that would hit the pre-existing per-LINE comment skip and confound it
-# with the new per-FILE exemption being tested here.
+# fixture line starts with '#' or '//' either: since governance#299 those no longer skip the SHAPE
+# legs at the per-LINE level, and this section tests the per-FILE exemption in isolation from that.
 mkdir -p "$TMP/tests"
 printf 'check_blocked "repo/vault.yml" "the gate config"\nassert mcp__gw__deploy_status seen for widget#412\nacme-fe is checked via the private list, not a SHAPE\n' \
   > "$TMP/tests/sample.test.sh"
