@@ -162,15 +162,29 @@ cases = [
     (BLOCK, "cat .e\\nv.example\\'"), (BLOCK, "cat .e\\nv.example\\\""),
     # r7 `)`: it ends a template only when a real end follows it. A `)` closing `$( )` joins what comes
     # next to the output, so each of these reads the real `.env.example.local` (or `.env.sample2`, ...);
-    # r1 to r6 ALLOWED them, main refused them. The nested one needs the `)` RUN rule.
+    # r1 to r6 ALLOWED them, main refused them. r8 refuses them all as substitutions (below).
     (BLOCK, f"cat $(echo {E}.example).local"), (BLOCK, f"cat $(printf {E}.example).local"),
     (BLOCK, f'cat "$(echo {E}.example)".local'), (BLOCK, f"cat `echo {E}.example`.local"),
     (BLOCK, f"cat $(echo {E}.sample)2"), (BLOCK, f"cat $(printf %s {E}.template).prod"),
     (BLOCK, f"cat app/$(echo {E}.example).local"), (BLOCK, f"cat $(echo $(echo {E}.example)).local"),
-    # ... and a template whose `)` is followed by a real end is still a template
-    (FP, f"cat $(echo {E}.example)"), (FP, f"echo $(cat {E}.example) ok"), (FP, f"(cat {E}.example); ls"),
-    (FP, f"echo $(cat {E}.example)|wc -l"), (FP, f"echo $(echo $(cat {E}.example))"),
-    (FP, f"diff <(cat {E}.example) <(cat {E}.sample)"), (FP, f'git commit -m "$(cat {E}.example)"'),
+    # r8 SUBSTITUTION: a name inside `$( )` or backticks is NEVER a template. What the inner command
+    # prints becomes the name, so the template can reach the real file however the `)` is spelled.
+    # Each of these reads the real `.env.example.local`; r7 ALLOWED them, main refuses them.
+    (BLOCK, f"cat $(echo {E}.example ).local"), (BLOCK, f"cat $(echo {E}.example;).local"),
+    (BLOCK, f"cat $(printf %s.local {E}.example)"), (BLOCK, f"cat `echo {E}.example;`.local"),
+    (BLOCK, f"cat $(echo {E}.example | cat).local"), (BLOCK, f"cat $(echo {E}.example &).local"),
+    (BLOCK, f"cat $(echo {E}.example>/dev/stdout).local"), (BLOCK, f"cat $(echo $(echo {E}.example )).local"),
+    (BLOCK, f"cat $(printf %s%s {E}.example .local)"), (BLOCK, f"cat `echo {E}.example `.local"),
+    # COST, fail closed: so a template inside a substitution is refused even when its output is harmless
+    # (r7 allowed these five). Name the template outside the substitution instead.
+    (BLOCK, f"cat $(echo {E}.example)"), (BLOCK, f"echo $(cat {E}.example) ok"),
+    (BLOCK, f"echo $(cat {E}.example)|wc -l"), (BLOCK, f"echo $(echo $(cat {E}.example))"),
+    (BLOCK, f'git commit -m "$(cat {E}.example)"'),
+    # ... but a subshell `( )` or a process substitution `<( )` is not a command substitution: its
+    # output never becomes a name, and a `)` followed by `;`, `>`, `<` or `&` ends the template there.
+    (FP, f"(cat {E}.example); ls"), (FP, f"diff <(cat {E}.example) <(cat {E}.sample)"),
+    (FP, f"(cat {E}.example)>out.txt"), (FP, f"(cat {E}.example)& wait"),
+    (FP, f"git commit -m 'see $(cat {E}.example)'"),   # single quotes: no substitution at all
     # COST, fail closed: a backslash path INSIDE a template directory is refused, because bash would read
     # it as `C:proj.env.examplenotes.txt` (r4 allowed it). Quote it or use `/`.
     (BLOCK, f"cat C:\\proj\\{E}.example\\notes.txt"),

@@ -153,12 +153,25 @@ hit() { printf '%s\n%s\n' "$path" "$wpath" | grep -qiE "$1"; }   # a rule matche
 SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
 SECRET_TEMPLATES='example|sample|template'
 strip_secret_templates() {
-  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>].*|\\)+(\$|[[:space:];&|<>].*))\$" nocase=0 mark=$'\001'
+  local s="$1" out="" c i=0 n=${#1} stk="" tick=0 nocase=0
+  local re="^\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>]|\\)+(\$|[[:space:];&|<>]))"
   shopt -q nocasematch && nocase=1
   shopt -s nocasematch
-  while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${mark}${BASH_REMATCH[3]}"; done
+  while (( i < n )); do
+    c="${s:i:1}"
+    if [[ "$c" == . && "$tick" == 0 && "$stk" != *'$'* && "${s:i}" =~ $re ]]; then
+      i=$(( i + 5 + ${#BASH_REMATCH[1]} )); continue
+    fi
+    case "$c" in
+      \$) if [[ "${s:i+1:1}" == "(" ]]; then stk+='$'; out+='$('; i=$(( i + 2 )); continue; fi ;;
+      \() stk+='(' ;;
+      \)) stk="${stk%?}" ;;
+      \`) tick=$(( 1 - tick )) ;;
+    esac
+    out+="$c"; i=$(( i + 1 ))
+  done
   [ "$nocase" = 1 ] || shopt -u nocasematch
-  printf '%s' "${s//$mark/}"
+  printf '%s' "$out"
 }
 # <<< end of embedded copy
 gate_real_dir() {  # the directory of this script's REAL file, symlinks followed (portable: no readlink -f)

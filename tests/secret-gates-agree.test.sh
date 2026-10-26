@@ -75,6 +75,11 @@ done
 for p in 'app/.env.example).local' 'app/.env.example)).local' 'app/.env.sample)2'; do
   check BLOCK "$p"
 done
+# r8: a name inside `$( )` or backticks is never a template, on both gates, however the `)` is spelled.
+for p in 'app/$(echo .env.example ).local' 'app/$(echo .env.example;).local' 'app/`echo .env.example `.local' \
+         'app/$(printf %s.local .env.example)'; do
+  check BLOCK "$p"
+done
 check ALLOW "app/'.env.example'"
 check ALLOW 'app/".env.example"'
 for p in app/.env.example app/.env.sample app/.env.template app/.ENV.EXAMPLE \
