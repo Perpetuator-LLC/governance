@@ -100,6 +100,26 @@ ${F}"
 check "2-cell table's 🔑 row says 'none' but the block prompts: R2 fires" 1 "R2" "$(printf '%s' "$GOOD_TABLE2" | sed 's/🔑 alice · password · workstation (sudo)/🔑 none/')"
 check "2-cell table's identity cell with no '@' (not user@machine) fails R1" 1 "R1" "$(printf '%s' "$GOOD_TABLE2" | sed 's/👤 alice@workstation/👤 alice/')"
 
+# The one-row header (the current form, 2026-10-27): three cells, emoji labels, no keywords.
+GOOD_ONEROW="## 👤 You
+**Rotate the key**
+| 👤 alice@workstation | 🔑 alice · password · workstation (sudo) | 📝 ~/.local/state/x.log |
+|---|---|---|
+${F}bash
+sudo ./rotate.sh
+${F}"
+
+check "one-row header satisfies R1/R2/R4"                      0 "ok" "$GOOD_ONEROW"
+check "one-row header with 📝 'not logged' satisfies R4"      0 "ok" "$(printf '%s' "$GOOD_ONEROW" | sed 's/📝 ~\/.local\/state\/x.log/📝 not logged/')"
+check "one-row header with an empty 🔑 cell fails R2 when the block prompts" 1 "R2" "$(printf '%s' "$GOOD_ONEROW" | sed 's/🔑 alice · password · workstation (sudo)/🔑 /')"
+check "one-row header with 🔑 'none' fails R2 when the block prompts" 1 "R2" "$(printf '%s' "$GOOD_ONEROW" | sed 's/🔑 alice · password · workstation (sudo)/🔑 none/')"
+check "one-row header with 🔑 'none' passes when the block does not prompt" 0 "ok" "$(printf '%s' "$GOOD_ONEROW" | sed 's/🔑 alice · password · workstation (sudo)/🔑 none/; s/sudo .\/rotate.sh/.\/rotate.sh/')"
+check "one-row header missing its 👤 cell fails R1"            1 "R1" "$(printf '%s' "$GOOD_ONEROW" | sed 's/| 👤 alice@workstation | 🔑/| 🔑/; s/^|---|---|---|$/|---|---|/')"
+check "one-row header whose 👤 cell has no '@' fails R1"       1 "R1" "$(printf '%s' "$GOOD_ONEROW" | sed 's/👤 alice@workstation/👤 alice/')"
+check "one-row header with an empty 📝 cell fails R4"          1 "R4" "$(printf '%s' "$GOOD_ONEROW" | sed 's/📝 ~\/.local\/state\/x.log/📝 /')"
+check "one-row header plus a ► line restating it fails R5"     1 "R5" "$(printf '%s' "$GOOD_ONEROW" | sed 's/^\*\*Rotate the key\*\*$/► alice@workstation/')"
+check "older 2-cell table plus a ► line also fails R5"         1 "R5" "$(printf '%s' "$GOOD_TABLE2" | sed 's/^\*\*Rotate the key\*\*$/► alice@workstation/')"
+
 # Stop-hook channel: a transcript whose last assistant text is the exhibit
 mk() { python3 - "$1" "$2" <<'PY'
 import json,sys

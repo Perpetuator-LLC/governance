@@ -230,31 +230,33 @@ wording defect, where rewording is the fix.
 ### Command hand-off format
 
 **Directly above a command block handed to a human, state who runs it, what it will prompt for, and
-whether it is logged.** The primary form is a two-row table immediately above the fence:
+whether it is logged — once, in one markdown table row with its separator, immediately above the fence:**
 
-| 🖥️ \<host\> | 👤 \<user\> | 📝 \<logged path, or "no"\> |
-| --- | --- | --- |
-| 🔑 \<prompts the command raises, or "none"\> | | |
+| 👤 \<user\>@\<machine\> | 🔑 \<prompts, in the order they fire, or "none"\> | 📝 \<log path, or "not logged"\> |
+|---|---|---|
 
-Neither identity cell is ever blank — a block aimed at the wrong box is a different outage than the
-one the command is meant to fix. The 📝 cell states whether the run is logged and where; "no" is a
-complete answer, an empty cell is not. The 🔑 cell lists every prompt the command will raise, derived
-from its own flags (never guessed, never from a description of it) — a command that prompts and a
-cell reading "none" is a defect, not a convenience.
+The emoji is the label; the cells hold only the facts, with no keyword such as "PROMPTS" or "LOGGED"
+in front of them. **The 👤 cell names the machine where the human pastes the fence** — by default the
+machine the session is on — never the host the command reaches, and never a machine taken from a
+script's usage comment: the reader acts on the first identity they see. It is never blank, and it is a
+`user@machine` pair, not a bare name — a block aimed at the wrong box is a different outage than the
+one the command is meant to fix. The 🔑 cell lists every prompt the command will raise, derived from
+its own flags (never guessed, never from a description of it) — a command that prompts and a cell
+reading "none" or left empty is a defect, not a convenience. The 📝 cell says whether the run is logged
+and where; "not logged" is a complete answer, an empty cell is not.
 
-**Two accepted alternatives to the 3-cell table carry the same three facts, differently arranged.** A
-2-cell table merges the identity cell into one `user@machine` value:
+**State the facts once.** Do not add a `► <user>@<host>` line, or any second header, that restates the
+row: the reader then checks two copies for a difference that should not exist, and the copies drift.
 
-| 👤 \<user\>@\<machine\> | 📝 \<logged path, or "no"\> |
-| --- | --- |
-| 🔑 \<prompts the command raises, or "none"\> | |
+**Older forms are still accepted, so a message written to an earlier version of this rule is not
+refused:** a two-row table (`| 🖥️ <host> | 👤 <user> | 📝 <log> |`, separator, `| 🔑 <prompts> | | |`),
+its 2-cell variant (`| 👤 <user>@<machine> | 📝 <log> |`, separator, `| 🔑 <prompts> | |`), and the
+compact line `► <user>@<host> · 🔑 PROMPTS: <list> · 📝 LOGGED → <path>` (or `🚫 NOT LOGGED`). New
+hand-offs use the one-row form.
 
-A single compact line directly above the block carries all three in one row:
-`► <user>@<host> · 🔑 PROMPTS: <list> · 📝 LOGGED → <path>` (or `🚫 NOT LOGGED` when it is not).
-
-All three forms are checked independently — use whichever fits the surface; none retires the others.
-Enforced by `hooks/handoff-layout-gate.py`: a shell block preceded by none of the three, or a table
-whose 🔑 cell is absent or reads "none" while the command actually prompts, is refused.
+Enforced by `hooks/handoff-layout-gate.py`: a shell block preceded by none of these forms, a header whose
+🔑 cell is absent, empty or "none" while the command actually prompts, a header with an empty 📝 cell,
+or a header table that also carries a `►` line restating it, is refused.
 
 ### A credential the human must create is handed over with its mint recipe, from the last run that worked
 
