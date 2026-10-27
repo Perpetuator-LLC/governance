@@ -1335,11 +1335,27 @@ cover the folded work.
 on its own.** If the fold is where the full suite is guaranteed to run once, over the combined diff,
 then paying for it again on every feeder that feeds the fold buys the same verification N times. A
 feeder's own run can be lint-only — syntax, format, a fast local subset — while it is held; the full
-suite runs once, at the fold or at the integration-to-default pull request, whichever is first
-guaranteed to cover it. **Where it is wrong:** a feeder likely to land on its own, with no fold step
-downstream, gets the full suite on its own commit, because there is no later run to defer to; and a
-change to the floor itself is verified in full immediately, since a gate left unverified for however
-long a batch takes to fill is a gate that is not actually known to hold during that time.
+suite runs once, at the fold, or at the pull request that lands the fold on the default or a release
+branch, whichever is first guaranteed to cover it.
+
+⚠️ **A skipped job reads exactly like a passing one, so splitting the suite is only safe if something
+else fails closed on the full suite's absence.** This is the mirror of *A green run on a held PR may
+have run NOTHING* (`technical.md` → *A green run on a held PR may have run NOTHING*): there, the hold
+skips every job; here, the split skips the heavy ones on purpose — either way the required check
+reports SUCCESS with nothing behind it, and a merge gate that reads only that conclusion cannot tell a
+verified commit from an unverified one. **So the branches that matter carry their own fail-closed
+gate:** a required status — "full suite not run, fold first" — that FAILS on any commit reaching the
+default branch or a release branch without the full suite having run on it, a direct push included,
+not only a pull request, and clears only once that run exists. A feeder's own green is read as
+covering what it ran, never promoted to cover the fold's.
+
+**Scope: a repository that deliberately splits a full suite from a fast check, with a later run
+guaranteed to cover what the fast one skipped.** A repository with a single writer and no fold step has
+no later run to defer to, so nothing here loosens it: every pull request there keeps the full suite it
+always ran. **Where it is wrong within that scope:** a feeder likely to land on its own, with no fold
+step downstream, gets the full suite on its own commit, because there is no later run to defer to
+either; and a change to the floor itself is verified in full immediately, since a gate left unverified
+for however long a batch takes to fill is a gate not actually known to hold during that time.
 
 ## A hold on a pull request lives in the forge's own WIP / draft gate — never only in a comment
 
