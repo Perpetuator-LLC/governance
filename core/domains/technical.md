@@ -1331,6 +1331,16 @@ the branch is ungated instead of citing a run. Either way, the full suite must p
 the integration-to-default pull request before it merges, since that is the first run guaranteed to
 cover the folded work.
 
+**The same economy applies one level up the chain, to a feeder held for folding rather than merged
+on its own.** If the fold is where the full suite is guaranteed to run once, over the combined diff,
+then paying for it again on every feeder that feeds the fold buys the same verification N times. A
+feeder's own run can be lint-only — syntax, format, a fast local subset — while it is held; the full
+suite runs once, at the fold or at the integration-to-default pull request, whichever is first
+guaranteed to cover it. **Where it is wrong:** a feeder likely to land on its own, with no fold step
+downstream, gets the full suite on its own commit, because there is no later run to defer to; and a
+change to the floor itself is verified in full immediately, since a gate left unverified for however
+long a batch takes to fill is a gate that is not actually known to hold during that time.
+
 ## A hold on a pull request lives in the forge's own WIP / draft gate — never only in a comment
 
 **A reviewer sees the title, not the thread.** A lock, a hold comment and a "please don't merge yet"
