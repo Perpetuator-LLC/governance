@@ -37,7 +37,13 @@ Rows (each one independently, so a finding always says which row refused it):
                              comments, trailing commas and repeated keys all read as the editor
                              reads them) and one that does not parse is refused. Added lines are
                              read with `--text`, so a `.gitattributes` marking files binary cannot
-                             hide them
+                             hide them.
+                             BOUNDARY: added lines are read as text, not run. A key the shell
+                             assembles at run time ("core.hooks""Path", core.hooks\\Path, $(echo
+                             Path), a value pasted from another file) is NOT caught. That line lives
+                             in a script someone must choose to run, and a script a person runs can
+                             do anything a hook could; what this row refuses is what git or an
+                             editor runs ON OPEN, with nobody choosing. Review scripts as scripts
   5 type-mismatch    REFUSE  a font, image or archive extension whose bytes do not start with that
                              format's magic number (a Git LFS pointer is accepted)
   6 obfuscation      REFUSE  a NEW single-line .js/.mjs/.cjs file over 10 KB, or any changed text
@@ -517,7 +523,9 @@ def row_autorun(ctx):
             if mode in LINK_MODES and (watched or base in WATCHED_DIRS):
                 found.append((c["sha"], path, LINK_MODES[mode]))
                 continue
-            if not watched or mode == GITLINK:
+            # A symlink or submodule that reaches here is at an unwatched path (the branch above took
+            # every watched one), so `not watched` alone sends it on; nothing below reads a link.
+            if not watched:
                 continue
             for r in _autorun_reason(path, blob(sha)):
                 found.append((c["sha"], path, r))

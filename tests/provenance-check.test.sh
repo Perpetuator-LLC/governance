@@ -458,6 +458,33 @@ check "control: the hiding fixture holds the escaped quote too" "has_escaped_quo
 probe_r4_3() { run jsonc_qhide; [ "$RC" = 1 ] && grep -q 'settings.json: task.allowAutomaticTasks is turned on' "$TMP/out"; }
 check "r4 item 3: a key between an escaped quote + /* and */ inside strings is still read" probe_r4_3
 
+# ── r5: the content rows skip a submodule; the shell-split key is a documented boundary ───────
+echo "  r5 probes"
+# A gitlink's sha is a commit. A content row that forgets to skip it asks git for a blob, gets
+# "bad file", and the run stops with exit 2: fail closed, but every submodule bump would then be
+# blocked. The probes assert CLEAN (exit 0) so a mutant that drops the skip turns them into a 2.
+newrepo gitlink_png; addgitlink gitlink_png vendor/logo.png "$(git -C "$TMP/r/gitlink_png" rev-parse HEAD)"
+cm gitlink_png alice alice@example.com "an image-named submodule"
+check "control: vendor/logo.png is committed as a submodule (mode 160000)" "git -C '$TMP/r/gitlink_png' ls-files -s vendor/logo.png | grep -q '^160000 '"
+probe_r5_1() { run gitlink_png; [ "$RC" = 0 ] && none; }
+check "r5 item 1: a submodule named like an image (vendor/logo.png) passes: row 5 skips it rather than reading a commit as a blob" probe_r5_1
+probe_r5_1b() { run gitlink_ok; [ "$RC" = 0 ] && none; }
+check "r5 item 1: a submodule at vendor/lib passes: row 6 skips it rather than reading a commit as a blob" probe_r5_1b
+
+HPA="core.hooks"
+newrepo shellsplit; put shellsplit setup.sh "#!/bin/sh
+git config \"$HPA\"\"Path\" .evil
+git config $HPA\\Path .evil
+git config $HPA\$(echo Path) .evil
+"; cm shellsplit alice alice@example.com "setup"
+check "control: the fixture holds the three shell-assembled spellings and never the plain key" \
+  "[ \"\$(grep -c 'git config' '$TMP/r/shellsplit/setup.sh')\" = 3 ] && ! grep -qi '$HP' '$TMP/r/shellsplit/setup.sh' \
+   && grep -qF '\"$HPA\"\"Path\"' '$TMP/r/shellsplit/setup.sh' && grep -qF '$HPA\\Path' '$TMP/r/shellsplit/setup.sh' && grep -qF '\$(echo Path)' '$TMP/r/shellsplit/setup.sh'"
+run shellsplit
+check "r5 item 3 (documented boundary): a key the shell assembles at run time is NOT caught (exit 0, nothing reported); the line is in a script someone must run" "[ $RC = 0 ] && none"
+check "...and the script's help text and the README both state that boundary" \
+  "grep -q 'BOUNDARY: added lines are read as text, not run' '$CHK' && grep -q 'reads added lines as text; it does not run them' '$ROOT/README.md'"
+
 # ── mutants: disable one row at a time; its positive control must notice ─────────────────────
 echo "  mutants"
 positive() { case "$1" in
@@ -489,7 +516,7 @@ done
 # ── mutants: revert one r2 fix at a time; its probe must be accepted again ───────────────────
 echo "  r2 mutants"
 # Item 4 (\u escapes) has no mutant since r3: the JSON parser decodes them, and probe_4 still runs.
-for fix in 1 2 3 5 6 9 lists shallow r3_1 r3_dup r3_tc r3_bad r3_2 r3_2b r3_3 r3_4 r4_1 r4_1b r4_2a r4_2b r4_3; do
+for fix in 1 2 3 5 6 9 lists shallow r3_1 r3_dup r3_tc r3_bad r3_2 r3_2b r3_3 r3_4 r4_1 r4_1b r4_2a r4_2b r4_3 r5_1 r5_1b; do
   M="$TMP/mut/fix_$fix"
   python3 - "$CHK" "$M" "$fix" <<'MUT'
 import sys
@@ -522,6 +549,10 @@ REVERT = {  # each entry restores the pre-fix code, anchored on the fix's own te
     "r4_2a": [(" or NAMES_HOOKS_PATH.search(rest)", "")],
     "r4_2b": [(" or NAMES_HOOKS_PATH.search(rest)", "")],
     "r4_3": [('j += 2 if text[j] == "\\\\" else 1', 'j += 1')],
+    # the reviewer's MX2: a content row that reads a submodule's sha as a blob (the run exits 2)
+    "r5_1": [('            if ext not in MAGIC or ctx["exempt"](path) or mode == GITLINK:\n',
+              '            if ext not in MAGIC or ctx["exempt"](path):\n')],
+    "r5_1b": [('            if ctx["exempt"](path) or mode == GITLINK:\n', '            if ctx["exempt"](path):\n')],
     "r3_4": [("""/dev/null(?=['"]?(?:\\s|$|[;,)&|]))\"\"\")""", """/dev/null\"\"\")""")],
     "shallow": [('    if name == "copied-identity" and ctx["shallow"]:\n', '    if False:  # MUTANT\n')],
 }
@@ -534,7 +565,7 @@ MUT
   ok "mutant fix $fix applied (the file differs from the script)"
   CHECKER="$M"
   probe="probe_$fix"; [ "$fix" = r3_tc ] && probe=probe_r3_dup; [ "$fix" = r4_1b ] && probe=probe_r4_1
-  if "$probe"; then bad "mutant fix $fix SURVIVES: its probe still passes"; else ok "mutant fix $fix is caught: its probe fails again"; fi
+  if "$probe"; then bad "mutant fix $fix SURVIVES: its probe still passes"; else ok "mutant fix $fix is caught: its probe fails again (rc $RC)"; fi
   CHECKER="$CHK"
 done
 

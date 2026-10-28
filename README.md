@@ -92,6 +92,13 @@ In a shallow clone it prints `SKIP` for that row instead, because the commits to
   the range, or `--base REF`. A list outside the checkout is read from disk.
 - **An exemption carries its reason.** `--allow-paths` takes `<glob> <reason>` per line; a line
   with no reason stops the run. Use it for a reviewed vendor bundle or a deliberate editor task.
+- **The hooks-path rule reads added lines as text; it does not run them.** It catches the key
+  written plainly, split by a `\` continuation or held in a variable on an added line. It does NOT
+  catch a key the shell assembles when the script runs (`"core.hooks""Path"`, `core.hooks\Path`,
+  `$(echo Path)`, a value read from another file). That is deliberate: such a line is in a script
+  someone must choose to run, and a script a person runs can already do anything a hook could, so
+  refusing one spelling of one key would buy nothing and invite the next spelling. The row's
+  threat is what git or an editor runs on open, with nobody choosing. Scripts get reviewed as scripts.
 - **It never prints file contents or commit messages**, only the commit, the path and the row.
   Paths are escaped, so a crafted file name cannot write its own log line.
 - Exit `0` clean · `1` refused · `2` cannot run (an empty or bad range included) · `3` nothing
