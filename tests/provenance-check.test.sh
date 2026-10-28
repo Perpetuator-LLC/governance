@@ -360,6 +360,60 @@ check "row 3 prints SKIP (shallow) instead of reporting nothing; the exit code i
 run copy
 check "...while the full clone of the same history still WARNs" "has WARN copied-identity && ! grep -q '^SKIP' '$TMP/out'"
 
+# ── r3: the second review's probes (JSONC comments, a symlinked folder, the env form, M3) ─────
+echo "  r3 probes"
+newrepo jsonc; put jsonc .devcontainer/devcontainer.json "{\"image\":\"x\",\"$PCC\" /* c */ : \"true\"}"
+put jsonc .vscode/settings.json "{\"$AAT\" /**/ : \"on\"}"
+cm jsonc alice alice@example.com "commented editor config"
+probe_r3_1() { run jsonc; [ "$RC" = 1 ] && grep -q "devcontainer.json: a dev container runs $PCC" "$TMP/out" \
+  && grep -q 'settings.json: task.allowAutomaticTasks is turned on' "$TMP/out"; }
+check "r3 item 1: a comment between key and colon no longer hides postCreateCommand or allowAutomaticTasks" probe_r3_1
+newrepo jsonc_dup; put jsonc_dup .vscode/tasks.json "{\"tasks\":[{\"runOptions\":{\"runOn\":\"$FO\", // first copy
+  \"runOn\":\"default\",}},],}"
+cm jsonc_dup alice alice@example.com "tasks"
+probe_r3_dup() { run jsonc_dup; [ "$RC" = 1 ] && grep -q 'tasks.json: a task runs when the folder is opened' "$TMP/out"; }
+check "r3 item 1: a repeated key, a line comment and trailing commas: the folder-open copy is still seen" probe_r3_dup
+newrepo jsonc_bad; put jsonc_bad .vscode/tasks.json '{"tasks": [ {"label": "x"'; cm jsonc_bad alice alice@example.com "tasks"
+probe_r3_bad() { run jsonc_bad; [ "$RC" = 1 ] && grep -q 'tasks.json: the file does not parse' "$TMP/out"; }
+check "r3 item 1: a watched file that does not parse is refused, never skipped" probe_r3_bad
+newrepo jsonc_ok; put jsonc_ok .vscode/settings.json "// team settings
+{
+  /* tasks stay manual */ \"$AAT\": \"off\",
+  \"http.proxy\": \"http://proxy/*not-a-comment*/\", // trailing comma next
+}"
+put jsonc_ok .vscode/tasks.json '{"tasks":[{"label":"build","command":"make //not a comment"}],}'
+cm jsonc_ok alice alice@example.com "settings"
+run jsonc_ok
+check "CLEAN: comments, trailing commas and comment-like text inside strings, automatic tasks off: passes" "[ $RC = 0 ] && none"
+
+newrepo link; mkdir -p "$TMP/r/link/cfg"; printf '%s' "{\"tasks\":[{\"runOptions\":{\"runOn\":\"$FO\"}}]}" > "$TMP/r/link/cfg/tasks.json"
+( cd "$TMP/r/link" && ln -s cfg .vscode ) && git -C "$TMP/r/link" add cfg/tasks.json .vscode
+cm link alice alice@example.com "editor folder"
+check "control: .vscode is committed as a symlink (mode 120000)" "git -C '$TMP/r/link' ls-files -s .vscode | grep -q '^120000 '"
+probe_r3_2() { run link; [ "$RC" = 1 ] && grep -q '  .vscode: a symlink at an editor' "$TMP/out"; }
+check "r3 item 2: a .vscode symlink to a folder holding a folder-open task is refused" probe_r3_2
+newrepo linkfile; mkdir -p "$TMP/r/linkfile/cfg" "$TMP/r/linkfile/.vscode"; printf '{}' > "$TMP/r/linkfile/cfg/t.json"
+( cd "$TMP/r/linkfile/.vscode" && ln -s ../cfg/t.json tasks.json ) && git -C "$TMP/r/linkfile" add cfg/t.json .vscode/tasks.json
+cm linkfile alice alice@example.com "linked task file"
+probe_r3_2b() { run linkfile; [ "$RC" = 1 ] && grep -q '.vscode/tasks.json: a symlink at an editor' "$TMP/out"; }
+check "r3 item 2: a symlink at a watched file name (.vscode/tasks.json) is refused" probe_r3_2b
+newrepo link_ok; ( cd "$TMP/r/link_ok" && ln -s README docs-link ) && git -C "$TMP/r/link_ok" add docs-link
+cm link_ok alice alice@example.com "a plain link"
+run link_ok
+check "CLEAN: a symlink at an ordinary path passes" "[ $RC = 0 ] && none"
+
+newrepo envform; put envform ci.sh "#!/bin/sh
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=$HP GIT_CONFIG_VALUE_0=.evil git status
+"; cm envform alice alice@example.com "ci"
+probe_r3_3() { run envform; [ "$RC" = 1 ] && has REFUSE autorun-on-open && grep -q 'ci.sh' "$TMP/out"; }
+check "r3 item 3: GIT_CONFIG_KEY_0=core.hooksPath (the environment form) is refused" probe_r3_3
+
+newrepo nullx; put nullx setup.sh "#!/bin/sh
+git config $HP /dev/nullx
+"; cm nullx alice alice@example.com "setup"
+probe_r3_4() { run nullx; [ "$RC" = 1 ] && has REFUSE autorun-on-open && grep -q 'setup.sh' "$TMP/out"; }
+check "r3 item 4: a hooks path that only STARTS with /dev/null (/dev/nullx) is refused" probe_r3_4
+
 # ── mutants: disable one row at a time; its positive control must notice ─────────────────────
 echo "  mutants"
 positive() { case "$1" in
@@ -390,7 +444,8 @@ done
 
 # ── mutants: revert one r2 fix at a time; its probe must be accepted again ───────────────────
 echo "  r2 mutants"
-for fix in 1 2 3 4 5 6 9 lists shallow; do
+# Item 4 (\u escapes) has no mutant since r3: the JSON parser decodes them, and probe_4 still runs.
+for fix in 1 2 3 5 6 9 lists shallow r3_1 r3_dup r3_tc r3_bad r3_2 r3_2b r3_3 r3_4; do
   M="$TMP/mut/fix_$fix"
   python3 - "$CHK" "$M" "$fix" <<'MUT'
 import sys
@@ -402,13 +457,20 @@ REVERT = {  # each entry restores the pre-fix code, anchored on the fix's own te
            '            patterns = keys.get(c["fp"]) or ([c["principal"]] if c["principal"] else [])\n')],
     "2": [('git("show", "--text", "--format=", "-U0"', 'git("show", "--format=", "-U0"')],
     "3": [("    return path.lower()\n", "    return path\n")],
-    "4": [("    return JSON_ESC.sub(lambda m: chr(int(m.group(1), 16)), text)\n", "    return text\n")],
     "5": [('if b"\\0" in data[:8192] and not path.lower().endswith(JS_EXT):', 'if b"\\0" in data[:8192]:')],
     "6": [('            rest = HOOKS_OFF.sub("", line)\n            if any(p.search(rest) for p in HOOKS_PATH):',
            '            if any(p.search(line) for p in HOOKS_PATH) and not HOOKS_OFF.search(line):')],
     "9": [("            if neg:\n                return False\n", "            if neg:\n                continue\n")],
     "lists": [('    top = git("rev-parse", "--show-toplevel", check=False).strip()\n',
                '    return path  # MUTANT\n')],
+    "r3_1": [('    return "".join(out)\n', '    return text\n')],
+    "r3_dup": [("object_pairs_hook=Members", "object_pairs_hook=None")],
+    "r3_tc": [('                out[comma] = " "  # a trailing comma\n', '                pass\n')],
+    "r3_bad": [('            return ["the file does not parse', '            return [] and ["the file does not parse')],
+    "r3_2": [('            if mode == "120000" and (watched or base in WATCHED_DIRS):', '            if False:')],
+    "r3_2b": [('            if mode == "120000" and (watched or base in WATCHED_DIRS):', '            if False:')],
+    "r3_3": [('    re.compile(r"(?i)\\bgit_config_key_\\d+\\W{1,6}core\\.hookspath\\b"),', '')],
+    "r3_4": [("""/dev/null(?=['"]?(?:\\s|$|[;,)&|]))\"\"\")""", """/dev/null\"\"\")""")],
     "shallow": [('    if name == "copied-identity" and ctx["shallow"]:\n', '    if False:  # MUTANT\n')],
 }
 for old, new in REVERT[fix]:
@@ -419,7 +481,8 @@ MUT
   if [ ! -f "$M" ] || cmp -s "$CHK" "$M"; then bad "mutant fix $fix did not apply"; continue; fi
   ok "mutant fix $fix applied (the file differs from the script)"
   CHECKER="$M"
-  if "probe_$fix"; then bad "mutant fix $fix SURVIVES: its probe still passes"; else ok "mutant fix $fix is caught: its probe fails again"; fi
+  probe="probe_$fix"; [ "$fix" = r3_tc ] && probe=probe_r3_dup
+  if "$probe"; then bad "mutant fix $fix SURVIVES: its probe still passes"; else ok "mutant fix $fix is caught: its probe fails again"; fi
   CHECKER="$CHK"
 done
 

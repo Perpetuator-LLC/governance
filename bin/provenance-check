@@ -27,10 +27,15 @@ Rows (each one independently, so a finding always says which row refused it):
                              workspace file turning `task.allowAutomaticTasks` on; a dev container
                              lifecycle command (initialize/onCreate/updateContent/postCreate/
                              postStart/postAttach); a committed `.githooks/` file; an added line
-                             that sets git's hooks path (to anything but exactly /dev/null). Paths
-                             match in any case, JSON `\\u` escapes are decoded before matching, and
-                             added lines are read with `--text`, so a `.gitattributes` marking
-                             files binary cannot hide them
+                             that sets git's hooks path, by `git config`, `-c`, a config file or
+                             the GIT_CONFIG_KEY_<n> / GIT_CONFIG_PARAMETERS environment (to
+                             anything but exactly /dev/null); a symlink at any of those paths or
+                             named .vscode/.devcontainer/.githooks. Paths match in any case. The
+                             editor and container files are PARSED as JSON with comments (escapes,
+                             comments, trailing commas and repeated keys all read as the editor
+                             reads them) and one that does not parse is refused. Added lines are
+                             read with `--text`, so a `.gitattributes` marking files binary cannot
+                             hide them
   5 type-mismatch    REFUSE  a font, image or archive extension whose bytes do not start with that
                              format's magic number (a Git LFS pointer is accepted)
   6 obfuscation      REFUSE  a NEW single-line .js/.mjs/.cjs file over 10 KB, or any changed text
@@ -42,8 +47,10 @@ Rows (each one independently, so a finding always says which row refused it):
                         file `gpg.ssh.allowedSignersFile` takes. Principals may be patterns
                         (`*@example.com`), so a forge's web-merge key can be listed for every
                         human it signs for, and an agent's delegated key for the human it acts as.
-                        Keys are listed directly; a `cert-authority` line does not list the keys
-                        it certifies. Without it, rows 1-2 are NOT CHECKED and the exit code says
+                        SSH KEYS ONLY: a key is matched by its SSH `SHA256:` fingerprint, so a
+                        GPG- or X.509-signed commit (a forge web-merge signed with GPG, say) is
+                        always refused by row 1. Keys are listed directly; a `cert-authority` line
+                        does not list the keys it certifies. Without it, rows 1-2 are NOT CHECKED and the exit code says
                         so (3).
 --allow-paths FILE      one `<glob> <reason>` per line (`#` comments). A matching path is exempt
                         from rows 4-6. A line with no reason is an error: an exemption nobody can
@@ -66,6 +73,7 @@ checked because no allow-list was given — a scan that could not look is never 
 from __future__ import annotations
 
 import argparse
+import json
 import base64
 import fnmatch
 import hashlib
@@ -116,18 +124,20 @@ LFS_POINTER = re.compile(rb"\Aversion https://git-lfs\.github\.com/spec/v1\n"
 # Row 4
 DEVCONTAINER_KEYS = ("initializeCommand", "onCreateCommand", "updateContentCommand",
                      "postCreateCommand", "postStartCommand", "postAttachCommand")
-AUTO_TASKS = re.compile(r'"task\.allowAutomaticTasks"\s*:\s*("[^"]*"|true|false)')
 HOOKS_PATH = [
     re.compile(r"(?i)\bconfig\b.*\bcore\.hookspath\b"),  # the git CLI setting it
     re.compile(r"(?i)\bcore\.hookspath\s*="),            # a one-off -c override
     re.compile(r"(?i)^\s*hookspath\s*="),                # the key inside a config file
+    re.compile(r"(?i)\bgit_config_key_\d+\W{1,6}core\.hookspath\b"),  # GIT_CONFIG_KEY_<n>=core.hooksPath
+    re.compile(r"(?i)\bgit_config_parameters\b.*\bcore\.hookspath\b"),  # GIT_CONFIG_PARAMETERS
 ]
 # Pointing the hooks path at exactly /dev/null turns hooks OFF (a test or a clean clone does this);
 # that is the opposite of the threat, so it is not refused. Each such setting is cut out of the line
 # and the rest is checked again: one /dev/null setting never excuses another setting beside it.
 HOOKS_OFF = re.compile(r"""(?i)hookspath['"]?\s*[=,]?\s*['"]?/dev/null(?=['"]?(?:\s|$|[;,)&|]))""")
-# JSON lets any character be written as \uXXXX, so a key or value can be spelled to dodge a match.
-JSON_ESC = re.compile(r"\\u([0-9a-fA-F]{4})")
+# Row 4 paths that an editor or git reads: a symlink at one, or named like one of these folders,
+# could point the editor at a file this check never reads, so it is refused outright.
+WATCHED_DIRS = (".vscode", ".devcontainer", ".githooks")
 
 # Row 6
 ROTATE = re.compile(r"""\[\s*['"]push['"]\s*\]\s*\(\s*[\w$]+\s*\[\s*['"]shift['"]\s*\]\s*\(\s*\)\s*\)"""
@@ -257,7 +267,7 @@ def nul_records(out, width):
 
 
 def changed_blobs(c):
-    """[(status, path, blob sha)] the commit adds or changes; for a merge, only what differs from
+    """[(status, path, blob sha, mode)] the commit adds or changes; for a merge, only what differs from
     EVERY parent (content the merge itself introduced). Deletions and submodules are skipped."""
     args = ["diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-commit-id", "--root"]
     if len(c["parents"]) > 1:
@@ -276,7 +286,7 @@ def changed_blobs(c):
         modes, shas, status = fields[:n], fields[n:2 * n], fields[-1]
         if shas[-1] == ZERO or modes[-1] == "160000" or "D" in status:
             continue
-        res.append(("A" if set(status) == {"A"} else "M", path, shas[-1]))
+        res.append(("A" if set(status) == {"A"} else "M", path, shas[-1], modes[-1]))
     return res
 
 
@@ -388,29 +398,90 @@ def path_key(path):
     return path.lower()
 
 
-def json_unescape(text):
-    """`text` with every JSON `\\uXXXX` escape decoded; a match runs on both forms, so an escaped
-    key or value is seen and a file with no escapes reads exactly as before."""
-    return JSON_ESC.sub(lambda m: chr(int(m.group(1), 16)), text)
+class Members(list):
+    """A JSON object as its [(key, value), ...] in order. A repeated key keeps EVERY value, so a
+    benign last copy cannot hide the first one from this check."""
+
+
+def strip_jsonc(text):
+    """JSON-with-comments to JSON, the way VS Code reads these files: `//` and `/* */` comments
+    become whitespace and a trailing comma before `}` or `]` is dropped, never inside a string."""
+    out, i, n, comma = [], 0, len(text), None
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i:j + 1])
+            comma, i = None, j + 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            if j < 0:
+                raise ValueError("an unterminated comment")
+            out.append(" ")
+            i = j + 2
+        else:
+            if ch in "}]" and comma is not None:
+                out[comma] = " "  # a trailing comma
+            if ch == ",":
+                comma = len(out)
+            elif not ch.isspace():
+                comma = None
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def load_jsonc(data):
+    """The parsed file, objects as Members; None for an empty file. Raises ValueError when it does
+    not parse."""
+    text = strip_jsonc(data.decode("utf-8", "replace").lstrip("\ufeff"))
+    if not text.strip():
+        return None
+    return json.loads(text, object_pairs_hook=Members)
+
+
+def members(node):
+    """Every (key, value) of every object in the tree, at any depth."""
+    if isinstance(node, dict):
+        node = Members(node.items())
+    if isinstance(node, Members):
+        for k, v in node:
+            yield k, v
+            yield from members(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from members(v)
 
 
 def _autorun_reason(path, data):
     path = path_key(path)
     base = path.rsplit("/", 1)[-1]
     parent = path.rsplit("/", 2)[-2] if path.count("/") else ""
-    raw = data.decode("utf-8", "replace")
-    texts = (raw, json_unescape(raw))
     reasons = []
     workspace = base.endswith(".code-workspace")
-    if (base == "tasks.json" and parent == ".vscode") or workspace:
-        if any("folderOpen" in t for t in texts):
+    tasks = (base == "tasks.json" and parent == ".vscode") or workspace
+    settings = (base == "settings.json" and parent == ".vscode") or workspace
+    container = base == ".devcontainer.json" or ("/.devcontainer/" in "/" + path and base.endswith(".json"))
+    if tasks or settings or container:
+        try:
+            tree = load_jsonc(data)
+        except (ValueError, RecursionError):
+            return ["the file does not parse as JSON with comments, so it cannot be checked "
+                    "(an editor may still run what it holds)"]
+        found = list(members(tree))
+        if tasks and any(k == "runOn" and str(v).lower() == "folderopen" for k, v in found):
             reasons.append("a task runs when the folder is opened (runOn: folderOpen)")
-    if (base == "settings.json" and parent == ".vscode") or workspace:
-        if any(m.group(1) not in ('"off"', "false") for t in texts for m in AUTO_TASKS.finditer(t)):
+        auto = [v for k, v in found if k == "task.allowAutomaticTasks"]
+        auto += [v2 for k, v in found if k == "task" for k2, v2 in members(v) if k2 == "allowAutomaticTasks"]
+        if settings and any(v not in ("off", False) for v in auto):
             reasons.append("task.allowAutomaticTasks is turned on")
-    if base == ".devcontainer.json" or ("/.devcontainer/" in "/" + path and base.endswith(".json")):
-        keys = [k for k in DEVCONTAINER_KEYS if any(re.search(r'"%s"\s*:' % k, t) for t in texts)]
-        if keys:
+        keys = [k for k in DEVCONTAINER_KEYS if any(k2 == k for k2, _v in found)]
+        if container and keys:
             reasons.append("a dev container runs %s" % "/".join(keys))
     if "/.githooks/" in "/" + path:
         reasons.append("a committed git hook (.githooks/)")
@@ -420,14 +491,19 @@ def _autorun_reason(path, data):
 def row_autorun(ctx):
     found = []
     for c in ctx["commits"]:
-        for _status, path, sha in ctx["blobs"][c["sha"]]:
+        for _status, path, sha, mode in ctx["blobs"][c["sha"]]:
             if ctx["exempt"](path):
                 continue
             key = path_key(path)
             base = key.rsplit("/", 1)[-1]
-            if not (base in ("tasks.json", "settings.json", ".devcontainer.json")
-                    or base.endswith(".code-workspace") or "/.devcontainer/" in "/" + key
-                    or "/.githooks/" in "/" + key):
+            watched = (base in ("tasks.json", "settings.json", ".devcontainer.json")
+                       or base.endswith(".code-workspace") or "/.devcontainer/" in "/" + key
+                       or "/.githooks/" in "/" + key)
+            if mode == "120000" and (watched or base in WATCHED_DIRS):
+                found.append((c["sha"], path, "a symlink at an editor, container or hook path: it "
+                              "can point the editor at a file this check does not read"))
+                continue
+            if not watched:
                 continue
             for r in _autorun_reason(path, blob(sha)):
                 found.append((c["sha"], path, r))
@@ -445,7 +521,7 @@ def row_autorun(ctx):
 def row_type_mismatch(ctx):
     found = []
     for c in ctx["commits"]:
-        for _status, path, sha in ctx["blobs"][c["sha"]]:
+        for _status, path, sha, _mode in ctx["blobs"][c["sha"]]:
             ext = os.path.splitext(path)[1].lower()
             if ext not in MAGIC or ctx["exempt"](path):
                 continue
@@ -464,7 +540,7 @@ def row_type_mismatch(ctx):
 def row_obfuscation(ctx):
     found = []
     for c in ctx["commits"]:
-        for status, path, sha in ctx["blobs"][c["sha"]]:
+        for status, path, sha, _mode in ctx["blobs"][c["sha"]]:
             if ctx["exempt"](path):
                 continue
             data = blob(sha)

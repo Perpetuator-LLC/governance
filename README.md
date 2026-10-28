@@ -73,7 +73,7 @@ runs every suite plus the first two checks against this tree.
 |---|---|
 | signature | a commit not signed by a key on the allow-list (by fingerprint: a GPG key the runner trusts is not listed) |
 | author-signer | a listed key signing for an author it is not listed for, or a listed author's commit carrying no listed signature |
-| autorun-on-open | an editor task that runs on folder open, automatic tasks turned on, a dev container lifecycle command, a committed `.githooks/` file, an added line that sets git's hooks path |
+| autorun-on-open | an editor task that runs on folder open, automatic tasks turned on, a dev container lifecycle command, a committed `.githooks/` file, an added line that sets git's hooks path (config, `-c` or `GIT_CONFIG_*` environment), a symlink at any of those paths; editor files are parsed as JSON with comments, and one that does not parse is refused |
 | type-mismatch | a font, image or archive extension whose bytes are not that format |
 | obfuscation | a new single-line JavaScript file over 10 KB, or the string-array-rotation shape |
 
@@ -81,7 +81,9 @@ It also **warns**, without failing, on a commit whose author date and message eq
 commit's with a different change: a rebase or cherry-pick keeps both too, so that alone is not proof.
 In a shallow clone it prints `SKIP` for that row instead, because the commits to compare are absent.
 
-- **The allow-list is git's own `allowed_signers` file.** Principals may be patterns, so list your
+- **The allow-list is git's own `allowed_signers` file, so it holds SSH keys only.** A key is
+  matched by its SSH `SHA256:` fingerprint, so every GPG- or X.509-signed commit is refused,
+  including a forge web-merge signed with GPG. Principals may be patterns, so list your
   forge's web-merge key for the humans it merges for, and each agent's delegated key for the human
   it acts as. Without them, every web merge and agent commit is refused. List keys directly; a
   `cert-authority` line does not list the keys it certifies.
