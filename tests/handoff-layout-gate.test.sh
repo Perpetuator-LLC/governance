@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/handoff-layout-gate.test.sh — known-answer tests for hooks/handoff-layout-gate.py.
 # The exhibit (a bare one-line `for` loop handed to the human) must be refused; a correct block must pass;
-# each rule R1–R4 must fire alone; the Stop-hook channel must emit {"decision":"block"} and allow a retry.
+# each rule R1–R5 must fire alone; the Stop-hook channel must emit {"decision":"block"} and allow a retry.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="$ROOT/hooks/handoff-layout-gate.py"
@@ -54,7 +54,7 @@ check "R3 fires: 👤 You not last"                            1 "must be the LA
 check "R4 fires alone (no LOGGED marker)"                    1 "R4" "$(printf '%s' "$GOOD" | sed '/LOGGED/d')"
 check "🚫 NOT LOGGED satisfies R4"                           0 "ok" "$(printf '%s' "$GOOD" | sed 's/📝 LOGGED → ~\/.local\/state\/x.log/🚫 NOT LOGGED (no output)/')"
 
-# The header-table form (requested by Nik, 2026-10-25): a two-row table directly above the fence,
+# The header-table form (requested by the maintainer, 2026-10-25): a two-row table directly above the fence,
 # in place of the `► user@host · 🔑 PROMPTS · 📝 LOGGED` line.
 GOOD_TABLE="## 👤 You
 **Rotate the key**
@@ -80,7 +80,7 @@ ${F}"
 check "table's 🔑 row says 'none' but the block prompts: R2 fires" 1 "R2" "$(printf '%s' "$GOOD_TABLE" | sed 's/🔑 alice · password · workstation (sudo)/🔑 none/')"
 check "table with 📝 cell 'no' still satisfies R4 (states the answer, need not BE logged)" 0 "ok" "$(printf '%s' "$GOOD_TABLE" | sed 's/📝 ~\/.local\/state\/x.log/📝 no/')"
 
-# The 2-cell header table (requested by Nik, same day): user and machine merged into one cell.
+# The 2-cell header table (requested by the maintainer, same day): user and machine merged into one cell.
 GOOD_TABLE2="## 👤 You
 **Rotate the key**
 | 👤 alice@workstation | 📝 ~/.local/state/x.log |
@@ -119,6 +119,18 @@ check "one-row header whose 👤 cell has no '@' fails R1"       1 "R1" "$(print
 check "one-row header with an empty 📝 cell fails R4"          1 "R4" "$(printf '%s' "$GOOD_ONEROW" | sed 's/📝 ~\/.local\/state\/x.log/📝 /')"
 check "one-row header plus a ► line restating it fails R5"     1 "R5" "$(printf '%s' "$GOOD_ONEROW" | sed 's/^\*\*Rotate the key\*\*$/► alice@workstation/')"
 check "older 2-cell table plus a ► line also fails R5"         1 "R5" "$(printf '%s' "$GOOD_TABLE2" | sed 's/^\*\*Rotate the key\*\*$/► alice@workstation/')"
+
+# R2 is per block: a `🔑 PROMPTS` line above one block never covers a second prompting block.
+check "two prompting blocks, only the first has a 🔑 row: R2 fires on the second" 1 "R2" "$GOOD
+
+| 👤 alice@workstation | 🔑 | 📝 not logged |
+|---|---|---|
+${F}bash
+sudo ./second.sh
+${F}"
+check "two prompting blocks, each with its own 🔑 row, pass"   0 "ok" "$GOOD
+
+$(printf '%s' "$GOOD_ONEROW" | sed 's/^## 👤 You$//; s/rotate.sh/second.sh/')"
 
 # Stop-hook channel: a transcript whose last assistant text is the exhibit
 mk() { python3 - "$1" "$2" <<'PY'

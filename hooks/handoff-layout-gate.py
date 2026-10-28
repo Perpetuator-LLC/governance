@@ -7,8 +7,8 @@ fenced SHELL block (```bash / sh / zsh / shell / console):
 
   R1  every shell block is preceded (within the 4 non-blank lines above it) by a `► <user>@<host>` line,
       OR a header table (one-row, 3-cell or 2-cell form, below) whose user/host identity is present;
-  R2  a block containing `read -s`, `sudo`, `login`, `ssh ` or `--ask-` needs a `🔑 PROMPTS` line in the message,
-      OR the header table's 🔑 cell is non-empty and not the literal "none";
+  R2  a block containing `read -s`, `sudo`, `login`, `ssh ` or `--ask-` needs a `🔑 PROMPTS` line within the 4 non-blank lines
+      above THAT block (one such line never covers another block), OR the header table's 🔑 cell is non-empty and not the literal "none";
   R3  the message has a `## 👤 You` header and it is the LAST `## ` header;
   R4  every shell block has `📝 LOGGED` or `🚫 NOT LOGGED` within the 4 non-blank lines above it,
       OR the header table's 📝 cell is non-empty (its text may be "no": the cell only has to say whether
@@ -26,9 +26,9 @@ The older header tables are two markdown rows directly above the fence, in eithe
     | --- | --- | --- |                              or       | --- | --- |
     | 🔑 <prompts, or "none"> | | |                           | 🔑 <prompts, or "none"> | |
 3-cell form: host and user are separate cells. 2-cell form: one cell merges them as `user@machine`,
-parsed the same way as the `►` line's own `<user>@<host>`. All these forms are accepted; Nik asked for
+parsed the same way as the `►` line's own `<user>@<host>`. All these forms are accepted; the maintainer asked for
 the 3-cell table on 2026-10-25 and the 2-cell table the same day, each replacing the one before it in
-his own use, but none is retired here — the gate checks whichever one precedes a given block.
+their own use, but none is retired here — the gate checks whichever one precedes a given block.
 
 Scope: the final message to the human (the last assistant text in the transcript). Peer DMs and forge comments are
 tool calls, never final text, so they are exempt by construction. A block relayed for the human is final text: checked.
@@ -119,8 +119,9 @@ def violations(text):
         if not any(("📝 LOGGED" in l) or ("🚫 NOT LOGGED" in l) for l in above) and not (tbl and tbl["logged"]):
             out.append(f"R4 line {n}: shell block has no `📝 LOGGED →` / `🚫 NOT LOGGED` marker, and no header table 📝 cell, just above it")
         table_prompts = tbl and tbl["prompts"] and tbl["prompts"].lower() != "none"
-        if PROMPT_WORDS.search(body) and "🔑 PROMPTS" not in text and not table_prompts:
-            out.append(f"R2 line {n}: block prompts (read -s / sudo / login / ssh / --ask-) but the message has no `🔑 PROMPTS` line or header-table 🔑 cell")
+        line_prompts = any("🔑 PROMPTS" in l for l in above)
+        if PROMPT_WORDS.search(body) and not line_prompts and not table_prompts:
+            out.append(f"R2 line {n}: block prompts (read -s / sudo / login / ssh / --ask-) but has no `🔑 PROMPTS` line or header-table 🔑 cell just above it")
     heads = [l.strip() for l in lines if l.startswith("## ")]
     if not any(h.startswith("## 👤 You") for h in heads):
         out.append("R3: a message with a shell block for the human needs a `## 👤 You` section")
