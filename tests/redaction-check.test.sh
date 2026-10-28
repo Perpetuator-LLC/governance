@@ -93,6 +93,39 @@ printf 'literal:acme-fe\n' > "$TMP/mpriv"
 rc="$(run --json --private-patterns "$TMP/mpriv" "$TMP/cm/commented.sh")"
 check "a private name on a '#' comment line is caught (comment lines skip SHAPES only)" "kind 'instance-name:1'"
 
+# --- a SHIPPED TEMPLATE's code/config comment still gets the ticket-ref shape ----------
+# A comment in a template's workflow or script is copied into every repo built from it, so SKIP_LINE's
+# comment exemption must not hide a ticket ref there. Hand-derived expectations, one line each:
+#   templates/.../ci.yml    "# audited after widget#412"    -> 1 ticket-ref  (YAML comment, shipped)
+#   templates/.../run.sh    "# see widget#412 for why"      -> 1 ticket-ref  (shell comment, shipped)
+#   adapter-template/x.sh   "// widget#412"                 -> 1 ticket-ref  (the other shipped dir, //)
+#   other/ci.yml            the same YAML comment           -> 0             (not shipped: unchanged)
+#   templates/.../README.md "# widget#412 heading"          -> 0             (Markdown: unchanged)
+#   templates/.../ci.yml    "# gate lives in deploy.yml"    -> 0             (only ticket-ref reads comments)
+mkdir -p "$TMP/tpl/templates/code-repo/.gitea/workflows" "$TMP/tpl/adapter-template" "$TMP/tpl/other"
+printf 'jobs:\n  # audited after widget#412\n  build: {}\n' > "$TMP/tpl/templates/code-repo/.gitea/workflows/ci.yml"
+printf '#!/bin/sh\n# see widget#412 for why\necho ok\n' > "$TMP/tpl/templates/code-repo/run.sh"
+printf '// widget#412\n' > "$TMP/tpl/adapter-template/x.sh"
+cp "$TMP/tpl/templates/code-repo/.gitea/workflows/ci.yml" "$TMP/tpl/other/ci.yml"
+printf '# widget#412 heading\n\nBody.\n' > "$TMP/tpl/templates/code-repo/README.md"
+printf 'jobs:\n  # gate lives in deploy.yml\n  build: {}\n' > "$TMP/tpl/templates/code-repo/gate.yml"
+rc="$(run --json --enforce "$TMP/tpl/templates/code-repo/.gitea/workflows/ci.yml")"
+check "a ticket ref in a YAML comment under templates/ is flagged (exit 1, ticket-ref on line 2)" \
+  "[ '$rc' = '1' ] && kind ticket-ref && grep -q '\"line\": 2' '$TMP/out'"
+rc="$(run --json --enforce "$TMP/tpl/templates/code-repo/run.sh")"
+check "a ticket ref in a shell comment under templates/ is flagged (exit 1)" "[ '$rc' = '1' ] && kind ticket-ref"
+rc="$(run --json --enforce "$TMP/tpl/adapter-template/x.sh")"
+check "a ticket ref in a '//' comment under adapter-template/ is flagged (exit 1)" "[ '$rc' = '1' ] && kind ticket-ref"
+rc="$(run --json "$TMP/tpl/other/ci.yml")"
+check "control: the same YAML comment outside the shipped dirs keeps today's exemption (no findings)" \
+  "grep -q '\"findings\": \[\]' '$TMP/out'"
+rc="$(run --json "$TMP/tpl/templates/code-repo/README.md")"
+check "control: a Markdown heading under templates/ keeps today's behaviour (no findings)" \
+  "grep -q '\"findings\": \[\]' '$TMP/out'"
+rc="$(run --json "$TMP/tpl/templates/code-repo/gate.yml")"
+check "control: only ticket-ref reads a template comment, a filename there is not flagged" \
+  "grep -q '\"findings\": \[\]' '$TMP/out'"
+
 # --- a test fixture's own SHAPE-matching data is not live rule text (cos decision, 2026-10-14) -----
 # tests/*.test.sh files are exempt from the SHAPE legs only, because a mutation-coverage suite needs
 # the concrete filename/ticket-ref/etc. its assertion reads. The private-name leg must still see every

@@ -67,6 +67,14 @@ SHAPE_PATTERNS = [
 # Comment lines, shell-prompt lines and fence markers legitimately carry shapes; a checker that flags
 # its own explanation trains people to ignore it.
 SKIP_LINE = re.compile(r"^\s*(?:#|//)|^\s{4,}[$>]|^\s*```")
+COMMENT_LINE = re.compile(r"^\s*(?:#|//)")
+# ...except in a SHIPPED TEMPLATE's code or config. A comment in a template's workflow or script is
+# copied verbatim into every repository built from it, and it is exactly where a pasted "context"
+# ticket reference to another repository lands. So the ticket-ref shape still reads a comment line in
+# a non-Markdown file under one of these directories. Markdown keeps the exemption (its `#` line is a
+# heading, a separate question), and so does every other file.
+SHIPPED_TEMPLATE_FILE = re.compile(r"(^|/)(?:templates|adapter-template)/")
+COMMENT_SHAPES = {"ticket-ref"}
 # A test's own FIXTURE data is not live rule text: a mutation-coverage suite asserting "vault.yml is
 # blocked, deploy.yml is not" needs the concrete filename on the line the assertion reads, the same way
 # a known-bad control needs the real shape to prove the gate fires on it. Scoped to tests/*.test.sh only
@@ -154,12 +162,18 @@ def expand(paths):
     return out, bad
 
 
-def scan_lines(name, lines, shapes, private):
+def scan_lines(name, lines, shapes, private, comment_shapes=()):
     """SKIP_LINE exempts a line from the SHAPES only. A private name in a comment or a prompt line is
-    exactly as public as one in prose, so the name leg reads every line."""
+    exactly as public as one in prose, so the name leg reads every line. comment_shapes are the shapes
+    a COMMENT line still gets (a shipped template's code or config)."""
     findings = []
     for n, line in enumerate(lines, 1):
-        patterns = list(private) if SKIP_LINE.match(line) else list(shapes) + list(private)
+        if not SKIP_LINE.match(line):
+            patterns = list(shapes) + list(private)
+        elif COMMENT_LINE.match(line):
+            patterns = list(comment_shapes) + list(private)
+        else:
+            patterns = list(private)
         for kind, rx, why in patterns:
             for m in rx.finditer(line):
                 findings.append({"file": name, "line": n, "kind": kind, "match": m.group(0), "why": why})
@@ -169,10 +183,13 @@ def scan_lines(name, lines, shapes, private):
 def scan(paths, shapes, private):
     findings, unreadable = [], []
     for path in paths:
-        file_shapes = [] if TEST_FIXTURE_FILE.search(path.replace(os.sep, "/")) else shapes
+        norm = path.replace(os.sep, "/")
+        file_shapes = [] if TEST_FIXTURE_FILE.search(norm) else shapes
+        comment_shapes = ([p for p in file_shapes if p[0] in COMMENT_SHAPES]
+                          if SHIPPED_TEMPLATE_FILE.search(norm) and not norm.endswith(".md") else [])
         try:
             with open(path, encoding="utf-8", errors="ignore") as fh:
-                findings += scan_lines(path, fh, file_shapes, private)
+                findings += scan_lines(path, fh, file_shapes, private, comment_shapes)
         except OSError as e:
             print(f"error: cannot read {path}: {e}", file=sys.stderr)
             unreadable.append(path)
