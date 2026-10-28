@@ -29,8 +29,10 @@ Rows (each one independently, so a finding always says which row refused it):
                              postStart/postAttach); a committed `.githooks/` file; an added line
                              that sets git's hooks path, by `git config`, `-c`, a config file or
                              the GIT_CONFIG_KEY_<n> / GIT_CONFIG_PARAMETERS environment (to
-                             anything but exactly /dev/null); a symlink at any of those paths or
-                             named .vscode/.devcontainer/.githooks. Paths match in any case. The
+                             anything but exactly /dev/null), or any other added line that names
+                             core.hooksPath (a backslash continuation, a variable); a symlink or a
+                             submodule at any of those paths or named .vscode/.devcontainer/
+                             .githooks. Paths match in any case. The
                              editor and container files are PARSED as JSON with comments (escapes,
                              comments, trailing commas and repeated keys all read as the editor
                              reads them) and one that does not parse is refused. Added lines are
@@ -138,6 +140,17 @@ HOOKS_OFF = re.compile(r"""(?i)hookspath['"]?\s*[=,]?\s*['"]?/dev/null(?=['"]?(?
 # Row 4 paths that an editor or git reads: a symlink at one, or named like one of these folders,
 # could point the editor at a file this check never reads, so it is refused outright.
 WATCHED_DIRS = (".vscode", ".devcontainer", ".githooks")
+GITLINK = "160000"
+LINK_MODES = {
+    "120000": "a symlink at an editor, container or hook path: it can point the editor at a file "
+              "this check does not read",
+    GITLINK: "a submodule at an editor, container or hook path: a recursive clone fills it with "
+             "files this check does not read",
+}
+# The patterns above read one line at a time, so a `\` continuation or a variable holding the key
+# (`K=core.hooksPath; ... KEY_0=$K`) splits the setting across them. Any added line still naming
+# the key, once its exact /dev/null settings are cut out, is refused.
+NAMES_HOOKS_PATH = re.compile(r"(?i)core\.hookspath")
 
 # Row 6
 ROTATE = re.compile(r"""\[\s*['"]push['"]\s*\]\s*\(\s*[\w$]+\s*\[\s*['"]shift['"]\s*\]\s*\(\s*\)\s*\)"""
@@ -268,7 +281,9 @@ def nul_records(out, width):
 
 def changed_blobs(c):
     """[(status, path, blob sha, mode)] the commit adds or changes; for a merge, only what differs from
-    EVERY parent (content the merge itself introduced). Deletions and submodules are skipped."""
+    EVERY parent (content the merge itself introduced). Deletions are skipped; a submodule (mode
+    160000) is kept, because row 4 refuses one at a watched path, and its sha is a commit, not a
+    blob, so every row that reads content skips it."""
     args = ["diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-commit-id", "--root"]
     if len(c["parents"]) > 1:
         args.append("-c")
@@ -284,7 +299,7 @@ def changed_blobs(c):
         fields = meta.lstrip(":").split()
         n = (len(fields) - 1) // 2  # modes and shas, one each per parent plus one for the result
         modes, shas, status = fields[:n], fields[n:2 * n], fields[-1]
-        if shas[-1] == ZERO or modes[-1] == "160000" or "D" in status:
+        if shas[-1] == ZERO or "D" in status:
             continue
         res.append(("A" if set(status) == {"A"} else "M", path, shas[-1], modes[-1]))
     return res
@@ -499,11 +514,10 @@ def row_autorun(ctx):
             watched = (base in ("tasks.json", "settings.json", ".devcontainer.json")
                        or base.endswith(".code-workspace") or "/.devcontainer/" in "/" + key
                        or "/.githooks/" in "/" + key)
-            if mode == "120000" and (watched or base in WATCHED_DIRS):
-                found.append((c["sha"], path, "a symlink at an editor, container or hook path: it "
-                              "can point the editor at a file this check does not read"))
+            if mode in LINK_MODES and (watched or base in WATCHED_DIRS):
+                found.append((c["sha"], path, LINK_MODES[mode]))
                 continue
-            if not watched:
+            if not watched or mode == GITLINK:
                 continue
             for r in _autorun_reason(path, blob(sha)):
                 found.append((c["sha"], path, r))
@@ -512,7 +526,7 @@ def row_autorun(ctx):
             if path in seen or ctx["exempt"](path):
                 continue
             rest = HOOKS_OFF.sub("", line)
-            if any(p.search(rest) for p in HOOKS_PATH):
+            if any(p.search(rest) for p in HOOKS_PATH) or NAMES_HOOKS_PATH.search(rest):
                 seen.add(path)
                 found.append((c["sha"], path, "an added line sets git's hooks path (core.hooksPath)"))
     return found
@@ -521,9 +535,9 @@ def row_autorun(ctx):
 def row_type_mismatch(ctx):
     found = []
     for c in ctx["commits"]:
-        for _status, path, sha, _mode in ctx["blobs"][c["sha"]]:
+        for _status, path, sha, mode in ctx["blobs"][c["sha"]]:
             ext = os.path.splitext(path)[1].lower()
-            if ext not in MAGIC or ctx["exempt"](path):
+            if ext not in MAGIC or ctx["exempt"](path) or mode == GITLINK:
                 continue
             data = blob(sha)
             if not data or LFS_POINTER.match(data):
@@ -540,8 +554,8 @@ def row_type_mismatch(ctx):
 def row_obfuscation(ctx):
     found = []
     for c in ctx["commits"]:
-        for status, path, sha, _mode in ctx["blobs"][c["sha"]]:
-            if ctx["exempt"](path):
+        for status, path, sha, mode in ctx["blobs"][c["sha"]]:
+            if ctx["exempt"](path) or mode == GITLINK:
                 continue
             data = blob(sha)
             if b"\0" in data[:8192] and not path.lower().endswith(JS_EXT):

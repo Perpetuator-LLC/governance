@@ -73,7 +73,7 @@ runs every suite plus the first two checks against this tree.
 |---|---|
 | signature | a commit not signed by a key on the allow-list (by fingerprint: a GPG key the runner trusts is not listed) |
 | author-signer | a listed key signing for an author it is not listed for, or a listed author's commit carrying no listed signature |
-| autorun-on-open | an editor task that runs on folder open, automatic tasks turned on, a dev container lifecycle command, a committed `.githooks/` file, an added line that sets git's hooks path (config, `-c` or `GIT_CONFIG_*` environment), a symlink at any of those paths; editor files are parsed as JSON with comments, and one that does not parse is refused |
+| autorun-on-open | an editor task that runs on folder open, automatic tasks turned on, a dev container lifecycle command, a committed `.githooks/` file, an added line that sets git's hooks path (config, `-c` or `GIT_CONFIG_*` environment) or names `core.hooksPath` at all unless it is an exact `/dev/null` setting, a symlink or submodule at any of those paths; editor files are parsed as JSON with comments, and one that does not parse is refused |
 | type-mismatch | a font, image or archive extension whose bytes are not that format |
 | obfuscation | a new single-line JavaScript file over 10 KB, or the string-array-rotation shape |
 

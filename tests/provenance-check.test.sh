@@ -62,6 +62,12 @@ cm() {
     git -C "$r" -c user.name=x -c user.email="$email" $sign commit -q --allow-empty $s -m "$msg"
   fi
 }
+# addlink NAME PATH TARGET: stage a symlink in the index only. `ln -s` makes a copy on some Windows
+# git shells, so the test would commit a plain file and prove nothing.
+addlink() { local sha; sha=$(printf '%s' "$3" | git -C "$TMP/r/$1" hash-object -w --stdin)
+  git -C "$TMP/r/$1" update-index --add --cacheinfo "120000,$sha,$2"; }
+# addgitlink NAME PATH COMMIT: stage a submodule entry (mode 160000), the tree `git submodule add` makes.
+addgitlink() { git -C "$TMP/r/$1" update-index --add --cacheinfo "160000,$3,$2"; }
 put() { mkdir -p "$(dirname "$TMP/r/$1/$2")"; printf '%s' "$3" > "$TMP/r/$1/$2"; git -C "$TMP/r/$1" add -- "$2"; }
 # run NAME [args] — check BASE_<NAME>..HEAD with the fixture allow-list; sets RC, output in $TMP/out.
 CHECKER="$CHK"
@@ -387,17 +393,16 @@ run jsonc_ok
 check "CLEAN: comments, trailing commas and comment-like text inside strings, automatic tasks off: passes" "[ $RC = 0 ] && none"
 
 newrepo link; mkdir -p "$TMP/r/link/cfg"; printf '%s' "{\"tasks\":[{\"runOptions\":{\"runOn\":\"$FO\"}}]}" > "$TMP/r/link/cfg/tasks.json"
-( cd "$TMP/r/link" && ln -s cfg .vscode ) && git -C "$TMP/r/link" add cfg/tasks.json .vscode
+git -C "$TMP/r/link" add cfg/tasks.json; addlink link .vscode cfg
 cm link alice alice@example.com "editor folder"
-check "control: .vscode is committed as a symlink (mode 120000)" "git -C '$TMP/r/link' ls-files -s .vscode | grep -q '^120000 '"
+check "control: .vscode is committed as a symlink (mode 120000), on every platform" "git -C '$TMP/r/link' ls-files -s .vscode | grep -q '^120000 '"
 probe_r3_2() { run link; [ "$RC" = 1 ] && grep -q '  .vscode: a symlink at an editor' "$TMP/out"; }
 check "r3 item 2: a .vscode symlink to a folder holding a folder-open task is refused" probe_r3_2
-newrepo linkfile; mkdir -p "$TMP/r/linkfile/cfg" "$TMP/r/linkfile/.vscode"; printf '{}' > "$TMP/r/linkfile/cfg/t.json"
-( cd "$TMP/r/linkfile/.vscode" && ln -s ../cfg/t.json tasks.json ) && git -C "$TMP/r/linkfile" add cfg/t.json .vscode/tasks.json
+newrepo linkfile; put linkfile cfg/t.json '{}'; addlink linkfile .vscode/tasks.json ../cfg/t.json
 cm linkfile alice alice@example.com "linked task file"
 probe_r3_2b() { run linkfile; [ "$RC" = 1 ] && grep -q '.vscode/tasks.json: a symlink at an editor' "$TMP/out"; }
 check "r3 item 2: a symlink at a watched file name (.vscode/tasks.json) is refused" probe_r3_2b
-newrepo link_ok; ( cd "$TMP/r/link_ok" && ln -s README docs-link ) && git -C "$TMP/r/link_ok" add docs-link
+newrepo link_ok; addlink link_ok docs-link README
 cm link_ok alice alice@example.com "a plain link"
 run link_ok
 check "CLEAN: a symlink at an ordinary path passes" "[ $RC = 0 ] && none"
@@ -413,6 +418,45 @@ git config $HP /dev/nullx
 "; cm nullx alice alice@example.com "setup"
 probe_r3_4() { run nullx; [ "$RC" = 1 ] && has REFUSE autorun-on-open && grep -q 'setup.sh' "$TMP/out"; }
 check "r3 item 4: a hooks path that only STARTS with /dev/null (/dev/nullx) is refused" probe_r3_4
+
+# ── r4: submodules at watched paths, the hooks-path key on any line, escaped quotes ───────────
+echo "  r4 probes"
+newrepo gitlink; SUBC=$(git -C "$TMP/r/gitlink" rev-parse HEAD)
+for p in .vscode .devcontainer .githooks .devcontainer.json; do addgitlink gitlink "$p" "$SUBC"; done
+cm gitlink alice alice@example.com "editor folders as submodules"
+check "control: all 4 paths are committed as submodules (mode 160000)" \
+  "[ \"\$(git -C '$TMP/r/gitlink' ls-files -s | grep -c '^160000 ')\" = 4 ]"
+probe_r4_1() { run gitlink; [ "$RC" = 1 ] && [ "$(grep -c ': a submodule at an editor' "$TMP/out")" = 4 ]; }
+check "r4 item 1: a submodule at .vscode, .devcontainer, .githooks and .devcontainer.json: all 4 refused" probe_r4_1
+newrepo gitlink_ok; addgitlink gitlink_ok vendor/lib "$(git -C "$TMP/r/gitlink_ok" rev-parse HEAD)"
+cm gitlink_ok alice alice@example.com "a vendored submodule"
+run gitlink_ok
+check "CLEAN: a submodule at an ordinary path passes, and no content row tries to read it" "[ $RC = 0 ] && none"
+
+newrepo hpcont; put hpcont setup.sh "#!/bin/sh
+git config \\
+  $HP .evil
+"; cm hpcont alice alice@example.com "setup"
+probe_r4_2a() { run hpcont; [ "$RC" = 1 ] && has REFUSE autorun-on-open && grep -q 'setup.sh' "$TMP/out"; }
+check "r4 item 2: a hooks-path setting split by a backslash continuation is refused" probe_r4_2a
+newrepo hpvar; put hpvar setup.sh "#!/bin/sh
+K=$HP
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=\$K GIT_CONFIG_VALUE_0=.evil git status
+"; cm hpvar alice alice@example.com "setup"
+probe_r4_2b() { run hpvar; [ "$RC" = 1 ] && has REFUSE autorun-on-open && grep -q 'setup.sh' "$TMP/out"; }
+check "r4 item 2: the key held in a variable (K=core.hooksPath; ...KEY_0=\$K) is refused" probe_r4_2b
+
+newrepo jsonc_q; put jsonc_q .vscode/settings.json "{\"http.proxy\": \"a\\\"/*not a comment*/\", \"$AAT\": \"off\"}"
+cm jsonc_q alice alice@example.com "settings"
+has_escaped_quote() { grep -qF 'a\"/*' "$TMP/r/$1/.vscode/settings.json"; }
+check "control: the fixture holds an escaped quote before the comment-like text" "has_escaped_quote jsonc_q"
+run jsonc_q
+check "CLEAN: an escaped quote inside a string does not end it (the /* */ after it is text): passes" "[ $RC = 0 ] && none"
+newrepo jsonc_qhide; put jsonc_qhide .vscode/settings.json "{\"x\": \"a\\\"/*\", \"$AAT\": \"on\", \"y\": \"*/\"}"
+cm jsonc_qhide alice alice@example.com "settings"
+check "control: the hiding fixture holds the escaped quote too" "has_escaped_quote jsonc_qhide"
+probe_r4_3() { run jsonc_qhide; [ "$RC" = 1 ] && grep -q 'settings.json: task.allowAutomaticTasks is turned on' "$TMP/out"; }
+check "r4 item 3: a key between an escaped quote + /* and */ inside strings is still read" probe_r4_3
 
 # ── mutants: disable one row at a time; its positive control must notice ─────────────────────
 echo "  mutants"
@@ -445,7 +489,7 @@ done
 # ── mutants: revert one r2 fix at a time; its probe must be accepted again ───────────────────
 echo "  r2 mutants"
 # Item 4 (\u escapes) has no mutant since r3: the JSON parser decodes them, and probe_4 still runs.
-for fix in 1 2 3 5 6 9 lists shallow r3_1 r3_dup r3_tc r3_bad r3_2 r3_2b r3_3 r3_4; do
+for fix in 1 2 3 5 6 9 lists shallow r3_1 r3_dup r3_tc r3_bad r3_2 r3_2b r3_3 r3_4 r4_1 r4_1b r4_2a r4_2b r4_3; do
   M="$TMP/mut/fix_$fix"
   python3 - "$CHK" "$M" "$fix" <<'MUT'
 import sys
@@ -458,7 +502,7 @@ REVERT = {  # each entry restores the pre-fix code, anchored on the fix's own te
     "2": [('git("show", "--text", "--format=", "-U0"', 'git("show", "--format=", "-U0"')],
     "3": [("    return path.lower()\n", "    return path\n")],
     "5": [('if b"\\0" in data[:8192] and not path.lower().endswith(JS_EXT):', 'if b"\\0" in data[:8192]:')],
-    "6": [('            rest = HOOKS_OFF.sub("", line)\n            if any(p.search(rest) for p in HOOKS_PATH):',
+    "6": [('            rest = HOOKS_OFF.sub("", line)\n            if any(p.search(rest) for p in HOOKS_PATH) or NAMES_HOOKS_PATH.search(rest):',
            '            if any(p.search(line) for p in HOOKS_PATH) and not HOOKS_OFF.search(line):')],
     "9": [("            if neg:\n                return False\n", "            if neg:\n                continue\n")],
     "lists": [('    top = git("rev-parse", "--show-toplevel", check=False).strip()\n',
@@ -467,9 +511,17 @@ REVERT = {  # each entry restores the pre-fix code, anchored on the fix's own te
     "r3_dup": [("object_pairs_hook=Members", "object_pairs_hook=None")],
     "r3_tc": [('                out[comma] = " "  # a trailing comma\n', '                pass\n')],
     "r3_bad": [('            return ["the file does not parse', '            return [] and ["the file does not parse')],
-    "r3_2": [('            if mode == "120000" and (watched or base in WATCHED_DIRS):', '            if False:')],
-    "r3_2b": [('            if mode == "120000" and (watched or base in WATCHED_DIRS):', '            if False:')],
-    "r3_3": [('    re.compile(r"(?i)\\bgit_config_key_\\d+\\W{1,6}core\\.hookspath\\b"),', '')],
+    "r3_2": [('            if mode in LINK_MODES and (watched or base in WATCHED_DIRS):', '            if False:')],
+    "r3_2b": [('            if mode in LINK_MODES and (watched or base in WATCHED_DIRS):', '            if False:')],
+    # since r4 the env form is caught twice (its own pattern and the any-line key check): revert both
+    "r3_3": [('    re.compile(r"(?i)\\bgit_config_key_\\d+\\W{1,6}core\\.hookspath\\b"),', ''),
+             (" or NAMES_HOOKS_PATH.search(rest)", "")],
+    "r4_1": [('            if mode in LINK_MODES and (watched or base in WATCHED_DIRS):',
+              '            if mode == "120000" and (watched or base in WATCHED_DIRS):')],
+    "r4_1b": [('        if shas[-1] == ZERO or "D" in status:', '        if shas[-1] == ZERO or modes[-1] == "160000" or "D" in status:')],
+    "r4_2a": [(" or NAMES_HOOKS_PATH.search(rest)", "")],
+    "r4_2b": [(" or NAMES_HOOKS_PATH.search(rest)", "")],
+    "r4_3": [('j += 2 if text[j] == "\\\\" else 1', 'j += 1')],
     "r3_4": [("""/dev/null(?=['"]?(?:\\s|$|[;,)&|]))\"\"\")""", """/dev/null\"\"\")""")],
     "shallow": [('    if name == "copied-identity" and ctx["shallow"]:\n', '    if False:  # MUTANT\n')],
 }
@@ -481,7 +533,7 @@ MUT
   if [ ! -f "$M" ] || cmp -s "$CHK" "$M"; then bad "mutant fix $fix did not apply"; continue; fi
   ok "mutant fix $fix applied (the file differs from the script)"
   CHECKER="$M"
-  probe="probe_$fix"; [ "$fix" = r3_tc ] && probe=probe_r3_dup
+  probe="probe_$fix"; [ "$fix" = r3_tc ] && probe=probe_r3_dup; [ "$fix" = r4_1b ] && probe=probe_r4_1
   if "$probe"; then bad "mutant fix $fix SURVIVES: its probe still passes"; else ok "mutant fix $fix is caught: its probe fails again"; fi
   CHECKER="$CHK"
 done
