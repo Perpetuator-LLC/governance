@@ -88,8 +88,9 @@ jobs:
           echo "linted ${#shell_files[@]} shell and ${#yaml_files[@]} YAML file(s)"
 
       # Dependency CVE scan. A manifest with no gate pointing at it is how a
-      # service ends up audited NOWHERE — the failure this repo's sibling recorded
-      # against buzz-bridge (mcp#318). Any pyproject.toml found here is scanned;
+      # service ends up audited NOWHERE — a service added after the gate was
+      # written, with nothing pointing the gate at it. Any pyproject.toml found
+      # here is scanned;
       # adding a new service cannot silently opt out of the gate.
       #
       # RUNTIME and DEV are scanned SEPARATELY and reported separately. They are
