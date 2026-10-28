@@ -66,12 +66,12 @@ runs every suite plus the first two checks against this tree.
 
 ### Provenance gate (for any repository's CI)
 
-`bin/provenance-check [--allowed-signers FILE] [--allow-paths FILE] [RANGE]` (default range
+`bin/provenance-check [--allowed-signers FILE] [--allow-paths FILE] [--base REF] [RANGE]` (default range
 `origin/main..HEAD`) is a generic gate for a pull-request or push range. It refuses:
 
 | row | refuses |
 |---|---|
-| signature | a commit not signed by a key on the allow-list |
+| signature | a commit not signed by a key on the allow-list (by fingerprint: a GPG key the runner trusts is not listed) |
 | author-signer | a listed key signing for an author it is not listed for, or a listed author's commit carrying no listed signature |
 | autorun-on-open | an editor task that runs on folder open, automatic tasks turned on, a dev container lifecycle command, a committed `.githooks/` file, an added line that sets git's hooks path |
 | type-mismatch | a font, image or archive extension whose bytes are not that format |
@@ -79,10 +79,15 @@ runs every suite plus the first two checks against this tree.
 
 It also **warns**, without failing, on a commit whose author date and message equal another
 commit's with a different change: a rebase or cherry-pick keeps both too, so that alone is not proof.
+In a shallow clone it prints `SKIP` for that row instead, because the commits to compare are absent.
 
 - **The allow-list is git's own `allowed_signers` file.** Principals may be patterns, so list your
   forge's web-merge key for the humans it merges for, and each agent's delegated key for the human
-  it acts as. Without them, every web merge and agent commit is refused.
+  it acts as. Without them, every web merge and agent commit is refused. List keys directly; a
+  `cert-authority` line does not list the keys it certifies.
+- **Both lists are read from the BASE when they live in the repository**, never from the change
+  under review, which could otherwise list its own key or exemption. The base is the left side of
+  the range, or `--base REF`. A list outside the checkout is read from disk.
 - **An exemption carries its reason.** `--allow-paths` takes `<glob> <reason>` per line; a line
   with no reason stops the run. Use it for a reviewed vendor bundle or a deliberate editor task.
 - **It never prints file contents or commit messages**, only the commit, the path and the row.

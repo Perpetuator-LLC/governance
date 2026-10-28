@@ -32,12 +32,13 @@ K="$TMP/keys"; mkdir -p "$K"
 for who in alice bob mallory forge agent; do ssh-keygen -q -t ed25519 -N '' -C "fixture-$who" -f "$K/$who"; done
 pub() { cut -d' ' -f1,2 "$K/$1.pub"; }
 # alice and bob are humans; the forge's web-merge key signs for every human on the domain; the
-# agent's delegated key signs for alice, the human it acts as. mallory's key is on no list.
+# agent's delegated key signs for alice, the human it acts as. mallory's key is on no list. eve is
+# carved out of the forge key's pattern with a negation, so the forge key may never sign as eve.
 {
   echo "# fixture allow-list"
   echo "alice@example.com $(pub alice)"
   echo "bob@example.com namespaces=\"git\" $(pub bob)"
-  echo "*@example.com $(pub forge)"
+  echo "*@example.com,!eve@example.com $(pub forge)"
   echo "alice@example.com $(pub agent)"
 } > "$TMP/allowed"
 CANARY="CANARY-CONTENT-do-not-print"
@@ -236,6 +237,129 @@ check "a missing allow-list cannot run (exit 2)" "[ $RC = 2 ]"
 check "the default range is origin/main..HEAD (no origin here ⇒ exit 2, named in the error)" "[ $RC = 2 ] && grep -q 'origin/main..HEAD\|origin/main' '$TMP/out'"
 check "across every run above, no file content was ever printed" "! grep -q '$CANARY' '$TMP/all-output'"
 
+# ── r2: every probe the review found accepted (rc=0) is now a fixture that must be refused ────
+# Each probe is a function, so the same check runs against the script and, below, against a mutant
+# that reverts just that fix: the mutant must accept the probe again.
+echo "  r2 probes"
+FPR="0123456789ABCDEF0123456789ABCDEF01234567"
+GPG_ID="${FPR%????????????????????????}"  # a 16-hex-digit key id for the stand-in to sign with
+# A stand-in for gpg, written to git's documented gpg interface (status lines on --status-fd): gpg
+# is not on every runner. It reports a GOOD signature with FULL trust, i.e. a key the runner's own
+# keyring trusts and the allow-list does not name.
+GPG="$TMP/fake-gpg"
+cat > "$GPG" <<EOF
+#!/bin/sh
+cat >/dev/null
+case " \$* " in
+*" --verify "*)
+  printf '[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG 0123456789ABCDEF carol@other.example\n'
+  printf '[GNUPG:] VALIDSIG $FPR 2026-01-01 1767225600 0 4 0 22 8 00 $FPR\n[GNUPG:] TRUST_FULLY 0 pgp\n'
+  exit 0;;
+*)
+  printf '\n[GNUPG:] SIG_CREATED D 22 8 00 1767225600 $FPR\n' >&2
+  printf -- '-----BEGIN PGP SIGNATURE-----\n\nZml4dHVyZQ==\n-----END PGP SIGNATURE-----\n'
+  exit 0;;
+esac
+EOF
+chmod +x "$GPG"
+newrepo gpg_trusted; git -C "$TMP/r/gpg_trusted" config gpg.program "$GPG"; put gpg_trusted a.txt x
+git -C "$TMP/r/gpg_trusted" -c user.name=x -c user.email=carol@other.example -c user.signingkey="$GPG_ID" commit -q -S -m "gpg-signed work"
+check "control: git reports the stand-in GPG signature as GOOD (G) with its fingerprint" \
+  "[ \"\$(git -C '$TMP/r/gpg_trusted' log -1 --format='%G? %GF')\" = 'G $FPR' ]"
+probe_1() { run gpg_trusted; [ "$RC" = 1 ] && has REFUSE signature && grep -q 'fingerprint is not on the allow-list' "$TMP/out"; }
+check "item 1: a GOOD signature by a trusted but UNLISTED GPG key is refused (row signature)" probe_1
+
+newrepo attrs; put attrs .gitattributes "* -diff
+"; put attrs setup.sh "#!/bin/sh
+git config $HP .githooks
+"; cm attrs alice alice@example.com "setup"
+check "control: the committed .gitattributes hides setup.sh from a plain git show" \
+  "git -C '$TMP/r/attrs' show --format= HEAD | grep -q '^Binary files'"
+probe_2() { run attrs; [ "$RC" = 1 ] && has REFUSE autorun-on-open && grep -q 'setup.sh' "$TMP/out"; }
+check "item 2: a hooks-path line behind a PR-committed '* -diff' is still refused" probe_2
+
+newrepo casefold; put casefold .VSCode/Tasks.json "{\"tasks\":[{\"command\":\"true\",\"runOptions\":{\"runOn\":\"$FO\"}}]}"
+cm casefold alice alice@example.com "editor task"
+probe_3() { run casefold; [ "$RC" = 1 ] && has REFUSE autorun-on-open && grep -q '.VSCode/Tasks.json' "$TMP/out"; }
+check "item 3: .VSCode/Tasks.json (any case) with a folder-open task is refused" probe_3
+
+newrepo jsonesc
+put jsonesc .vscode/tasks.json '{"tasks":[{"command":"true","runOptions":{"runOn":"folder\u004fpen"}}]}'
+put jsonesc .vscode/settings.json '{"task.allow\u0041utomaticTasks": "\u006fn"}'
+put jsonesc .devcontainer/devcontainer.json '{"image":"x","post\u0043reateCommand":"true"}'
+cm jsonesc alice alice@example.com "escaped editor config"
+probe_4() { run jsonesc; [ "$RC" = 1 ] && [ "$(grep -c '^REFUSE *autorun-on-open ' "$TMP/out")" = 3 ]; }
+check "item 4: escaped folder-open, automatic-tasks and post-create keys: all 3 refused" probe_4
+
+newrepo nuljs; mkdir -p "$TMP/r/nuljs/src"
+{ printf '\000'; rotation_js; printf '\nexport const ok = 1;\n'; } > "$TMP/r/nuljs/src/app.js"
+git -C "$TMP/r/nuljs" add src/app.js; cm nuljs alice alice@example.com "app"
+probe_5() { run nuljs; [ "$RC" = 1 ] && has REFUSE obfuscation && grep -q 'src/app.js' "$TMP/out"; }
+check "item 5: a NUL byte at the start of a .js file no longer skips row 6" probe_5
+newrepo nulbin; { printf '\000'; rotation_js; printf '\n'; } > "$TMP/r/nulbin/blob.dat"; git -C "$TMP/r/nulbin" add blob.dat
+cm nulbin alice alice@example.com "data"
+run nulbin
+check "CLEAN: a NUL still marks a non-script file as binary (row 6 skips it)" "[ $RC = 0 ] && none"
+
+newrepo hooksoff; put hooksoff setup.sh "#!/bin/sh
+git -c $HP=/dev/null fetch && git config $HP .githooks
+"; cm hooksoff alice alice@example.com "setup"
+probe_6() { run hooksoff; [ "$RC" = 1 ] && has REFUSE autorun-on-open && grep -q 'setup.sh' "$TMP/out"; }
+check "item 6: a /dev/null setting on the same line no longer excuses a real hooks-path setting" probe_6
+
+newrepo oddbytes; put oddbytes a.txt x; cm oddbytes alice alice@example.com "$(printf 'odd \036 record \037 unit bytes')"
+probe_7() { run oddbytes; [ "$RC" = 0 ] && none; }
+check "item 7: a message holding the old record/unit separators parses (clean: exit 0, no crash)" probe_7
+
+newrepo header; put header setup.sh "#!/bin/sh
+++ b/docs/ok.md
+git config $HP .githooks
+"; cm header alice alice@example.com "setup"
+printf 'docs/ok.md  reviewed prose\n' > "$TMP/allow-docs"
+probe_8() { run header --allow-paths "$TMP/allow-docs"; [ "$RC" = 1 ] && has REFUSE autorun-on-open && grep -q 'setup.sh' "$TMP/out" && ! grep -q 'docs/ok.md' "$TMP/out"; }
+check "item 8: an added line that reads like a '+++ b/' header cannot move the next line to an exempt path" probe_8
+
+newrepo neg; put neg a.txt x; cm neg forge eve@example.com "forge key, eve's name"
+probe_9() { run neg; [ "$RC" = 1 ] && has REFUSE author-signer; }
+check "item 9: a key listed for *@example.com,!eve@example.com may not sign as eve (negation)" probe_9
+newrepo neg_ok; put neg_ok a.txt x; cm neg_ok forge dave@example.com "forge key, dave's name"
+run neg_ok
+check "CLEAN: ...and that key still signs for anyone else on the domain" "[ $RC = 0 ] && none"
+
+# ── the lists come from the BASE, never from the change under review ────────────────────────
+echo "  lists from the base ref"
+newrepo lists; cp "$TMP/allowed" "$TMP/r/lists/allowed_signers"; printf '# no exemptions\n' > "$TMP/r/lists/allow-paths"
+git -C "$TMP/r/lists" add allowed_signers allow-paths; cm lists alice alice@example.com "lists"
+BASE_lists=$(git -C "$TMP/r/lists" rev-parse HEAD)
+echo "carol@other.example $(pub mallory)" >> "$TMP/r/lists/allowed_signers"
+printf '.vscode/tasks.json  trust me\n' >> "$TMP/r/lists/allow-paths"
+put lists .vscode/tasks.json "{\"tasks\":[{\"runOptions\":{\"runOn\":\"$FO\"}}]}"
+git -C "$TMP/r/lists" add allowed_signers allow-paths; cm lists mallory carol@other.example "add myself"
+probe_lists() { run lists --allowed-signers allowed_signers --allow-paths allow-paths
+  [ "$RC" = 1 ] && has REFUSE signature && has REFUSE autorun-on-open && grep -q 'read from' "$TMP/out"; }
+check "a change that lists its own key and its own exemption is still refused (lists read from the base)" probe_lists
+newrepo lists_ok; cp "$TMP/allowed" "$TMP/r/lists_ok/allowed_signers"; git -C "$TMP/r/lists_ok" add allowed_signers
+cm lists_ok alice alice@example.com "lists"; BASE_lists_ok=$(git -C "$TMP/r/lists_ok" rev-parse HEAD)
+put lists_ok a.txt x; cm lists_ok bob bob@example.com "work"
+run lists_ok --allowed-signers allowed_signers
+check "CLEAN: an in-repo list on the base, a change signed by a listed key: passes" "[ $RC = 0 ] && none"
+newrepo lists_new; cp "$TMP/allowed" "$TMP/r/lists_new/allowed_signers"; git -C "$TMP/r/lists_new" add allowed_signers
+cm lists_new alice alice@example.com "the change adds the list"
+run lists_new --allowed-signers allowed_signers
+check "an in-repo list missing on the base cannot run (exit 2)" "[ $RC = 2 ] && grep -q 'not on the base' '$TMP/err'"
+( cd "$TMP/r/lists_ok" && python3 "$CHK" --allowed-signers allowed_signers HEAD ) >"$TMP/out" 2>"$TMP/err"; RC=$?
+check "an in-repo list with no base (no A..B range, no --base) cannot run (exit 2)" "[ $RC = 2 ] && grep -q -- '--base' '$TMP/err'"
+
+# ── row 3 in a shallow clone says it was skipped ─────────────────────────────────────────────
+echo "  shallow clone"
+git clone -q --depth 2 "file://$TMP/r/copy" "$TMP/r/shallow" 2>/dev/null
+BASE_shallow=$(git -C "$TMP/r/shallow" rev-parse HEAD~1)
+check "control: the clone is shallow" "[ \"\$(git -C '$TMP/r/shallow' rev-parse --is-shallow-repository)\" = true ]"
+probe_shallow() { run shallow; [ "$RC" = 0 ] && grep -q '^SKIP *copied-identity .*shallow' "$TMP/out" && ! has WARN copied-identity; }
+check "row 3 prints SKIP (shallow) instead of reporting nothing; the exit code is unchanged" probe_shallow
+run copy
+check "...while the full clone of the same history still WARNs" "has WARN copied-identity && ! grep -q '^SKIP' '$TMP/out'"
+
 # ── mutants: disable one row at a time; its positive control must notice ─────────────────────
 echo "  mutants"
 positive() { case "$1" in
@@ -262,6 +386,41 @@ PY
     "! grep -qE '^(REFUSE|WARN) +$(label "$row") ' '$TMP/out'"
   run "$(positive "$row")"
   check "…and the unmutated script still reports it on the same fixture" "grep -qE '^(REFUSE|WARN) +$(label "$row") ' '$TMP/out'"
+done
+
+# ── mutants: revert one r2 fix at a time; its probe must be accepted again ───────────────────
+echo "  r2 mutants"
+for fix in 1 2 3 4 5 6 9 lists shallow; do
+  M="$TMP/mut/fix_$fix"
+  python3 - "$CHK" "$M" "$fix" <<'MUT'
+import sys
+src, dst, fix = sys.argv[1:]
+text = open(src).read()
+REVERT = {  # each entry restores the pre-fix code, anchored on the fix's own text
+    "1": [('    return c["sig"] == "G" and c["fp"] in keys\n', '    return c["sig"] == "G"\n'),
+          ('            patterns = keys[c["fp"]]\n',
+           '            patterns = keys.get(c["fp"]) or ([c["principal"]] if c["principal"] else [])\n')],
+    "2": [('git("show", "--text", "--format=", "-U0"', 'git("show", "--format=", "-U0"')],
+    "3": [("    return path.lower()\n", "    return path\n")],
+    "4": [("    return JSON_ESC.sub(lambda m: chr(int(m.group(1), 16)), text)\n", "    return text\n")],
+    "5": [('if b"\\0" in data[:8192] and not path.lower().endswith(JS_EXT):', 'if b"\\0" in data[:8192]:')],
+    "6": [('            rest = HOOKS_OFF.sub("", line)\n            if any(p.search(rest) for p in HOOKS_PATH):',
+           '            if any(p.search(line) for p in HOOKS_PATH) and not HOOKS_OFF.search(line):')],
+    "9": [("            if neg:\n                return False\n", "            if neg:\n                continue\n")],
+    "lists": [('    top = git("rev-parse", "--show-toplevel", check=False).strip()\n',
+               '    return path  # MUTANT\n')],
+    "shallow": [('    if name == "copied-identity" and ctx["shallow"]:\n', '    if False:  # MUTANT\n')],
+}
+for old, new in REVERT[fix]:
+    assert text.count(old) == 1, "anchor not found once for fix %s: %r" % (fix, old)
+    text = text.replace(old, new)
+open(dst, "w").write(text)
+MUT
+  if [ ! -f "$M" ] || cmp -s "$CHK" "$M"; then bad "mutant fix $fix did not apply"; continue; fi
+  ok "mutant fix $fix applied (the file differs from the script)"
+  CHECKER="$M"
+  if "probe_$fix"; then bad "mutant fix $fix SURVIVES: its probe still passes"; else ok "mutant fix $fix is caught: its probe fails again"; fi
+  CHECKER="$CHK"
 done
 
 echo
