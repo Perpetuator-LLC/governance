@@ -59,9 +59,36 @@ lesson travels upstream — is `core/AGENTS.md` → *Layers*.
 | `bin/redaction-check` | no private identifiers reach this repository: home-directory paths, contact addresses, registration ids, internal ticket references, vendor tool names — plus, where you supply one, your own list of instance names |
 | `bin/heading-pointer-check` | every pointer from one doc to a section of another still names text that exists |
 | `bin/governance check` | a rendered instruction file still matches the layers it was built from |
+| `bin/provenance-check` | every commit in a range is signed by a key allowed for its author, and no change plants a file that runs itself or hides what it is |
 
 Each check is tested against a known-good and a known-bad input in the same pass (`tests/`), and CI
 runs every suite plus the first two checks against this tree.
+
+### Provenance gate (for any repository's CI)
+
+`bin/provenance-check [--allowed-signers FILE] [--allow-paths FILE] [RANGE]` (default range
+`origin/main..HEAD`) is a generic gate for a pull-request or push range. It refuses:
+
+| row | refuses |
+|---|---|
+| signature | a commit not signed by a key on the allow-list |
+| author-signer | a listed key signing for an author it is not listed for, or a listed author's commit carrying no listed signature |
+| autorun-on-open | an editor task that runs on folder open, automatic tasks turned on, a dev container lifecycle command, a committed `.githooks/` file, an added line that sets git's hooks path |
+| type-mismatch | a font, image or archive extension whose bytes are not that format |
+| obfuscation | a new single-line JavaScript file over 10 KB, or the string-array-rotation shape |
+
+It also **warns**, without failing, on a commit whose author date and message equal another
+commit's with a different change: a rebase or cherry-pick keeps both too, so that alone is not proof.
+
+- **The allow-list is git's own `allowed_signers` file.** Principals may be patterns, so list your
+  forge's web-merge key for the humans it merges for, and each agent's delegated key for the human
+  it acts as. Without them, every web merge and agent commit is refused.
+- **An exemption carries its reason.** `--allow-paths` takes `<glob> <reason>` per line; a line
+  with no reason stops the run. Use it for a reviewed vendor bundle or a deliberate editor task.
+- **It never prints file contents or commit messages**, only the commit, the path and the row.
+  Paths are escaped, so a crafted file name cannot write its own log line.
+- Exit `0` clean · `1` refused · `2` cannot run (an empty or bad range included) · `3` nothing
+  refused, but the signature rows were not checked because no allow-list was given.
 
 ## Starting a new repo
 

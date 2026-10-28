@@ -1,0 +1,500 @@
+#!/usr/bin/env python3
+"""provenance-check — refuse commits that lie about who wrote them, and files that run themselves.
+
+  provenance-check [--allowed-signers FILE] [--allow-paths FILE] [RANGE]
+
+RANGE is any range `git rev-list` accepts; the default is `origin/main..HEAD`. Every commit in it is
+checked, merges included, and each file a commit adds or changes is read from that commit's own
+blob, so a payload added and then removed inside the range is still seen.
+
+Rows (each one independently, so a finding always says which row refused it):
+
+  1 signature        REFUSE  a commit not signed by a key on the allow-list (unsigned, a bad
+                             signature, an unlisted key, or one git cannot verify)
+  2 author-signer    REFUSE  the signing key is listed, but not for the commit's author email; or
+                             the author email IS listed and the commit carries no listed signature
+                             (a known identity worn by someone else, or by no one)
+  3 copied-identity  WARN    a non-merge commit whose author date and full message equal another
+                             commit's, with a DIFFERENT patch. A rebase or cherry-pick keeps the
+                             date and message too, so this alone is not proof; it is printed, and
+                             never fails the run. An identical patch (patch-id) is not reported.
+  4 autorun-on-open  REFUSE  an editor or container file that runs a command when the repository is
+                             opened: a VS Code task with `runOn: folderOpen`; a settings or
+                             workspace file turning `task.allowAutomaticTasks` on; a dev container
+                             lifecycle command (initialize/onCreate/updateContent/postCreate/
+                             postStart/postAttach); a committed `.githooks/` file; an added line
+                             that sets git's hooks path (to anything but /dev/null)
+  5 type-mismatch    REFUSE  a font, image or archive extension whose bytes do not start with that
+                             format's magic number (a Git LFS pointer is accepted)
+  6 obfuscation      REFUSE  a NEW single-line .js/.mjs/.cjs file over 10 KB, or any changed text
+                             file with the string-array-rotation shape (an array rotated by
+                             push(shift()) plus hex-named identifiers or a large string array)
+
+--allowed-signers FILE  git's `allowed_signers` format (`principals [options] keytype key`), the
+                        file `gpg.ssh.allowedSignersFile` takes. Principals may be patterns
+                        (`*@example.com`), so a forge's web-merge key can be listed for every
+                        human it signs for, and an agent's delegated key for the human it acts as.
+                        Without it, rows 1-2 are NOT CHECKED and the exit code says so (3).
+--allow-paths FILE      one `<glob> <reason>` per line (`#` comments). A matching path is exempt
+                        from rows 4-6. A line with no reason is an error: an exemption nobody can
+                        explain is a hole.
+
+Output names the commit, the path and the reason, never file contents or commit messages. Paths and
+emails are escaped to printable ASCII, so an attacker-chosen file name cannot write its own log line.
+
+Exit: 0 clean (warnings allowed) · 1 at least one REFUSE · 2 cannot run (bad range, an empty range,
+git or ssh-keygen missing, an unreadable allow-list) · 3 nothing refused, but rows 1-2 were not
+checked because no allow-list was given — a scan that could not look is never reported clean.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import fnmatch
+import hashlib
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+
+US, RS = "\x1f", "\x1e"
+ZERO = "0" * 40
+
+# An allowed_signers key type: ssh-ed25519, ecdsa-sha2-nistp256, the sk- security-key types, and
+# their certificate forms. Matched by prefix, after the principals field, so options never match.
+KEYTYPE = re.compile(r"^(ssh|ecdsa|sk)-[a-z0-9-]+")
+SIG_REASON = {
+    "N": "unsigned",
+    "B": "bad signature",
+    "U": "signed by a key that is not on the allow-list",
+    "E": "signature cannot be checked (missing key or tool)",
+    "X": "signature has expired",
+    "Y": "signed by an expired key",
+    "R": "signed by a revoked key",
+}
+
+# Row 5: extension -> [(offset, magic), ...]; any one match is a pass.
+MAGIC = {
+    ".woff": [(0, b"wOFF")], ".woff2": [(0, b"wOF2")],
+    ".ttf": [(0, b"\x00\x01\x00\x00"), (0, b"true"), (0, b"ttcf")],
+    ".otf": [(0, b"OTTO")], ".ttc": [(0, b"ttcf")], ".eot": [(34, b"LP")],
+    ".png": [(0, b"\x89PNG\r\n\x1a\n")], ".jpg": [(0, b"\xff\xd8\xff")],
+    ".jpeg": [(0, b"\xff\xd8\xff")], ".gif": [(0, b"GIF87a"), (0, b"GIF89a")],
+    ".ico": [(0, b"\x00\x00\x01\x00")], ".cur": [(0, b"\x00\x00\x02\x00")],
+    ".bmp": [(0, b"BM")], ".webp": [(8, b"WEBP")], ".avif": [(4, b"ftyp")],
+    ".tif": [(0, b"II*\x00"), (0, b"MM\x00*")], ".tiff": [(0, b"II*\x00"), (0, b"MM\x00*")],
+    ".zip": [(0, b"PK\x03\x04"), (0, b"PK\x05\x06"), (0, b"PK\x07\x08")],
+    ".jar": [(0, b"PK\x03\x04")], ".whl": [(0, b"PK\x03\x04")], ".apk": [(0, b"PK\x03\x04")],
+    ".gz": [(0, b"\x1f\x8b")], ".tgz": [(0, b"\x1f\x8b")], ".bz2": [(0, b"BZh")],
+    ".xz": [(0, b"\xfd7zXZ\x00")], ".7z": [(0, b"7z\xbc\xaf\x27\x1c")],
+    ".rar": [(0, b"Rar!\x1a\x07")], ".tar": [(257, b"ustar")], ".pdf": [(0, b"%PDF-")],
+}
+LFS_POINTER = re.compile(rb"\Aversion https://git-lfs\.github\.com/spec/v1\n"
+                         rb"oid sha256:[0-9a-f]{64}\nsize \d+\n\Z")
+
+# Row 4
+DEVCONTAINER_KEYS = ("initializeCommand", "onCreateCommand", "updateContentCommand",
+                     "postCreateCommand", "postStartCommand", "postAttachCommand")
+AUTO_TASKS = re.compile(r'"task\.allowAutomaticTasks"\s*:\s*("[^"]*"|true|false)')
+HOOKS_PATH = [
+    re.compile(r"(?i)\bconfig\b.*\bcore\.hookspath\b"),  # the git CLI setting it
+    re.compile(r"(?i)\bcore\.hookspath\s*="),            # a one-off -c override
+    re.compile(r"(?i)^\s*hookspath\s*="),                # the key inside a config file
+]
+# Pointing the hooks path at /dev/null turns hooks OFF (a test or a clean clone does this); that is
+# the opposite of the threat, so it is not refused.
+HOOKS_OFF = re.compile(r"(?i)hookspath\W{0,6}/dev/null\b")
+
+# Row 6
+ROTATE = re.compile(r"""\[\s*['"]push['"]\s*\]\s*\(\s*[\w$]+\s*\[\s*['"]shift['"]\s*\]\s*\(\s*\)\s*\)"""
+                    r"""|\.push\(\s*[\w$]+\.shift\(\s*\)\s*\)""")
+HEX_IDENT = re.compile(r"\b_0x[0-9a-fA-F]{3,}\b")
+STR_ARRAY = re.compile(r"""\[\s*(?:'[^'\n]*'|"[^"\n]*")(?:\s*,\s*(?:'[^'\n]*'|"[^"\n]*")){19,}\s*,?\s*\]""")
+JS_EXT = (".js", ".mjs", ".cjs")
+SINGLE_LINE_LIMIT = 10 * 1024
+
+
+class CannotRun(Exception):
+    pass
+
+
+def safe(s):
+    """Printable ASCII only: a path or email is attacker-chosen and must not shape the log."""
+    if isinstance(s, bytes):
+        s = s.decode("utf-8", "backslashreplace")
+    return "".join(c if " " <= c <= "~" else "\\x%02x" % ord(c) if ord(c) < 256 else "\\u%04x" % ord(c)
+                   for c in s)
+
+
+def git(*args, raw=False, check=True, env=None):
+    try:
+        p = subprocess.run(["git", "-c", "core.quotePath=false", *args],
+                           capture_output=True, env=env)
+    except FileNotFoundError:
+        raise CannotRun("git is not installed")
+    if check and p.returncode != 0:
+        raise CannotRun("git %s failed: %s" % (args[0], safe(p.stderr.strip()[:300])))
+    return p.stdout if raw else p.stdout.decode("utf-8", "surrogateescape")
+
+
+# ── allow-lists ──────────────────────────────────────────────────────────────────────────────
+def fingerprint(blob_b64):
+    digest = hashlib.sha256(base64.b64decode(blob_b64)).digest()
+    return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
+
+
+def load_signers(path):
+    """fingerprint -> [principal pattern, ...], read the way ssh-keygen reads allowed_signers."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError as e:
+        raise CannotRun("cannot read the allowed-signers file %s: %s" % (safe(path), e.strerror))
+    keys = {}
+    for n, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            tok = shlex.split(line)
+        except ValueError:
+            raise CannotRun("allowed-signers line %d does not parse" % n)
+        idx = next((i for i, t in enumerate(tok) if i > 0 and KEYTYPE.match(t)), None)
+        if idx is None or idx + 1 >= len(tok):
+            raise CannotRun("allowed-signers line %d has no principals, key type and key" % n)
+        try:
+            fp = fingerprint(tok[idx + 1])
+        except (ValueError, TypeError):
+            raise CannotRun("allowed-signers line %d: the key is not base64" % n)
+        keys.setdefault(fp, []).extend(p for p in tok[0].split(",") if p)
+    if not keys:
+        raise CannotRun("the allowed-signers file %s lists no keys" % safe(path))
+    return keys
+
+
+def principal_matches(email, patterns):
+    """ssh pattern-list semantics: any positive match, and no negated (`!`) match."""
+    email = email.lower()
+    hit = False
+    for p in patterns:
+        neg = p.startswith("!")
+        if fnmatch.fnmatchcase(email, (p[1:] if neg else p).lower()):
+            if neg:
+                return False
+            hit = True
+    return hit
+
+
+def load_allow_paths(path):
+    if not path:
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError as e:
+        raise CannotRun("cannot read the path allow-list %s: %s" % (safe(path), e.strerror))
+    out = []
+    for n, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) < 2 or not parts[1].strip():
+            raise CannotRun("path allow-list line %d has no reason; every exemption states why" % n)
+        out.append(parts[0])
+    return out
+
+
+# ── reading the range ────────────────────────────────────────────────────────────────────────
+def commits_in(rng, signers_file):
+    cfg = ["-c", "gpg.ssh.allowedSignersFile=" + signers_file] if signers_file else []
+    fmt = US.join(["%H", "%P", "%G?", "%GF", "%GS", "%ae", "%ad"]) + RS
+    out = git(*cfg, "log", "--format=" + fmt, "--date=raw", rng)
+    commits = []
+    for rec in out.split(RS):
+        rec = rec.strip("\n")
+        if not rec:
+            continue
+        h, parents, sig, fp, principal, email, date = rec.split(US)
+        commits.append({"sha": h, "parents": parents.split(), "sig": sig, "fp": fp,
+                        "principal": principal, "email": email, "date": date})
+    return commits
+
+
+def changed_blobs(c):
+    """[(status, path, blob sha)] the commit adds or changes; for a merge, only what differs from
+    EVERY parent (content the merge itself introduced). Deletions and submodules are skipped."""
+    args = ["diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-commit-id", "--root"]
+    if len(c["parents"]) > 1:
+        args.append("-c")
+    out = git(*args, c["sha"])
+    parts = out.split("\0")
+    res = []
+    i = 0
+    while i < len(parts) - 1:
+        meta, path = parts[i], parts[i + 1]
+        i += 2
+        if not meta.startswith(":"):
+            continue
+        fields = meta.lstrip(":").split()
+        n = (len(fields) - 1) // 2  # modes and shas, one each per parent plus one for the result
+        modes, shas, status = fields[:n], fields[n:2 * n], fields[-1]
+        if shas[-1] == ZERO or modes[-1] == "160000" or "D" in status:
+            continue
+        res.append(("A" if set(status) == {"A"} else "M", path, shas[-1]))
+    return res
+
+
+def blob(sha):
+    return git("cat-file", "blob", sha, raw=True)
+
+
+def added_lines(c):
+    """[(path, line)] of lines the commit adds to text files (combined diff for a merge)."""
+    out = git("show", "--format=", "-U0", "--no-color", "--no-ext-diff", "--no-textconv",
+              "--no-renames", c["sha"])
+    width = max(1, len(c["parents"]))
+    path, res = None, []
+    for line in out.splitlines():
+        if line.startswith("+++ "):
+            path = line[4:]
+            path = path[2:] if path.startswith("b/") else path
+            continue
+        if line.startswith("@@") or line.startswith("---") or path is None:
+            continue
+        prefix = line[:width]
+        if "+" in prefix and "-" not in prefix and len(line) >= width:
+            res.append((path, line[width:]))
+    return res
+
+
+def patch_id(sha):
+    diff = git("show", "--format=", "--no-color", "--no-ext-diff", sha, raw=True)
+    try:
+        p = subprocess.run(["git", "patch-id", "--stable"], input=diff, capture_output=True)
+    except FileNotFoundError:
+        raise CannotRun("git is not installed")
+    out = p.stdout.decode().split()
+    return out[0] if out else ""
+
+
+# ── rows ─────────────────────────────────────────────────────────────────────────────────────
+def row_signature(ctx):
+    found = []
+    for c in ctx["commits"]:
+        if c["sig"] != "G":
+            found.append((c["sha"], None, SIG_REASON.get(c["sig"], "signature status %s" % c["sig"])))
+    return found
+
+
+def row_author_signer(ctx):
+    found = []
+    keys = ctx["signers"]
+    known = [p for ps in keys.values() for p in ps]
+    for c in ctx["commits"]:
+        email = c["email"]
+        if c["sig"] == "G":
+            patterns = keys.get(c["fp"])
+            if patterns is None:  # a key git matched that we could not fingerprint (a CA line)
+                patterns = [c["principal"]] if c["principal"] else []
+            if not principal_matches(email, patterns):
+                found.append((c["sha"], None, "author %s, but the signing key is listed for %s, "
+                              "not for that author" % (safe(email), safe(",".join(patterns)))))
+        elif principal_matches(email, known):
+            found.append((c["sha"], None, "author %s is on the allow-list, but the commit carries "
+                          "no listed signature (%s)" % (safe(email), SIG_REASON.get(c["sig"], c["sig"]))))
+    return found
+
+
+def row_copied_identity(ctx):
+    found = []
+    index = ctx["identity_index"]
+    for c in ctx["commits"]:
+        if len(c["parents"]) > 1:
+            continue
+        twins = [h for h in index.get(ctx["identity"][c["sha"]], []) if h != c["sha"]]
+        if not twins:
+            continue
+        mine = patch_id(c["sha"])
+        for t in twins:
+            if patch_id(t) != mine:
+                found.append((c["sha"], None, "author date and message equal those of %s, but the "
+                              "change differs" % t[:12]))
+                break
+    return found
+
+
+def _autorun_reason(path, data):
+    base = path.rsplit("/", 1)[-1]
+    parent = path.rsplit("/", 2)[-2] if path.count("/") else ""
+    text = data.decode("utf-8", "replace")
+    reasons = []
+    workspace = base.endswith(".code-workspace")
+    if (base == "tasks.json" and parent == ".vscode") or workspace:
+        if "folderOpen" in text:
+            reasons.append("a task runs when the folder is opened (runOn: folderOpen)")
+    if (base == "settings.json" and parent == ".vscode") or workspace:
+        for m in AUTO_TASKS.finditer(text):
+            if m.group(1) not in ('"off"', "false"):
+                reasons.append("task.allowAutomaticTasks is turned on")
+                break
+    if base == ".devcontainer.json" or ("/.devcontainer/" in "/" + path and base.endswith(".json")):
+        keys = [k for k in DEVCONTAINER_KEYS if re.search(r'"%s"\s*:' % k, text)]
+        if keys:
+            reasons.append("a dev container runs %s" % "/".join(keys))
+    if "/.githooks/" in "/" + path:
+        reasons.append("a committed git hook (.githooks/)")
+    return reasons
+
+
+def row_autorun(ctx):
+    found = []
+    for c in ctx["commits"]:
+        for _status, path, sha in ctx["blobs"][c["sha"]]:
+            if ctx["exempt"](path):
+                continue
+            base = path.rsplit("/", 1)[-1]
+            if not (base in ("tasks.json", "settings.json", ".devcontainer.json")
+                    or base.endswith(".code-workspace") or "/.devcontainer/" in "/" + path
+                    or "/.githooks/" in "/" + path):
+                continue
+            for r in _autorun_reason(path, blob(sha)):
+                found.append((c["sha"], path, r))
+        seen = set()
+        for path, line in ctx["added"](c):
+            if path in seen or ctx["exempt"](path):
+                continue
+            if any(p.search(line) for p in HOOKS_PATH) and not HOOKS_OFF.search(line):
+                seen.add(path)
+                found.append((c["sha"], path, "an added line sets git's hooks path (core.hooksPath)"))
+    return found
+
+
+def row_type_mismatch(ctx):
+    found = []
+    for c in ctx["commits"]:
+        for _status, path, sha in ctx["blobs"][c["sha"]]:
+            ext = os.path.splitext(path)[1].lower()
+            if ext not in MAGIC or ctx["exempt"](path):
+                continue
+            data = blob(sha)
+            if not data or LFS_POINTER.match(data):
+                continue
+            if any(data[off:off + len(m)] == m for off, m in MAGIC[ext]):
+                continue
+            head = data[:1024]
+            texty = b"\0" not in head and sum(9 <= b <= 13 or 32 <= b <= 126 for b in head) > 0.9 * len(head)
+            found.append((c["sha"], path, "a %s file whose bytes are not %s%s" % (
+                ext, ext[1:].upper(), " (they are text or script)" if texty else "")))
+    return found
+
+
+def row_obfuscation(ctx):
+    found = []
+    for c in ctx["commits"]:
+        for status, path, sha in ctx["blobs"][c["sha"]]:
+            if ctx["exempt"](path):
+                continue
+            data = blob(sha)
+            if b"\0" in data[:8192]:
+                continue
+            if (status == "A" and path.lower().endswith(JS_EXT) and len(data) > SINGLE_LINE_LIMIT
+                    and b"\n" not in data.rstrip(b"\r\n")):
+                found.append((c["sha"], path, "a new %d-byte JavaScript file on a single line" % len(data)))
+                continue
+            text = data.decode("utf-8", "replace")
+            if ROTATE.search(text) and (len(HEX_IDENT.findall(text)) >= 5 or STR_ARRAY.search(text)):
+                found.append((c["sha"], path, "the string-array-rotation shape of an obfuscator"))
+    return found
+
+
+ROWS = [
+    ("signature", "REFUSE", row_signature, True),
+    ("author-signer", "REFUSE", row_author_signer, True),
+    ("copied-identity", "WARN", row_copied_identity, False),
+    ("autorun-on-open", "REFUSE", row_autorun, False),
+    ("type-mismatch", "REFUSE", row_type_mismatch, False),
+    ("obfuscation", "REFUSE", row_obfuscation, False),
+]
+
+
+def build_context(rng, signers_file, allow_globs):
+    commits = commits_in(rng, signers_file)
+    if not commits:
+        raise CannotRun("0 commits in %s; nothing was checked, which is not a pass (a shallow or "
+                        "missing fetch produces exactly this)" % safe(rng))
+    ident_fmt = US.join(["%H", "%ad", "%B"]) + RS
+    index, identity = {}, {}
+    for rec in git("log", "--all", "--no-merges", "--date=raw", "--format=" + ident_fmt).split(RS):
+        rec = rec.lstrip("\n")
+        if not rec:
+            continue
+        h, date, msg = rec.split(US, 2)
+        key = (date, msg)
+        index.setdefault(key, []).append(h)
+        identity[h] = key
+    for c in commits:  # a range commit not reachable from any ref (a bare sha) still needs a key
+        if c["sha"] not in identity and len(c["parents"]) <= 1:
+            date, msg = git("log", "-1", "--date=raw", "--format=%ad" + US + "%B", c["sha"]).split(US, 1)
+            identity[c["sha"]] = (date, msg)
+            index.setdefault((date, msg), []).append(c["sha"])
+    cache = {}
+
+    def added(c):
+        if c["sha"] not in cache:
+            cache[c["sha"]] = added_lines(c)
+        return cache[c["sha"]]
+
+    return {
+        "commits": commits,
+        "signers": load_signers(signers_file) if signers_file else {},
+        "blobs": {c["sha"]: changed_blobs(c) for c in commits},
+        "identity_index": index,
+        "identity": identity,
+        "added": added,
+        "exempt": lambda p: any(fnmatch.fnmatchcase(p, g) for g in allow_globs),
+    }
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="provenance-check", add_help=True,
+                                 description="Refuse forged commits and files that run themselves.")
+    ap.add_argument("range", nargs="?", default="origin/main..HEAD")
+    ap.add_argument("--allowed-signers", metavar="FILE")
+    ap.add_argument("--allow-paths", metavar="FILE")
+    a = ap.parse_args(argv)
+    try:
+        if a.allowed_signers and not shutil.which("ssh-keygen"):
+            raise CannotRun("ssh-keygen is not installed; SSH signatures cannot be verified")
+        signers_file = os.path.abspath(a.allowed_signers) if a.allowed_signers else None
+        if signers_file:
+            load_signers(signers_file)  # fail early on an unreadable or empty list
+        ctx = build_context(a.range, signers_file, load_allow_paths(a.allow_paths))
+        refused = warned = 0
+        for name, level, fn, needs_signers in ROWS:
+            if needs_signers and not signers_file:
+                continue
+            for sha, path, why in fn(ctx):
+                where = sha[:12] + ("  " + safe(path) if path else "")
+                print("%-7s %-16s %s: %s" % (level, name, where, why))
+                if level == "REFUSE":
+                    refused += 1
+                else:
+                    warned += 1
+    except CannotRun as e:
+        print("provenance-check: cannot run: %s" % e, file=sys.stderr)
+        return 2
+    n = len(ctx["commits"])
+    print("provenance-check: %d commit(s) in %s · %d refused · %d warning(s)" % (n, safe(a.range), refused, warned))
+    if refused:
+        return 1
+    if not signers_file:
+        print("provenance-check: rows signature and author-signer NOT CHECKED (no --allowed-signers)")
+        return 3
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
