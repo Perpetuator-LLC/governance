@@ -190,7 +190,18 @@ Four tests, applied to every line in the human's section **in the first message*
    WHERE that value comes from** (which dashboard, which page), and **which of them are actually
    still missing**? A store the agent can read for key NAMES (never values) is read first; the
    human fills only what that read reported missing, never a list the agent assumed. This covers
-   **every prompt the script will raise**, not only the values typed into the block. A prompt that
+   **every prompt the script will raise**, not only the values typed into the block.
+   **Before any of them reaches the block, trace it to the file or service it unlocks and confirm
+   that thing exists on the path this run takes** — a flag kept after its feature shipped prompts
+   for nothing, with no live consumer anywhere. That is a script defect, fixed before hand-over,
+   never shipped as a line in the human's section — the same defect as asking for a value the store
+   already holds. **Where it is wrong:** a flag genuinely wired to another documented path or
+   caller, merely idle on this run, is not a leftover; only a prompt with no live consumer anywhere
+   is. **The neighbouring fix is different, not absent:** a prompt that gates a branch this run
+   deliberately skips is not raised on this run at all — that is a bug in the script's own flow, not
+   a hand-off defect to patch at review time. **During an incident**, tracing every flag can cost
+   more than the run saves; label it plainly — *"a leftover, type any value"*, with the ticket — and
+   never present it as a real credential. A prompt that
    asks for a credential which does not exist yet names where to create it and with which
    permissions. Measured: a script prompted for an admin token (hidden input) while the hand-off
    never said which token, where it is minted, or with what scope.
