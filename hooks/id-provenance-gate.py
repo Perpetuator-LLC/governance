@@ -132,14 +132,26 @@ def strip_fences(text):
 
 
 def extract_ids(text):
-    """Return [(kind, raw_match_string), ...] for every id-shaped reference in text."""
+    """Return [(kind, raw_match_string), ...] for every id-shaped reference in text.
+
+    A span already claimed by an EARLIER pattern in ID_PATTERNS is never claimed again by a later
+    one: "c120571" is both a short-comment (c + 6 digits) and a 7-char run of hex digits (c is a
+    valid hex letter), and the two kinds check different things in the transcript — the short form's
+    own id vs. a literal sha string that was never minted. Without this, a real, present short-comment
+    citation is refused as an absent commit-sha. Patterns are listed most-specific first for exactly
+    this reason."""
+    claimed = []  # [(start, end), ...], in match order
     found = []
     for kind, rx in ID_PATTERNS:
         for m in rx.finditer(text):
+            start, end = m.span()
+            if any(start < c_end and end > c_start for c_start, c_end in claimed):
+                continue
             raw = m.group(0)
             if kind == "commit-sha" and not re.search(r"[a-f]", raw):
                 continue  # an all-digit run (a date, a count) is not a sha: a sha has a hex LETTER
             found.append((kind, raw))
+            claimed.append((start, end))
     return found
 
 
