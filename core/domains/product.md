@@ -70,3 +70,50 @@ calendar review, not a diff check. **The mirror:** a REMOVED line falsifies a cl
 added one (a deleted retention limit or consent check), so a surface declares both directions. **The
 claims, their wording and the register belong to whoever owns them**, not to the code repository: the
 check needs only the paths, the patterns and a link.
+
+## A product that lets an agent act on a user's behalf publishes what that agent may and may not do
+
+**Once a product exposes a standardised interface (MCP or its equivalent) that lets a user connect a
+third-party AI agent to act on their account, the ordinary Terms/Privacy pair stops being enough.**
+Those documents assume the user is the only actor; the day a granted connection can take actions too,
+"the user agreed to this" is only true for what they specifically granted — and only if the policy
+states the boundary somewhere the user (and a platform reviewing the connector for its own directory)
+can actually read it.
+
+**The policy, published where it's reachable without signing in, names four things:**
+- **The scope model** — that access is granted per connection, not all-or-nothing, and each scope
+  covers one specific capability.
+- **A fixed deny list** — actions no connection may ever perform, regardless of what scope it holds.
+  The strongest candidates are the irreversible or other-party-affecting ones: moving money, deleting
+  the account, changing the user's own consent/privacy settings, reaching a *different* user's data,
+  changing sign-in/recovery credentials, or widening another connection's own grant. A capability that
+  doesn't exist yet (automated trading is a common one) still gets a *standing* entry, so it lands on
+  the list automatically the day someone builds it, not after a review nobody scheduled.
+- **Logging and attribution** — every action a connection takes is recorded under that connection's
+  own identity, separately from the user's own actions, and the record outlives a revocation by a
+  bounded window (the same shape as *Rotation is a routine, not a ceremony* in `security.md`, applied
+  to a grant instead of a credential: revoking ends the *access*, not the *history of what it once
+  had*).
+- **Where a user reviews and revokes it** — and, if the product is itself requesting a directory
+  listing, a statement of this policy's URL as a submission artifact in its own right, not folded
+  silently into the general privacy policy.
+
+**Scope:** applies when *third-party* software can act through a standardised, user-grantable
+interface. A product's own first-party automation (background jobs, scheduled tasks the user never
+individually grants) isn't this — there's no connection to scope, deny, or revoke.
+
+**Neighbouring case where this would be wrong, or at least lighter:** a *read-only* interface (a
+reporting integration that only ever reads) carries much lower stakes than one with write capability
+— the deny list matters most where a write exists at all. A read-only policy can be lighter on the
+deny list, but still needs the data-sharing disclosure below; dropping the whole policy because "it
+only reads" is the over-generalisation to watch for.
+
+**Mirror, and the one most likely to be skipped:** a deny list that covers every *write* says nothing
+about *reads* — data a connection is scoped to read still leaves the product's own boundary, to
+whatever external AI platform the user connected. That's a different axis (confidentiality, not
+authority/integrity) and needs its own disclosure: data a connection reads is sent to and processed by
+the platform the user chose to connect, which has its own practices the product doesn't control and
+the policy doesn't cover. Clearing the deny list and skipping this is solving half the problem while
+reading as having solved all of it.
+
+*(Exhibit kept in the adapter, not here — per Contributing a rule upstream above.)*

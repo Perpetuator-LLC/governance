@@ -57,6 +57,7 @@
       "rules": [
         "core/domains/security.md § A step handed to a human must be READABLE by the human who runs it",
         "core/domains/operations.md § Hand the human a SCRIPT, not steps — self-logging by design",
+        "core/domains/operations.md § Four tests a hand-off block must pass before the human sees it",
         "core/domains/operations.md § An ask parked on a human names its GATE and what the answer CAUSES"
       ]
     },
@@ -114,7 +115,7 @@
       "when": "Starting, ending or handing over an agent session.",
       "rules": [
         "core/domains/operations.md § A context reset releases nothing — walk what the session holds before it",
-        "core/domains/operations.md § An ask about a system another lane owns is ROUTED, not worked",
+        "core/domains/operations.md § An ask about a system another agent owns is ROUTED, not worked",
         "core/domains/operations.md § Routines are infrastructure — they migrate, or they silently die",
         "core/domains/technical.md § Agents that share a scratch directory write unique paths, and a publish step proves the file is its own"
       ]

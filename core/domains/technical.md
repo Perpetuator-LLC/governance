@@ -492,7 +492,7 @@ wrong number nobody acts on is a bug; a wrong number that argues against finishi
 acted on.
 
 **Narrowing a shipped filter is a semantic change to a contract, so price the blast radius first.**
-Enumerate every consumer before tightening it — and have the owning lane confirm its own side rather
+Enumerate every consumer before tightening it — and have the owning agent confirm its own side rather
 than accepting your reading of their code. That check costs minutes and is what separates narrowing
 from breaking.
 
@@ -949,6 +949,35 @@ providers: none"* reads as *"nothing here to protect"*.
   registry is only as good as the process that writes it, so provisioning writes the row before it
   creates the resource.
 
+## A worker claims its registry row at BOOT, not at the next rotation
+
+**The row that says who currently holds a seat is only as current as the last thing that wrote it,
+and "the next rotation sweep will catch it" is a schedule, not a guarantee.** A worker that boots in
+place of a dead, restarted, or replaced seat writes its own identity into that seat's registry row as
+part of booting, in the same act, never deferred to a periodic sweep — and the write is a
+compare-and-swap against the row's last-known holder, or is preceded by a liveness check of that
+holder, never an unconditional overwrite. Measured: a registry check run at successive rotations
+found the count of rows claiming "current" with nothing behind them growing — not shrinking —
+because every row's only writer was the rotation sweep itself, and any worker that started or
+restarted between sweeps left its row stale for the whole gap in between.
+
+**Where a claim at boot is wrong even within scope: the previous holder is still alive.** A worker
+started as a replacement while the old one is only slow, partitioned, or mid-drain takes over the row
+unconditionally, the router sends it work, and the live old one goes invisible — two holders, one row,
+no error from either. That is the measured case with one property inverted: the predecessor present
+instead of dead. When the predecessor still answers, the newcomer refuses the claim or records a
+conflict instead of taking the row.
+
+**Scope:** any seat, worker, or process whose "who currently holds this" row a router, monitor, or
+human reads to decide where to send work or whether something is alive.
+
+**Where it is wrong:** a resource with no successor — a one-shot job, a worker being retired rather
+than replaced — has no boot-time claim to make, because nothing takes its row over. The right action
+there is to retire the row at shutdown, not leave it stale waiting on a claim that will never come. A
+crash has no shutdown to retire the row at, so the periodic sweep stays as a backstop for that case —
+no longer the only writer, but still the thing that flags a row stale when nothing claimed or retired
+it.
+
 ## Deploys & health — pull-based
 
 - **Boxes deploy themselves** (webhook, HMAC-verified, + catch-up timer gated on CI-green
@@ -1094,10 +1123,10 @@ lifetime, and a hand-set 30-day renewal period on the same object survived its r
 **Nothing is promoted until the release's headline flows have been walked end to end on the staging
 environment, on the EXACT artifact pair being promoted.** The walk record names that pair (every
 artifact's build identifier); a re-cut of either side invalidates the walk, and it is repeated on the
-new pair. Each lane's own green is a **precondition** for starting the walk, never evidence for the
-promotion: each lane proves its half, and the defect lives where the halves meet. A cut receipt links
+new pair. Each agent's own green is a **precondition** for starting the walk, never evidence for the
+promotion: each agent proves its half, and the defect lives where the halves meet. A cut receipt links
 one walk record — who walked, environment, the artifact pair, steps, observed — and whoever declares
-readiness across lanes owns scheduling the walk and may not write *ready* without that link.
+readiness across agents owns scheduling the walk and may not write *ready* without that link.
 *"Unwalked"* in a readiness line is a block, not a caveat.
 
 ⚠️ **A WORK ITEM CLOSES ON VERIFICATION. A RELEASE CLOSES ON THE WALK. These are two different gates
@@ -1275,8 +1304,8 @@ at all: not a failure, not a pending, nothing to read. It looks identical to a q
 head whose run has not been scheduled yet.
 
 ⚠️ **Do not read that as "do not let a bot push."** The rule is about the identity that raised the
-event, not the verb — two lanes hit this on different verbs, and the second nearly escaped the first
-lane's write-up because it named only pushes. Whenever automation creates the event that is supposed
+event, not the verb — two agents hit this on different verbs, and the second nearly escaped the first
+agent's write-up because it named only pushes. Whenever automation creates the event that is supposed
 to gate a head, check that the event actually started a run.
 
 **Two consequences.** Any automated push to a ref that is supposed to be gated must use a credential
@@ -1445,7 +1474,7 @@ answers is not the one being asked.
 **Measured:** a branch was judged to "revert ~568 lines of live content" on merge, and a cherry-pick
 was performed to avoid it. A test-merge into the same head gave **exit 0, no conflicts, 2 files,
 +35/−8, and no file touched outside the intended directory** — identical to the cherry-pick's own
-delta. The 568 was the two-dot figure. Two lanes then reproduced it independently, one with
+delta. The 568 was the two-dot figure. Two agents then reproduced it independently, one with
 `git merge-tree --write-tree`, before it was corrected.
 
 **The damage is the belief, not the wasted PR.** *"A branch behind the default branch reverts the
@@ -1518,7 +1547,7 @@ not firmly know its own seat name picks a plausible wrong one, and a machine-sco
 branch left over from an earlier convention is the most plausible wrong one of all, because it looks
 like the general-purpose choice.
 
-**So the selection is by exact match on the seat's own identity — lane AND harness — and a near
+**So the selection is by exact match on the seat's own identity — agent AND harness — and a near
 match is a stop, not a default.** If exactly one candidate matches, use it. If none does, **create
 it**; a missing branch is not licence to open a feature pull request against the default branch,
 which is the failure this rule exists to prevent and the one an empty read invites. If several match,
@@ -3055,7 +3084,7 @@ about anything.
 The remedy a finding prints will be run by someone who has not re-derived the situation — that is
 its purpose. **So the detector must verify the preconditions its own remedy assumes**, or it
 becomes the instruction that causes the next incident. In particular, a remedy that rebuilds
-something *from a working tree* assumes that tree holds only what is merged; a lane sitting on a
+something *from a working tree* assumes that tree holds only what is merged; an agent sitting on a
 feature branch would publish its unmerged draft by following the advice, turning a freshness
 warning into a review bypass. **Check the tree's state and say so when it is not what the remedy
 needs** — and where the remedy is unsafe, the finding must withhold it rather than print it with a
@@ -3719,7 +3748,7 @@ paragraphs above; the two would contradict each other. **Hunt to discover, const
 ⚠️ **And a control you did not verify is not a control, so agreement with it is not corroboration.**
 Two runs reaching the same answer feel like confirmation, and the feeling is the risk: an unverified
 instrument agreeing with a verified one adds **no** evidence, while looking exactly like a second
-opinion. Measured, on the reproduction of this very rule: one lane's control branch merged clean when
+opinion. Measured, on the reproduction of this very rule: one agent's control branch merged clean when
 it was expected to conflict (a weak control, proving nothing), and its replacement was built with an
 invalid commit invocation, so both branches stayed at the **same SHA** — merging a branch into itself,
 which is clean by definition and printed as a passing control. Two independent runs then reported the
