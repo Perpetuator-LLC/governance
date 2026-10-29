@@ -1386,17 +1386,22 @@ stays open"*, and never put a closing keyword (close, fix, resolve, in any form)
 a title, body, comment or commit message. **Where it is wrong:** a pull request that really completes
 the ticket should use the keyword; that is what it is for.
 
-**A fold that lands several feeders' tickets in one pull request lists every one of them** — one
-closing reference per ticket, not only the fold's own if it has one — **when, and only when, that pull
-request's own merge is the event that fires closing.** A reader checking a single reference and
-seeing it close reasonably assumes the others in the same fold did too; naming only one leaves every
-other feeder's ticket open with its work already shipped. **Where this is wrong, the same way the forge-side half of this already is** (`technical.md` →
-*A forge closes a pull request only on its OWN merge — one merged another way stays open*): a fold
-into an intermediate integration branch, not yet the one a closing keyword fires on, is not that
-event. A keyword written at that step closes nothing on most forges, or closes a ticket for work that
-has not reached the default branch yet on one that tracks ancestry more eagerly. Name the folded
-tickets in prose there instead (*"folds #N1, #N2"*), and put the closing keywords, one per ticket, on
-whichever pull request actually lands the work on the branch where closing fires.
+**A fold that lands several feeders' tickets in one pull request lists a closing reference for every
+ticket the fold COMPLETES — never one it only partly carries, and not only the fold's own if it has
+one.** A feeder that is only a slice of its ticket gets `Refs #N` in the fold instead, the same
+distinction the rule above draws for a single change, now applied per feeder inside one fold: closing
+every ticket the fold merely touches, finished or not, closes work that is not actually done — exactly
+the failure this rule's own parent forbids. This holds **when, and only when, that pull request's own
+merge is the event that fires closing.** A reader checking a closing reference and seeing it close
+reasonably assumes the ticket is finished; naming a completed one but omitting another that is also
+done leaves its work shipped but its ticket open. **Where this is wrong, the same way the forge-side
+half of this already is** (`technical.md` → *A forge closes a pull request only on its OWN merge — one
+merged another way stays open*): a fold into an intermediate integration branch, not yet the one a
+closing keyword fires on, is not that event. A keyword written at that step closes nothing on most
+forges, or closes a ticket for work that has not reached the default branch yet on one that tracks
+ancestry more eagerly. Name the folded tickets in prose there instead (*"folds #N1 (done), refs #N2
+(partial)"*), and put the closing keywords, one per COMPLETED ticket, on whichever pull request
+actually lands the work on the branch where closing fires.
 
 ## A green run proves only the steps that EXECUTED in it
 

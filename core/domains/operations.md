@@ -1344,6 +1344,11 @@ forgotten — a design debt it merely exposed, a defect in a file it happens to 
 change — outlives the review and is a ticket, not a comment, because the review closing must not make
 the finding disappear with it.
 
+**This does not contradict a standalone security audit's own rule** (`security.md` → *Security
+review: identify → ticket → hand off*): that pass has no open pull request to post to, so a ticket is
+its only channel. Here the pull request already is the channel a finding on its own diff belongs on —
+the same preference for wherever the work already lives, pointed at whichever channel that actually is.
+
 ## A message to another seat states one change and links the artifact; it never restates what the artifact says
 
 **A message to another seat states one change and links the artifact it concerns, and never restates

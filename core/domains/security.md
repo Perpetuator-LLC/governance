@@ -1022,15 +1022,22 @@ in through a deadline field.
 **A newly published package version is the cheapest moment to compromise a dependency**: a hijacked
 maintainer account, a typosquatted name, or a deliberately poisoned release has had the least possible
 time to be noticed, reported, and pulled before something downstream installs it. A floor on release
-age — refuse to adopt or bump to a version published within the last 7 days — buys exactly that
-detection window for free, trading a few days' delay on the newest release for the time most registries'
-own abuse reports take to surface.
+age — refuse to adopt or bump to a version published within some window, seven days is a reasonable
+starting point, each organisation sets its own — buys exactly that detection window for free, trading a
+short delay on the newest release for the time most registries' own abuse reports take to surface.
+
+**The age that floors the gate is the NEWEST thing in the release, never its top-level publish date
+alone.** A release can be mutated after it first ships — a file added or replaced with no new version
+number — and a gate that reads only the version's original publish date lets that later content ride in
+on an already-trusted date. Flooring on the MINIMUM age across a release's files makes this worse, not
+better: one old file is enough to pass a release that also just gained a new one. Date every file the
+release carries, and floor on the latest.
 
 **The gate fails CLOSED on a date it cannot read**, the same missing-field discipline *A gate that
 accepts exceptions bounds them, and a missing field is never "no finding"* above already requires of a
 scanner's findings, applied here to the one input this gate floors on: a registry that returns no
-publish timestamp for a version, a network failure, or a malformed response is refused the same as a
-too-recent one, never silently treated as old enough to pass.
+publish timestamp for a version or any of its files, a network failure, or a malformed response is
+refused the same as a too-recent one, never silently treated as old enough to pass.
 
 **Scope:** automated dependency bumps and new package installs in a build or CI pipeline. **Where it
 is wrong:** a patch for an actively exploited vulnerability in a dependency already in use is the one
