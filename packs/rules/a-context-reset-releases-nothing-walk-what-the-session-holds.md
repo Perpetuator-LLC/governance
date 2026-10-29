@@ -52,7 +52,7 @@ directly, in the same pass as it reads the record:
 - **An empty result counts only beside a control** read in the same pass, such as the number of
   targets the alerting system is scraping. A dead alerting system also returns no alerts.
 
-**Scope:** roles that own alert response. A lane that never answers alerts has nothing to inherit.
+**Scope:** roles that own alert response. An agent that never answers alerts has nothing to inherit.
 
 **Distil, do not dump.** The record a successor reads holds the reduced fact (what is true, what to
 do) with a one-way link to the raw source, never the raw source pasted in. The raw material is for

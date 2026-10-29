@@ -32,7 +32,7 @@ because inspecting a payload is how you review one.
 everything near it.** An over-broad guard is *deleted by the next person*, so over-breadth costs you
 the guard itself — not merely some friction. Measured elsewhere the same night: a commit guard that
 refused to run on **any** dirty worktree blocked immediately on a legitimate untracked output file,
-which is the normal working state of that lane; narrowed to **tracked** changes it defends what it
+which is the normal working state of that agent; narrowed to **tracked** changes it defends what it
 was written for and stops obstructing the job.
 
 ⚠️ **Over-breadth reaches the deleted guard by two roads, and the second is faster.** Friction is the

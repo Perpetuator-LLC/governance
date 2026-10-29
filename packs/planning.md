@@ -31,7 +31,7 @@ rule: a-done-when-names-the-committed-surface-that-takes-its-recei
 
 ## Reproduce a bug before fixing it, on the current code, and record it on the ticket
 
-**A bug ticket describes the code as it was when it was filed.** Where several lanes land changes in
+**A bug ticket describes the code as it was when it was filed.** Where several agents land changes in
 parallel, a reported defect is often already gone, removed as a side effect of another fix. A fix
 written against the report then fixes nothing, or solves a solved problem a second time in a shape
 that conflicts with the first.

@@ -36,8 +36,8 @@ rule: deploys-health-pull-based
 **Nothing is promoted until the release's headline flows have been walked end to end on the staging
 environment, on the EXACT artifact pair being promoted.** The walk record names that pair (every
 artifact's build identifier); a re-cut of either side invalidates the walk, and it is repeated on the
-new pair. Each lane's own green is a **precondition** for starting the walk, never evidence for the
-promotion: each lane proves its half, and the defect lives where the halves meet. […]
+new pair. Each agent's own green is a **precondition** for starting the walk, never evidence for the
+promotion: each agent proves its half, and the defect lives where the halves meet. […]
 
 rule: the-promotion-gate-is-a-walked-stage-and-a-deploy-is-fully-a
 

@@ -11,7 +11,7 @@ answers is not the one being asked.
 **Measured:** a branch was judged to "revert ~568 lines of live content" on merge, and a cherry-pick
 was performed to avoid it. A test-merge into the same head gave **exit 0, no conflicts, 2 files,
 +35/−8, and no file touched outside the intended directory** — identical to the cherry-pick's own
-delta. The 568 was the two-dot figure. Two lanes then reproduced it independently, one with
+delta. The 568 was the two-dot figure. Two agents then reproduced it independently, one with
 `git merge-tree --write-tree`, before it was corrected.
 
 **The damage is the belief, not the wasted PR.** *"A branch behind the default branch reverts the

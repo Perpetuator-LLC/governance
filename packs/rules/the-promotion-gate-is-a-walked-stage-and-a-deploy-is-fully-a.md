@@ -6,10 +6,10 @@ source: core/domains/technical.md
 **Nothing is promoted until the release's headline flows have been walked end to end on the staging
 environment, on the EXACT artifact pair being promoted.** The walk record names that pair (every
 artifact's build identifier); a re-cut of either side invalidates the walk, and it is repeated on the
-new pair. Each lane's own green is a **precondition** for starting the walk, never evidence for the
-promotion: each lane proves its half, and the defect lives where the halves meet. A cut receipt links
+new pair. Each agent's own green is a **precondition** for starting the walk, never evidence for the
+promotion: each agent proves its half, and the defect lives where the halves meet. A cut receipt links
 one walk record — who walked, environment, the artifact pair, steps, observed — and whoever declares
-readiness across lanes owns scheduling the walk and may not write *ready* without that link.
+readiness across agents owns scheduling the walk and may not write *ready* without that link.
 *"Unwalked"* in a readiness line is a block, not a caveat.
 
 ⚠️ **A WORK ITEM CLOSES ON VERIFICATION. A RELEASE CLOSES ON THE WALK. These are two different gates
