@@ -3788,6 +3788,55 @@ re-opening is harmless and holding a handle open across the gap may be the worse
 pressure, a lock held longer than it needs to be). State the writability assumption the rule depends on,
 rather than applying it by reflex.
 
+## A gate tests the artifact by its EXACT identifier — the checkout beside it is a different object
+
+**The rule above is the TOCTOU-shaped instance of a wider mistake, and the wider one needs no race at
+all: a gate verifies whatever its own process happens to be sitting on, instead of the commit SHA,
+image digest or build id the action it gates will actually use.** A working tree, a locally checked-out
+branch, an in-memory build are mutable state the gate's process occupies; the artifact about to be
+pushed, deployed or promoted is whatever identifier the action command itself names, and nothing makes
+the two the same object once anything can select them independently. Measured: a pre-push check tested
+the working tree at one commit while the push itself sent a different, already-built release artifact
+at a different commit — the check reported green, and the artifact it never looked at shipped
+unverified.
+
+**So: resolve the exact identifier the action will use FIRST, gate on that value by name, and re-read
+it from wherever the action itself will read it — never from the gate process's own ambient state.**
+
+**The mirror, and the reason this is not "re-verify everything, always": an artifact already proven by
+a passed run keyed to that EXACT identifier needs no re-test.** A later step that acts on the SAME
+SHA or digest is covered by the run that already verified it; re-running the check is not extra safety,
+it is re-deriving a result already on record, and it does nothing about the actual failure above — a
+gate that quietly verified a DIFFERENT, unidentified object (`technical.md` → *A merge-ready claim
+covers EVERY CI run for the head, queried by the full id*).
+
+**A third face, where the SUCCESS CLAIM itself is the proxy: a message keys on a value the action
+CHANGES, never one already true before it ran.** An exit code of zero, a service already up, a lock
+already free: each can hold whether or not the action's own work happened, so a message built from one
+of them cannot tell a completed action from one that took a no-op path and skipped silently. Measured:
+a deploy script that lost a lock and skipped its own recreate step printed the same success line used
+for a real one, because the line was written once, independent of which branch ran. Name the thing the
+action produced that did not exist, or held a different value, before it ran — a new container id, an
+incremented generation, a timestamp that moved.
+
+**Scope:** any gate, hook, or deploy/promotion step whose verdict or message is later read as license
+to trust a named artifact or action. **Where it is wrong:**
+- A gate whose entire job is to inspect local or uncommitted state FOR ITS OWN SAKE (a pre-commit
+  linter over staged changes, a check that refuses on an uncommitted secret) has no separate "real
+  artifact" to diverge from — the working tree IS the subject, by definition, and the first face does
+  not apply.
+- An identifier that changed since the last passed run (a re-cut, a force-push, a rebuild) is not
+  covered by the second face's exemption — that is a different artifact under the same name, which
+  invalidates the prior run rather than needing none (`technical.md` → *The promotion gate is a walked
+  STAGE, and a deploy is fully automated*).
+- A reconciler or desired-state apply whose contract IS "already correct, no change made" reports
+  exactly that as its own honest, distinct outcome — the third face forbids claiming a change
+  happened, not reporting that none was needed.
+
+**Tripwire:** a hook or script that hashes, diffs, or names `HEAD` / `.` / "the current checkout" as
+its subject, while the action it gates takes an explicit ref, SHA or digest argument of its own, is
+this bug, every time the two can diverge.
+
 ## A working copy with no dependency environment of its own silently borrows another's
 
 **When several checkouts of one project share a machine, a checkout whose dependency environment is
