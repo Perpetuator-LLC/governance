@@ -411,19 +411,21 @@ runtime**, and the exposure that matters is usually created by a change that pri
    directories) of every agent-readable store — run logs, agent transcripts, knowledge-base exports,
    backups — so an exposure that slips past the gate is found in a day, not by luck. A hit is a
    disclosure: rotate, then purge.
-4. **A secret CENSUS over a set of repositories is the same shape-only discipline as the scan
-   above, run on the BARE MIRROR, with a positive control.** Classify a hit by shape — length, a
-   character-class pattern, or a comparison against a known public key or fingerprint — and its
-   location, never the matched value. Clone and scan the bare mirror (`git clone --mirror`), never a
-   working checkout: a repository that may be exposed cannot be trusted to open cleanly, and an
-   editor-auto-run payload (a workspace task, a hook, a config file some editor or IDE executes on
-   open) can fire the moment a normal clone is checked out and opened, turning the census itself into
-   the next compromise. The census needs its own positive control: plant one known secret-shaped
-   value in a throwaway fixture repository before the run, and confirm the census reports it — a
-   census never proven to fire on a real hit is unverified in the one direction that matters. **Where
-   it is wrong:** a single repository already checked out and trusted for other work does not need
-   re-cloning as a bare mirror to run this scan locally; the risk is in acting on an untrusted
-   repository's working tree, not in scanning one you already use safely.
+## A secret census over a set of repositories runs on the BARE MIRROR, with a positive control
+
+**A secret census over a set of repositories is the same shape-only discipline as the shape scan in
+*The BLIND PIPELINE* above, run on the BARE MIRROR.** Classify a hit by shape — length, a
+character-class pattern, or a comparison against a known public key or fingerprint — and its
+location, never the matched value. Clone and scan the bare mirror (`git clone --mirror`), never a
+working checkout: a repository that may be exposed cannot be trusted to open cleanly, and an
+editor-auto-run payload (a workspace task, a hook, a config file some editor or IDE executes on
+open) can fire the moment a normal clone is checked out and opened, turning the census itself into
+the next compromise. The census needs its own positive control: plant one known secret-shaped
+value in a throwaway fixture repository before the run, and confirm the census reports it — a
+census never proven to fire on a real hit is unverified in the one direction that matters. **Where
+it is wrong:** a single repository already checked out and trusted for other work does not need
+re-cloning as a bare mirror to run this scan locally; the risk is in acting on an untrusted
+repository's working tree, not in scanning one you already use safely.
 
 ## Found a hardcoded secret — rotation order matters
 

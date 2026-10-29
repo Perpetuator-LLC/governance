@@ -61,4 +61,31 @@ never argv. A ceremony that PRINTS a secret is worse than one that asks for it.
   what it skipped without reading it. **Scope:** any walker whose output reaches a log or a person;
   one that only counts matches still reads, but prints nothing to leak.
 
-[truncated: this rule continues in the core source]
+⚠️ **CODE that prints a secret — and the day its output gains a reader.** The rules above bind what an
+agent does and the commands it hands a human; they say nothing about **code that prints a secret at
+runtime**, and the exposure that matters is usually created by a change that prints nothing new.
+1. **Automation and every probe report a secret's PRESENCE, never its value or any part of it.**
+   This binds an ad-hoc command an agent runs while diagnosing as much as code that runs unattended.
+   Print `present / missing`, a length, counts of character classes, the truth of a named predicate
+   (`starts with "Bearer "`: true/false), or a verification result. **Never a substring: not a
+   "scheme", a prefix or a suffix, even when you believe you know the format.** The format is what
+   you are probing because you do not know it, and a slice written for the expected shape prints the
+   value under any other. A masked prefix-and-suffix is still a fragment.
+   - **Whether a value is secret-bearing is decided by its SOURCE** (a secret store, a credential
+     file, an auth header, a helper that emits one, a token-named variable), never by what you expect
+     it to look like.
+   - **Scope:** a value that is not secret-bearing by source (a URL's host, a public-key fingerprint,
+     an ordinary config field) may be printed.
+   - A step that holds a raw value suppresses its own output (for example a task-level no-log flag),
+     because verbose modes and failure dumps print task results.
+2. **Widening who can read an output is a secret-exposure change.** Terminal → file → agent-read
+   file → transcript → export → backup: each step outlives and out-reaches the one before. The change
+   that widens a channel must, **in the same change**, audit every producer that writes to it and add
+   a CI gate that fails on a print/log/debug/assert statement interpolating a secret-named variable,
+   proven to fire on a known-bad control. This is *type-changing invalidates old detectors* applied to
+   **readership**: a scanner of committed content never sees code that prints a value, nor the runtime
+   stores agents read.
+3. **A gate is not a detector.** Also schedule a **shape scan** (a secret scanner run over non-git
+   directories) of every agent-readable store — run logs, agent transcripts, knowledge-base exports,
+   backups — so an exposure that slips past the gate is found in a day, not by luck. A hit is a
+   disclosure: rotate, then purge.
