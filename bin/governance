@@ -171,9 +171,12 @@ SEED_INSTRUCTIONS_BUDGET = 1024        # bytes — a server embeds this file ver
 # a directory join, and an org id has no legitimate use for one.
 SEED_AUDIENCE_RX = re.compile(r"^(public|org:[A-Za-z0-9_-]+)\Z")
 # An engagement name is a free-form label (it may carry a ticket-ref shape, #, etc. — redaction-check
-# scans it where it lands in bundle.json) EXCEPT for the two shapes that still mean something once this
-# string reaches os.path.join: a path separator, or a ".." traversal segment anywhere in it.
+# scans it where it lands in bundle.json) EXCEPT for the shapes that still mean something once this
+# string reaches os.path.join as ONE path component: a path separator, a ".." traversal anywhere in
+# it, or the component being exactly "." or ".." (the single-dot form has no ".." substring to catch,
+# and `engagements/.` is the whole engagements/ directory, G8 leaking every client's own content).
 SEED_ENGAGEMENT_UNSAFE_RX = re.compile(r"[/\\]|\.\.")
+SEED_ENGAGEMENT_DOT_NAMES = (".", "..")
 SEED_INSTANCE_KIND_PREFIX = "instance-name:"  # redaction-check's own tag for every --private-patterns
                                                # match ("instance-name:<line>"); every SHAPE_PATTERNS
                                                # kind is a fixed name (e.g. "ticket-ref") that never
@@ -487,7 +490,8 @@ def cmd_render_or_check_seed(a):
     core = a.core or os.path.join(ROOT, "core")
     adapters = list(a.adapter)
     engagements = set(a.engagement or [])
-    bad = sorted(n for n in engagements if not n or SEED_ENGAGEMENT_UNSAFE_RX.search(n))
+    bad = sorted(n for n in engagements
+                 if not n or n in SEED_ENGAGEMENT_DOT_NAMES or SEED_ENGAGEMENT_UNSAFE_RX.search(n))
     if bad:
         print(f"error: --engagement name(s) {bad!r} carry a path separator or '..' — refused, since "
               "this name joins a directory path", file=sys.stderr)

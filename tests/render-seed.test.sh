@@ -343,6 +343,22 @@ rc="$(gov render --target seed --out "$TMP/seed-trav" --core "$CORE2" --adapter 
 check "KAT: an --engagement name carrying a path separator or '..' is refused (exit 2), not joined into a path" \
   "[ '$rc' = '2' ] && grep -qi \"path separator\" '$TMP/stderr'"
 
+# A bare "." has no ".." substring, so the regex above misses it — and engagements/. IS the whole
+# engagements/ directory: every client's content would leak in at once, not just one scoped by name.
+rc="$(gov render --target seed --out "$TMP/seed-dot" --core "$CORE2" --adapter "$ADAPTER2" \
+  --engagement '.' --audience 'org:acme-corp' )"
+check "KAT: --engagement '.' is refused (exit 2) — it is the whole engagements/ directory, not a name" \
+  "[ '$rc' = '2' ] && grep -qi \"path separator\" '$TMP/stderr'"
+rc="$(gov render --target seed --out "$TMP/seed-dotdot" --core "$CORE2" --adapter "$ADAPTER2" \
+  --engagement '..' --audience 'org:acme-corp' )"
+check "KAT: --engagement '..' is refused (exit 2)" "[ '$rc' = '2' ]"
+rc="$(gov render --target seed --out "$TMP/seed-empty" --core "$CORE2" --adapter "$ADAPTER2" \
+  --engagement '' --audience 'org:acme-corp' )"
+check "KAT: an empty --engagement name is refused (exit 2)" "[ '$rc' = '2' ]"
+rc="$(gov render --target seed --out "$TMP/seed-bs" --core "$CORE2" --adapter "$ADAPTER2" \
+  --engagement '\' --audience 'org:acme-corp' )"
+check "KAT: a bare backslash --engagement name is refused (exit 2)" "[ '$rc' = '2' ]"
+
 # item 3: the audience regex's `$` allows a trailing newline, and `.` in an org id allowed `org:..`.
 rc="$(gov render --target seed --out "$TMP/seed-aud1" --core "$CORE2" --adapter "$ADAPTER2" \
   --engagement acme --audience $'org:acme\n' )"
