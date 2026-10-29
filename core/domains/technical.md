@@ -954,17 +954,29 @@ providers: none"* reads as *"nothing here to protect"*.
 **The row that says who currently holds a seat is only as current as the last thing that wrote it,
 and "the next rotation sweep will catch it" is a schedule, not a guarantee.** A worker that boots in
 place of a dead, restarted, or replaced seat writes its own identity into that seat's registry row as
-part of booting, in the same act, never deferred to a periodic sweep. Measured: a registry check run
-at successive rotations found the count of rows claiming "current" with nothing behind them growing
-— not shrinking — because every row's only writer was the rotation sweep itself, and any worker that
-started or restarted between sweeps left its row stale for the whole gap in between.
+part of booting, in the same act, never deferred to a periodic sweep — and the write is a
+compare-and-swap against the row's last-known holder, or is preceded by a liveness check of that
+holder, never an unconditional overwrite. Measured: a registry check run at successive rotations
+found the count of rows claiming "current" with nothing behind them growing — not shrinking —
+because every row's only writer was the rotation sweep itself, and any worker that started or
+restarted between sweeps left its row stale for the whole gap in between.
+
+**Where a claim at boot is wrong even within scope: the previous holder is still alive.** A worker
+started as a replacement while the old one is only slow, partitioned, or mid-drain takes over the row
+unconditionally, the router sends it work, and the live old one goes invisible — two holders, one row,
+no error from either. That is the measured case with one property inverted: the predecessor present
+instead of dead. When the predecessor still answers, the newcomer refuses the claim or records a
+conflict instead of taking the row.
 
 **Scope:** any seat, worker, or process whose "who currently holds this" row a router, monitor, or
 human reads to decide where to send work or whether something is alive.
 
 **Where it is wrong:** a resource with no successor — a one-shot job, a worker being retired rather
 than replaced — has no boot-time claim to make, because nothing takes its row over. The right action
-there is to retire the row at shutdown, not leave it stale waiting on a claim that will never come.
+there is to retire the row at shutdown, not leave it stale waiting on a claim that will never come. A
+crash has no shutdown to retire the row at, so the periodic sweep stays as a backstop for that case —
+no longer the only writer, but still the thing that flags a row stale when nothing claimed or retired
+it.
 
 ## Deploys & health — pull-based
 
