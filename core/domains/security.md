@@ -1029,9 +1029,9 @@ short delay on the newest release for the time most registries' own abuse report
 **The age that floors the gate is the NEWEST thing in the release, never its top-level publish date
 alone.** A release can be mutated after it first ships — a file added or replaced with no new version
 number — and a gate that reads only the version's original publish date lets that later content ride in
-on an already-trusted date. Flooring on the MINIMUM age across a release's files makes this worse, not
-better: one old file is enough to pass a release that also just gained a new one. Date every file the
-release carries, and floor on the latest.
+on an already-trusted date. Flooring on the OLDEST file's date — the MAXIMUM age across a release's
+files — makes this worse, not better: one old file is enough to pass a release that also just gained a
+new one. Date every file the release carries, and floor on the latest, which is the MINIMUM age.
 
 **The gate fails CLOSED on a date it cannot read**, the same missing-field discipline *A gate that
 accepts exceptions bounds them, and a missing field is never "no finding"* above already requires of a
