@@ -57,9 +57,11 @@ searched, not parsed for ids):
   - a state-card anchor:     #i=<token>       (a uuid, or a bare placeholder)
   - a commit sha:            a bare 7-40 hex-digit run, word-bounded
 
-PLACEHOLDERS always refuse, independent of the transcript: `#i=PENDING` and any angle-bracket
-stand-in (`<id>`, `<uuid>`, ...) are never a real id, so "it doesn't appear yet" is not the finding —
-it should never have been typed as a citation at all.
+PLACEHOLDERS always refuse, independent of the transcript: `#i=PENDING` and an angle-bracket stand-in
+whose name IS an id word (`<id>`, `<uuid>`, `<sha>`, `<comment-id>`, ...) are never a real id, so "it
+doesn't appear yet" is not the finding — it should never have been typed as a citation at all. An
+angle-bracket tag that is not an id word (`<sub>`, `<details>`, `<summary>`, ...) is ordinary Markdown
+HTML, such as an attribution footer, and is never a placeholder.
 
 FENCED CODE the body itself quotes (```...```) is stripped before extraction: a body illustrating or
 quoting example text is not making a live citation, and flagging it would teach the rule's own
@@ -81,10 +83,16 @@ ID_PATTERNS = [
     ("card-anchor", re.compile(r"#i=([0-9a-fA-F-]{8,36})")),
     ("commit-sha", re.compile(r"(?<![A-Za-z0-9_])([0-9a-f]{7,40})(?![A-Za-z0-9_])")),
 ]
-PLACEHOLDER_PATTERNS = [
-    re.compile(r"#i=PENDING\b"),
-    re.compile(r"<[A-Za-z][A-Za-z0-9_-]*>"),
-]
+PLACEHOLDER_LITERAL_RX = re.compile(r"#i=PENDING\b")
+PLACEHOLDER_TAG_RX = re.compile(r"<([A-Za-z][A-Za-z0-9_-]*)>")
+# A bare word that NAMES an id, not an HTML/Markdown tag (<sub>, <details>, <summary>, ... are real
+# markup the fleet ships routinely, e.g. an attribution footer, and are never a citation stand-in).
+PLACEHOLDER_WORDS = {"id", "uuid", "sha", "hash", "token", "n", "num", "number", "pending"}
+
+
+def _is_placeholder_word(name):
+    key = name.lower().replace("-", "").replace("_", "")
+    return key in PLACEHOLDER_WORDS or key.endswith(("id", "sha", "uuid"))
 
 
 def load_gated_tools(path):
@@ -128,12 +136,17 @@ def extract_ids(text):
     found = []
     for kind, rx in ID_PATTERNS:
         for m in rx.finditer(text):
-            found.append((kind, m.group(0)))
+            raw = m.group(0)
+            if kind == "commit-sha" and not re.search(r"[a-f]", raw):
+                continue  # an all-digit run (a date, a count) is not a sha: a sha has a hex LETTER
+            found.append((kind, raw))
     return found
 
 
 def extract_placeholders(text):
-    return [m.group(0) for rx in PLACEHOLDER_PATTERNS for m in rx.finditer(text)]
+    found = [m.group(0) for m in PLACEHOLDER_LITERAL_RX.finditer(text)]
+    found += [m.group(0) for m in PLACEHOLDER_TAG_RX.finditer(text) if _is_placeholder_word(m.group(1))]
+    return found
 
 
 def id_variants(kind, raw_id):
@@ -203,7 +216,9 @@ def main():
     if not text:
         return 0
 
-    placeholders = extract_placeholders(text)
+    scan_text = strip_fences(text)
+
+    placeholders = extract_placeholders(scan_text)
     if placeholders:
         print(
             f"BLOCKED: cites a placeholder id ({placeholders[0]!r}) — "
@@ -212,7 +227,6 @@ def main():
         )
         return 2
 
-    scan_text = strip_fences(text)
     ids = extract_ids(scan_text)
     if not ids:
         return 0

@@ -89,6 +89,34 @@ out=$(run_gate SendMessage message "ping <id> when ready" "$T4"); rc=$?
 [[ $rc -eq 2 ]] && pass "angle-bracket placeholder <id>: refused" \
   || fail "angle-bracket placeholder was allowed (rc=$rc): $out"
 
+out=$(run_gate SendMessage message "see the <comment-id> once minted" "$T4"); rc=$?
+[[ $rc -eq 2 ]] && pass "angle-bracket placeholder <comment-id>: refused" \
+  || fail "angle-bracket placeholder <comment-id> was allowed (rc=$rc): $out"
+
+# --- 4b. ordinary Markdown/HTML tags are NOT placeholders — the fleet ships a <sub> footer routinely ---
+out=$(run_gate SendMessage message "posted.
+
+<sub>Seat: some-seat</sub>" "$T4"); rc=$?
+[[ $rc -eq 0 ]] && pass "a <sub>...</sub> attribution footer: not a placeholder, allowed" \
+  || fail "a <sub> footer was refused as a placeholder (rc=$rc): $out"
+
+out=$(run_gate SendMessage message "<details><summary>more</summary>text</details>" "$T4"); rc=$?
+[[ $rc -eq 0 ]] && pass "<details><summary> markup: not a placeholder, allowed" \
+  || fail "<details>/<summary> markup was refused as a placeholder (rc=$rc): $out"
+
+# --- 4c. a placeholder INSIDE a fenced example is stripped before the placeholder check runs,
+#     same as a real id would be (the docstring's own ordering claim) ---
+out=$(run_gate SendMessage message 'example: ```see #i=<uuid> in the old format```' "$T4"); rc=$?
+[[ $rc -eq 0 ]] && pass "placeholder inside a fenced block: not flagged" \
+  || fail "placeholder inside a fenced block was refused (rc=$rc): $out"
+
+# --- 4d. an all-digit run (a date, a count) is not a commit sha ---
+T4d="$TMP/t4d.jsonl"
+mktranscript "$T4d" '{"type":"tool_result","content":"unrelated"}'
+out=$(run_gate SendMessage message "landed on 20261028" "$T4d"); rc=$?
+[[ $rc -eq 0 ]] && pass "an 8-digit date is not treated as a commit sha: allowed" \
+  || fail "an 8-digit date was refused as a commit sha (rc=$rc): $out"
+
 # --- 5. an id inside a FENCED code block the body quotes is not flagged ---
 T5="$TMP/t5.jsonl"
 mktranscript "$T5" '{"type":"tool_result","content":"unrelated"}'
@@ -117,6 +145,19 @@ out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c76292 for 
   || fail "no gated-tool list did not fail open (rc=$rc)"
 [[ "$out" == *"not checking"* ]] && pass "no gated-tool list: says it is NOT CHECKING, not silently clean" \
   || fail "no gated-tool list allowed with no 'not checking' signal: $out"
+
+# --- 9. a VALID but EMPTY gated-tool list ({}) is "checked, nothing gated" — distinct from a missing
+#     or unreadable one. Only the stderr note tells the two apart; this is mutant M7 (coa SEND-BACK on
+#     #330, `is None` → `not gated` would treat {} the same as "not checking"). ---
+T9="$TMP/t9.jsonl"
+mktranscript "$T9" '{"type":"tool_result","content":"unrelated"}'
+EMPTY="$TMP/empty-gated.json"
+printf '{}\n' > "$EMPTY"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c76292 for context" "$T9" "" "$EMPTY" 2>&1); rc=$?
+[[ $rc -eq 0 ]] && pass "an empty-but-valid gated-tool list ({}): allowed (nothing is gated)" \
+  || fail "an empty gated-tool list wrongly blocked (rc=$rc): $out"
+[[ "$out" != *"not checking"* ]] && pass "an empty-but-valid gated-tool list ({}): no 'not checking' note — it WAS checked" \
+  || fail "an empty gated-tool list ({}) wrongly printed 'not checking': $out"
 
 echo
 if [[ $fails -eq 0 ]]; then echo "  ✅ all checks passed"; exit 0
