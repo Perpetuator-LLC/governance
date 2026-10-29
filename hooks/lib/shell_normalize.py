@@ -1,5 +1,5 @@
 """hooks/lib/shell_normalize.py — resolve shell quoting and backslash escapes well enough to defeat
-the common secret-read evasions (governance#335), for MATCHING only; the result is never executed.
+the common secret-read evasions, for MATCHING only; the result is never executed.
 
 Handles: adjacent quoted/unquoted word fragments concatenating ('.e'nv -> .env), an unquoted
 backslash before an ordinary character being dropped (a shell removes it: .\\env -> .env), a

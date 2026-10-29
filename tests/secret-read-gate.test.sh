@@ -211,6 +211,27 @@ else
   leg_not_run "parser: jq only" "this host has no jq, so the fail-closed leg is unchecked"
 fi
 
+echo " ── parser: host, through a per-file-symlink INSTALL layout (governance#334 F1)"
+# bin/governance links each hooks/*.{sh,py} FILE individually; it never links hooks/lib/, so a
+# per-file-symlink home has no lib/ beside the linked script. HOOK_DIR/LIBDIR computed from the
+# LINK's own directory (not the real file's) then points nowhere, the python escape-normaliser
+# import fails silently, and the gate falls back to the weaker sed-only path — reopening exactly
+# the governance#335 escapes this suite otherwise proves closed. gate_real_dir() exists for this.
+INSTALLDIR="$(mktemp -d)/hooks"; mkdir -p "$INSTALLDIR"
+for f in "$ROOT"/hooks/*.sh "$ROOT"/hooks/*.py; do ln -s "$f" "$INSTALLDIR/$(basename "$f")"; done
+INSTALLED_GATE="$INSTALLDIR/bash-safety-gate.sh"
+install_probe() {  # install_probe <expect BLOCK|ALLOW> <command> <label>
+  local want="$1" cmd="$2" label="$3" out rc
+  out="$(printf '%s' "$(python3 -c 'import json,sys; print(json.dumps({"session_id":"s","transcript_path":"t","cwd":"/tmp","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":sys.argv[1],"description":"d"}}))' "$cmd")" \
+    | bash "$INSTALLED_GATE" 2>&1)"; rc=$?
+  local got; got="$([ "$rc" = 2 ] && echo BLOCK || echo ALLOW)"
+  [ "$got" = "$want" ] && ok "[installed] $want  $label" || bad "[installed] expected $want, got $got: $label ($out)"
+}
+install_probe BLOCK "cat '.e'nv" "quote-split .env (governance#334 F1 repro 1)"
+install_probe BLOCK 'cat ".en"v' "double-quote-split .env (governance#334 F1 repro 2)"
+install_probe BLOCK "cat \$'\\x2eenv'" "ANSI-C hex-escaped .env (governance#334 F1 repro 3)"
+install_probe ALLOW "ls -la" "control: an ordinary command through the installed layout"
+
 echo
 echo "  $pass passed, $fail failed"
 legs_verdict "$fail"

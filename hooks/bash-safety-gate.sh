@@ -16,7 +16,6 @@ input=""
 # changes the verdict.
 DENY_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/deny-event.py"
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
-LIBDIR="$HOOK_DIR/lib"
 gate_real_dir() {  # the directory of this script's REAL file, symlinks followed (portable: no readlink -f)
   local src="${BASH_SOURCE[0]}" dir
   while [[ -L "$src" ]]; do
@@ -26,6 +25,11 @@ gate_real_dir() {  # the directory of this script's REAL file, symlinks followed
   done
   cd -P "$(dirname "$src")" 2>/dev/null && pwd
 }
+# An install links this script as a per-file symlink (bin/governance only links FILES from hooks/,
+# never the lib/ directory beside them), so HOOK_DIR there is the LINK's directory, which has no
+# lib/. Follow the symlink to the real checkout first — same reason credential-paths.sh and
+# secret-names.sh below are looked up via gate_real_dir(), not HOOK_DIR.
+LIBDIR="$(gate_real_dir)/lib"
 # A gate COPIED or SYMLINKED somewhere with no credential-paths.sh beside it must still refuse a known
 # credential path, not silently match EVERY command (an empty CRED_PATH makes `grep -qE "$CRED_PATH"`
 # match any non-empty string) and not silently check nothing either — the same two failure modes
