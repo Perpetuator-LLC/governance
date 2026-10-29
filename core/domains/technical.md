@@ -965,7 +965,10 @@ providers: none"* reads as *"nothing here to protect"*.
   independent waits, never a fixed sleep: poll until the stopped process is confirmed gone (by PID,
   socket, or supervisor status) before issuing start, and after start, poll until the service is
   independently confirmed running (a health check, a port, a supervisor status) — never the start
-  command's own exit code, which only means the manager accepted the request. **Scope:** any hand-off
+  command's own exit code, which only means the manager accepted the request. **Each wait is bounded
+  and fails loudly on timeout, never a poll that runs forever:** a stop that never finishes (a process
+  stuck draining, or a manager that lost track of it) reaches the same silent-down outcome this rule
+  exists to prevent, just by hanging instead of racing. **Scope:** any hand-off
   block or script that stops and restarts a long-running service through an async-capable manager
   (launchd, systemd with `--no-block`, a container orchestrator's rolling update). **Where it is
   wrong:** a manager whose restart command is itself synchronous and atomic (blocks until the new

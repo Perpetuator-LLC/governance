@@ -26,8 +26,8 @@ rule: tofu-plan-apply-split-agent-plans-human-applies-the-planfile
   container healthcheck) and `/health/ready/` = readiness (DB reachable + no unapplied
   migrations, 503 on fail — what MONITORING probes). A liveness-only monitor watched a
   total functional outage stay green.
-- **Monitoring must not share fate with what it watches**: in-app dead-men (celery/beat)
-  are a layer; the authoritative probe is external (blackbox → Alertmanager). […]
+- **A restart WAITS for the stop to finish before it starts again, and ASSERTS the service is running
+  afterward.** […]
 
 rule: deploys-health-pull-based
 

@@ -38,6 +38,17 @@ every exposure becomes a severity debate and a backlog item.
   Measurement scopes the cleanup; it does not decide whether to rotate. This does not override
   *rotate nothing until "is this a credential?" has an answer* above: that question decides what is
   a credential, and this rule decides what happens once one may be exposed.
+- **The exposure set a stolen credential's "measure later" step scopes to is everything the
+  credential's GRANT could read, not what an access log shows it DID read.** A log answers "what did
+  this credential touch," bounded by whatever retention window happens to be configured — commonly far
+  shorter than the credential's own lifetime — so scoping the exposure set to the log window
+  undercounts: a long-lived credential could have been read, copied, or used silently outside that
+  window, or through a path that is not logged at all (a cache, a replica, an export). Enumerate the
+  full grant — every scope, resource and permission the credential's own definition carries — and
+  treat that entire set as exposed, pending evidence that narrows it; the logs' silence is evidence of
+  what was logged, never of safety. **Where it is wrong:** once the exposure set is established from
+  the grant, logs are still the right tool to PRIORITISE response — what was actually touched,
+  investigated first — they are wrong only as the boundary of what counts as exposed.
 
 **A credential that can CHANGE the infrastructure is parked between changes; the one that RUNS it
 stays on, scoped to its job.** Changes are rare and operations are daily, so give each platform two
