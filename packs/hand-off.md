@@ -20,6 +20,12 @@ Why it wins on every axis:
 
 rule: hand-the-human-a-script-not-steps-self-logging-by-design
 
+## Four tests a hand-off block must pass before the human sees it
+
+Four tests, applied to every line in the human's section **in the first message**, not on request:
+
+rule: four-tests-a-hand-off-block-must-pass-before-the-human-sees
+
 ## An ask parked on a human names its GATE and what the answer CAUSES
 
 **An ask an agent parks on a human through an asynchronous queue** — a ticket label, a dashboard row,

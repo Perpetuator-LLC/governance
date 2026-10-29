@@ -69,7 +69,3 @@ short — and **it is not a step, because nothing in it is a verb the human can 
 is the agent's index of two documents, compressed to one line by a message-length budget; the
 human reads it as *"what needs to be done"* and asks *"what do you want ME to do?"*, which is the
 entire cost of the rule paid again.
-
-Four tests, applied to every line in the human's section **in the first message**, not on request:
-
-[truncated: this rule continues in the core source]

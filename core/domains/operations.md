@@ -181,6 +181,8 @@ is the agent's index of two documents, compressed to one line by a message-lengt
 human reads it as *"what needs to be done"* and asks *"what do you want ME to do?"*, which is the
 entire cost of the rule paid again.
 
+## Four tests a hand-off block must pass before the human sees it
+
 Four tests, applied to every line in the human's section **in the first message**, not on request:
 
 1. **Does the line contain a VERB with an OBJECT the human can act on now** — a command in a
@@ -238,7 +240,7 @@ is wrong:** a check that cannot be scripted becomes two sittings with its result
 a read-only block needs no gate; and a rule that was read and misapplied because it is ambiguous is a
 wording defect, where rewording is the fix.
 
-### Command hand-off format
+## Command hand-off format
 
 **Directly above a command block handed to a human, state who runs it, what it will prompt for, and
 whether it is logged.** The primary form is a two-row table immediately above the fence:
