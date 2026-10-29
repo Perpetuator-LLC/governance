@@ -394,6 +394,8 @@ utterance in the imperative mood. **Four neighbouring cases where recording woul
   second one — the same dedupe-by-GOAL discipline that applies to any other item, not a new exception
   for this one.
 
+## A blocked outward send goes to the surface's owning seat, never to the human as a paste
+
 **Each outward messaging surface has one owning seat**: the one that holds the harness permission to
 operate it, such as a bridge to a chat network, a mail account or a posting tool. When another seat's
 send is refused by the harness, or is accepted but does not appear in the destination store within a
