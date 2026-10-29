@@ -56,6 +56,14 @@ out=$(run_gate SendMessage message "see https://forge/x#issuecomment-76292" "$T1
 [[ $rc -eq 0 ]] && pass "issuecomment- form matched against an earlier short c-form: allowed" \
   || fail "issuecomment- form was blocked despite the same id's short form earlier: $out"
 
+# --- 1c. a 6-digit short-comment id is also a valid 7-char hex run ('c' is a-f): it must be read as
+#     ONE citation (short-comment), never also flagged as an absent commit-sha (coa SEND-BACK on #330)
+T1c="$TMP/t1c.jsonl"
+mktranscript "$T1c" '{"type":"tool_result","content":"comment posted: https://forge/x/issues/9#issuecomment-120571"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c120571 for context" "$T1c"); rc=$?
+[[ $rc -eq 0 ]] && pass "6-digit short-comment id (c + hex-letter digits) matched against its earlier anchor: allowed" \
+  || fail "6-digit short-comment id was wrongly refused, likely double-matched as a commit-sha: $out"
+
 # --- 2. the SAME id with no earlier occurrence is refused ---
 T2="$TMP/t2.jsonl"
 mktranscript "$T2" '{"type":"tool_result","content":"unrelated"}'
