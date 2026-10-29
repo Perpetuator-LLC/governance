@@ -166,7 +166,14 @@ SEED_SOURCES_DIR = "seed"              # a layer's own authored seed content: se
 SEED_MAP_FILE = "map.md"
 SEED_INSTRUCTIONS_FILE = "instructions-core.md"
 SEED_INSTRUCTIONS_BUDGET = 1024        # bytes — a server embeds this file verbatim; keep it small
-SEED_AUDIENCE_RX = re.compile(r"^(public|org:[A-Za-z0-9_.-]+)$")
+# \Z, never $: $ also matches just before a trailing newline, so `org:acme\n` would pass. No `.` in the
+# org id either — a leading or repeated one (`org:..`) is a path-traversal shape once this id reaches
+# a directory join, and an org id has no legitimate use for one.
+SEED_AUDIENCE_RX = re.compile(r"^(public|org:[A-Za-z0-9_-]+)\Z")
+# An engagement name is a free-form label (it may carry a ticket-ref shape, #, etc. — redaction-check
+# scans it where it lands in bundle.json) EXCEPT for the two shapes that still mean something once this
+# string reaches os.path.join: a path separator, or a ".." traversal segment anywhere in it.
+SEED_ENGAGEMENT_UNSAFE_RX = re.compile(r"[/\\]|\.\.")
 SEED_INSTANCE_KIND_PREFIX = "instance-name:"  # redaction-check's own tag for every --private-patterns
                                                # match ("instance-name:<line>"); every SHAPE_PATTERNS
                                                # kind is a fixed name (e.g. "ticket-ref") that never
@@ -480,6 +487,11 @@ def cmd_render_or_check_seed(a):
     core = a.core or os.path.join(ROOT, "core")
     adapters = list(a.adapter)
     engagements = set(a.engagement or [])
+    bad = sorted(n for n in engagements if not n or SEED_ENGAGEMENT_UNSAFE_RX.search(n))
+    if bad:
+        print(f"error: --engagement name(s) {bad!r} carry a path separator or '..' — refused, since "
+              "this name joins a directory path", file=sys.stderr)
+        return 2
     named = [("core", core)] + [(adapter_label(i, len(adapters)), p) for i, p in enumerate(adapters, 1)]
     for name, path in named:
         if not os.path.exists(path):

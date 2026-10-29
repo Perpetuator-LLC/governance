@@ -321,6 +321,37 @@ lines = open('$ADAPTER2/seed/map.md').readlines()
 open('$ADAPTER2/seed/map.md', 'w').writelines(lines[:-2])
 "
 
+# --- coa SEND-BACK on r6 (governance#283 c120537): core_tag, --engagement path traversal, the
+# audience regex's trailing-newline and leading-dot holes ---
+
+# item 1 (mutant M3 survived 50/50): core_tag comes from a REAL git checkout, never the scratch
+# fixture above (which has no .git, so "unknown" is its CORRECT answer and proves nothing about the
+# mutant). This repo's own core is a real checkout.
+SEED_REAL="$TMP/seed-real"
+rc="$(gov render --target seed --out "$SEED_REAL" --core "$ROOT/core" --audience public)"
+check "a render of THIS repo's own core exits 0" "[ '$rc' = '0' ]"
+H_REAL="$(bundle_dirs "$SEED_REAL")"
+check "KAT: core_tag in a real git checkout is never \"unknown\" (kills: core_tag hardcoded to \"unknown\")" \
+  "python3 -c \"import json; t=json.load(open('$SEED_REAL/$H_REAL/bundle.json'))['core_tag']; assert t and t != 'unknown', t\""
+
+# item 2: --engagement joins a directory path with no charset check — `../../outside` escaped the
+# adapter tree and a canary from outside it landed in governance.md.
+OUTSIDE="$TMP/outside-canary.md"
+echo "CANARY-OUTSIDE-f00d" > "$OUTSIDE"
+rc="$(gov render --target seed --out "$TMP/seed-trav" --core "$CORE2" --adapter "$ADAPTER2" \
+  --engagement '../../outside-canary' --audience 'org:acme-corp' )"
+check "KAT: an --engagement name carrying a path separator or '..' is refused (exit 2), not joined into a path" \
+  "[ '$rc' = '2' ] && grep -qi \"path separator\" '$TMP/stderr'"
+
+# item 3: the audience regex's `$` allows a trailing newline, and `.` in an org id allowed `org:..`.
+rc="$(gov render --target seed --out "$TMP/seed-aud1" --core "$CORE2" --adapter "$ADAPTER2" \
+  --engagement acme --audience $'org:acme\n' )"
+check "KAT: an audience with a trailing newline is refused, not accepted via \$'s newline exception" \
+  "[ '$rc' = '2' ]"
+rc="$(gov render --target seed --out "$TMP/seed-aud2" --core "$CORE2" --adapter "$ADAPTER2" \
+  --engagement acme --audience 'org:..' )"
+check "KAT: audience org:.. (a path-traversal shape) is refused" "[ '$rc' = '2' ]"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
