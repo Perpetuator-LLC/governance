@@ -19,8 +19,8 @@ at all: not a failure, not a pending, nothing to read. It looks identical to a q
 head whose run has not been scheduled yet.
 
 ⚠️ **Do not read that as "do not let a bot push."** The rule is about the identity that raised the
-event, not the verb — two lanes hit this on different verbs, and the second nearly escaped the first
-lane's write-up because it named only pushes. Whenever automation creates the event that is supposed
+event, not the verb — two agents hit this on different verbs, and the second nearly escaped the first
+agent's write-up because it named only pushes. Whenever automation creates the event that is supposed
 to gate a head, check that the event actually started a run.
 
 **Two consequences.** Any automated push to a ref that is supposed to be gated must use a credential

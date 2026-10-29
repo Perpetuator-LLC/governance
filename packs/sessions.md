@@ -13,12 +13,12 @@ themselves, which are the ones that never needed the rule.
 
 rule: a-context-reset-releases-nothing-walk-what-the-session-holds
 
-## An ask about a system another lane owns is ROUTED, not worked
+## An ask about a system another agent owns is ROUTED, not worked
 
-**Applies when** agents work in lanes with declared owners, and a lane can message another. The
+**Applies when** agents have declared owners, and an agent can message another. The
 sibling rule above covers sending. This one covers investigating.
 
-rule: an-ask-about-a-system-another-lane-owns-is-routed-not-worked
+rule: an-ask-about-a-system-another-agent-owns-is-routed-not-worke
 
 ## Routines are infrastructure — they migrate, or they silently die
 

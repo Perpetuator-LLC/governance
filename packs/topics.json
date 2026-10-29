@@ -114,7 +114,7 @@
       "when": "Starting, ending or handing over an agent session.",
       "rules": [
         "core/domains/operations.md § A context reset releases nothing — walk what the session holds before it",
-        "core/domains/operations.md § An ask about a system another lane owns is ROUTED, not worked",
+        "core/domains/operations.md § An ask about a system another agent owns is ROUTED, not worked",
         "core/domains/operations.md § Routines are infrastructure — they migrate, or they silently die",
         "core/domains/technical.md § Agents that share a scratch directory write unique paths, and a publish step proves the file is its own"
       ]
