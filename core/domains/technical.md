@@ -35,12 +35,20 @@ lives. Speculative code pays that tax forever in exchange for a maybe. A new-cod
 (e.g. 98% of new lines) makes the tax *immediate and visible* rather than deferred — that is a
 feature, not friction: it prices speculation at the moment of writing.
 
-**The cycle, applied per change: test fails → code passes → refactor to LESS code that still
-passes.** The first two steps are ordinary TDD; the third is the one that gets skipped, and it is
-where the liability above actually gets paid down. "Liability" tells you not to write speculative
-code; it says nothing about the code that already exists. Making reduction the closing step of every
-change turns cleanup from a periodic campaign — which never gets scheduled — into a habit with a
-natural trigger.
+**The cycle, applied per change, is enforced, not advisory: write the test and watch it FAIL, write
+the code until it passes, then REDUCE — refactor to the same behaviour with less code, memory and
+footprint, with the test catching any break.** The first two steps are ordinary TDD; the third is the
+one that gets skipped, and it is where the liability above actually gets paid down. "Liability" tells
+you not to write speculative code; it says nothing about the code that already exists. Making
+reduction the closing step of every change turns cleanup from a periodic campaign — which never gets
+scheduled — into a habit with a natural trigger.
+
+**What enforces it:** a gate that requires the failing run attached before the passing one — a report
+showing only green proves nothing was ever red — and, on the REDUCE step, a mutation check confirming
+the smaller version still kills every mutant the version before it did, so reduction cannot trade
+correctness for size. **Where it is wrong:** the same exception named below (`technical.md` → *Three
+roles per change: build, test, refactor*) — a one-line config fix or an emergency revert has no
+behaviour worth a cycle, and running one delays the response the moment exists to need.
 
 **Target net-negative PRODUCTION code as features land, and report the split.** Tests growing while
 production shrinks is the shape you want, and a single net figure hides exactly that:
@@ -64,11 +72,14 @@ state that exists in code and on no page is one nobody inspects until a customer
 absence-as-health class (a missing signal read as a healthy one) pointed at a design vocabulary. When
 you add a variant, add its states to the page that exists to be looked at.
 
-**Direction of travel — reduction is a deliverable.** Deleting code, dead branches, unused config,
-stale tickets, and options nobody chose is real progress and gets reported as such. Between two
-working designs, the smaller diff wins. A change that *removes* more than it adds is usually the
-better change. Before adding an abstraction, ask whether deleting the thing that seemed to need it
-is cheaper.
+**Direction of travel — reduction is a deliverable, in docs and context as much as in code.**
+Deleting code, dead branches, unused config, stale tickets, and options nobody chose is real progress
+and gets reported as such. Between two working designs, the smaller diff wins. A change that
+*removes* more than it adds is usually the better change. Before adding an abstraction, ask whether
+deleting the thing that seemed to need it is cheaper. **The same habit, aimed at what a reader has to
+hold rather than what a machine executes:** an instruction file, a hand-off or a status record that
+keeps every past detail re-teaches its whole history on every read; cutting what is no longer
+load-bearing is continuous reduction applied to context, not a separate chore.
 
 **When genuinely unsure, the answer is `don't` — and say why.** "Add it cheaply now and see" is how
 untested, unowned surface area accumulates; the cheap add is never the expensive part, the decade of
