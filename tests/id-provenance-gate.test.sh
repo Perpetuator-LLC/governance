@@ -77,6 +77,28 @@ out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c138010 for
 [[ $rc -eq 0 ]] && pass "control: the full 6-digit id (c138010) still matches its own anchor" \
   || fail "control: the full id was wrongly refused (rc=$rc): $out"
 
+# --- 1e. the MIRROR of 1d: a commit SHA is bounded on the LEFT only, because citing a short PREFIX
+#     of a full SHA a tool already returned is the normal, correct form (coa SEND-BACK on #330,
+#     c138080) — the right-hand bound added for comment ids must not also apply here.
+SHA_FULL="0bf5a697d91234567890abcdef1234567890abcd"     # 40 hex, 'a' and 'f' present
+SHA_MIDWORD="9a0bf5a690123456789abcdef0123456789abcde"  # "0bf5a69" sits at offset 2, not at the start
+T1e="$TMP/t1e.jsonl"
+mktranscript "$T1e" "{\"type\":\"tool_result\",\"content\":\"commit $SHA_FULL\"}"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see $SHA_FULL for context" "$T1e"); rc=$?
+[[ $rc -eq 0 ]] && pass "the full 40-hex SHA matches itself (control)" \
+  || fail "control: the full SHA was wrongly refused (rc=$rc): $out"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see 0bf5a697 for context" "$T1e"); rc=$?
+[[ $rc -eq 0 ]] && pass "an 8-char PREFIX of a full SHA a tool already returned is allowed (coa's exact example)" \
+  || fail "a short-SHA prefix of a seen full SHA was wrongly refused (rc=$rc): $out"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see deadbeef for context" "$T1e"); rc=$?
+[[ $rc -eq 2 ]] && pass "an 8-hex string that starts no SHA in the transcript is refused" \
+  || fail "an unrelated 8-hex string was wrongly allowed (rc=$rc): $out"
+T1e2="$TMP/t1e2.jsonl"
+mktranscript "$T1e2" "{\"type\":\"tool_result\",\"content\":\"commit $SHA_MIDWORD\"}"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see 0bf5a69 for context" "$T1e2"); rc=$?
+[[ $rc -eq 2 ]] && pass "a 7-hex string found only MID-WORD inside a longer SHA (not at its start) is refused" \
+  || fail "a mid-word hex substring was wrongly allowed as a SHA prefix (rc=$rc): $out"
+
 # --- 2. the SAME id with no earlier occurrence is refused ---
 T2="$TMP/t2.jsonl"
 mktranscript "$T2" '{"type":"tool_result","content":"unrelated"}'

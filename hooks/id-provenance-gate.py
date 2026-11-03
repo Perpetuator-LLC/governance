@@ -185,13 +185,22 @@ def id_variants(kind, raw_id):
     return {raw_id}
 
 
-def _contains_bounded(haystack, needle):
-    """True if needle appears in haystack with no alphanumeric character immediately before or
-    after it. A plain substring check lets a truncated guess match inside a longer real id —
-    "c13801" is IN "c138010" — which is a false ALLOW (the safe direction for this accident gate),
-    but it is exactly the shape this gate exists to catch: a guessed id that was never actually
-    minted passing because a real, different id happens to start the same way."""
-    return re.search(r"(?<![0-9A-Za-z])" + re.escape(needle) + r"(?![0-9A-Za-z])", haystack) is not None
+def _contains_bounded(haystack, needle, right_boundary=True):
+    """True if needle appears in haystack with no alphanumeric character immediately before it
+    (always checked), and — when right_boundary is set — none immediately after it either.
+
+    A plain substring check lets a truncated guess match inside a longer real id — "c13801" is IN
+    "c138010" — which is a false ALLOW (the safe direction for this accident gate), but it is
+    exactly the shape this gate exists to catch: a guessed id that was never actually minted
+    passing because a real, different id happens to start the same way. Comment ids use both
+    bounds: a truncated id IS a different id, with no abbreviation convention.
+
+    A commit SHA is the opposite case: citing a short PREFIX of a
+    full SHA a tool already returned is the normal, correct form (`0bf5a697` for a SHA a forge API
+    returned in full), so the right bound must NOT apply there — only the left, so the match still
+    cannot start mid-word inside an unrelated longer hex run."""
+    tail = r"(?![0-9A-Za-z])" if right_boundary else ""
+    return re.search(r"(?<![0-9A-Za-z])" + re.escape(needle) + tail, haystack) is not None
 
 
 def body_text(fields, tool_input):
@@ -284,8 +293,9 @@ def main():
 
     for kind, raw_id in ids:
         variants = id_variants(kind, raw_id)
-        if any(_contains_bounded(transcript, v) for v in variants) or (
-            user_prompt and any(_contains_bounded(user_prompt, v) for v in variants)
+        right_boundary = kind != "commit-sha"  # a short SHA is a left-aligned PREFIX of a full one
+        if any(_contains_bounded(transcript, v, right_boundary) for v in variants) or (
+            user_prompt and any(_contains_bounded(user_prompt, v, right_boundary) for v in variants)
         ):
             continue
         print(
