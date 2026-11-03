@@ -473,6 +473,40 @@ rc="$(gov check --home "$HB")"
 check "…and growth past it after install makes check refuse to re-derive, loudly" \
   "[ '$rc' = '2' ] && grep -q 'over its budget' '$TMP/stderr'"
 
+# RESIDENT FACTS: a layer's CRITICAL-FACTS.md renders right after that layer's AGENTS.md, into EVERY
+# harness's instruction file (a SessionStart hook would reach one harness only), under its own budget.
+AF="$TMP/adapter-facts"; HF="$TMP/home-facts"; mkdir -p "$HF"
+put "$AF/AGENTS.md" "# facts adapter rules"
+put "$AF/CRITICAL-FACTS.md" "# facts adapter: test accounts use +cca-<tag>"
+rc="$(gov install --home "$HF" --repo "$C" --adapter "$AF" --harness claude --harness codex --harness grok --no-local)"
+check "CRITICAL-FACTS.md installs" "[ '$rc' = '0' ]"
+for out in .claude/CLAUDE.md .codex/AGENTS.md .grok/rules/00-governance.md; do
+  check "…and is rendered into $out, after its layer's AGENTS.md and after the core" \
+    "python3 -c 'import sys; t=open(sys.argv[1]).read(); a=t.index(\"# core rules\"); b=t.index(\"# facts adapter rules\"); c=t.index(\"+cca-<tag>\"); sys.exit(0 if a < b < c else 1)' '$HF/$out'"
+done
+printf 'a second fact\n' >> "$AF/CRITICAL-FACTS.md"
+rc="$(gov check --home "$HF")"
+check "…an edit to it after install reads as LAYERS CHANGED (it is a recorded source)" \
+  "[ '$rc' = '1' ] && grep -q 'LAYERS CHANGED  $HF/.claude/CLAUDE.md' '$TMP/stdout'"
+fsize=$(wc -c < "$AF/CRITICAL-FACTS.md" | tr -d ' ')
+put "$AF/CRITICAL-FACTS.budget" "$((fsize - 1))"
+put "$AF/AGENTS.budget" "100000"
+HF2="$TMP/home-facts-2"; mkdir -p "$HF2"
+rc="$(gov install --home "$HF2" --repo "$C" --adapter "$AF" --harness claude --no-local)"
+check "…one byte over its OWN budget refuses the install, even with AGENTS.budget to spare" \
+  "[ '$rc' = '2' ] && grep -q 'CRITICAL-FACTS.md is $fsize bytes, over its budget of $((fsize - 1))' '$TMP/stderr' && [ -z \"\$(ls -A '$HF2')\" ]"
+put "$AF/CRITICAL-FACTS.budget" "$fsize"
+rc="$(gov install --home "$HF2" --repo "$C" --adapter "$AF" --harness claude --no-local)"
+check "…at exactly its budget, it installs" "[ '$rc' = '0' ]"
+put "$AF/CRITICAL-FACTS.budget" "small"
+rc="$(gov check --home "$HF2")"
+check "…a facts budget that is not a number is refused by name" \
+  "[ '$rc' = '2' ] && grep -q 'CRITICAL-FACTS.budget must hold one byte count' '$TMP/stderr'"
+HN="$TMP/home-no-facts"; mkdir -p "$HN"; put "$TMP/adapter-no-facts/AGENTS.md" "# rules only"
+rc="$(gov install --home "$HN" --repo "$C" --adapter "$TMP/adapter-no-facts" --harness claude --no-local)"
+check "a layer WITHOUT CRITICAL-FACTS.md renders exactly as before (no empty section)" \
+  "[ '$rc' = '0' ] && ! grep -q 'CRITICAL-FACTS' '$HN/.claude/CLAUDE.md'"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

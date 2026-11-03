@@ -27,9 +27,10 @@ ways a rendered file goes wrong, because they have different fixes:
 INSTALL builds a harness home from CORE (--repo, default this repository) and each ADAPTER directory.
 --home is required and never defaults: pass --home "$HOME" to install for real. For --harness claude
 (the default), under <home>/.claude/:
-  CLAUDE.md               rendered: core/AGENTS.md → each adapter AGENTS.md → --local. A layer's
-                          AGENTS.budget (one byte count) caps its AGENTS.md: over it, the install is
-                          refused until the file is trimmed or the budget is raised
+  CLAUDE.md               rendered: per layer (core, then each adapter) its AGENTS.md, then its
+                          CRITICAL-FACTS.md if present → --local. A layer's AGENTS.budget and
+                          CRITICAL-FACTS.budget (one byte count each) cap those files: over either, the
+                          install is refused until the file is trimmed or its budget is raised
   governance/<domain>.md  rendered: core/domains/<domain>.md → each adapter domains/<domain>.md
   skills/ hooks/ agents/ bin/
                           real directories holding one symlink per entry, core first, then adapters;
@@ -135,6 +136,9 @@ GROK_TOOLS = {"Bash": ("run_terminal_command",), "Write": ("write", "search_repl
 GROK_FLOOR = ".grok/hooks/governance-floor.json"
 CLAUDE_HOOK_REF = re.compile(r"~/\.claude/hooks/([A-Za-z0-9._-]+)")
 DISCOVER_SKIP = {"node_modules", "__pycache__", "venv"}
+
+
+RESIDENT = ("AGENTS.md", "CRITICAL-FACTS.md")   # per layer, rendered in this order
 
 
 class Refusal(Exception):
@@ -503,27 +507,34 @@ def build_plan(repo, adapters, local, harnesses):
         raise Refusal(f"local layer not found: {local}")
 
     plan = Plan()
+    # A layer's RESIDENT files, in order: its rules (AGENTS.md), then its critical facts
+    # (CRITICAL-FACTS.md): the few decision-driving facts an agent gets wrong mid-task unless told.
+    # Retrieval returns only what an agent already suspects exists, so those facts are rendered with
+    # the rules, into every harness's instruction file, rather than left to a hook one harness runs.
     instruction = plan.render(
-        [(n, os.path.join(ir, "AGENTS.md")) for n, _, ir in layers if os.path.isfile(os.path.join(ir, "AGENTS.md"))]
+        [(n, os.path.join(ir, f)) for n, _, ir in layers for f in RESIDENT if os.path.isfile(os.path.join(ir, f))]
         + ([("local", local)] if local else []))
     # RESIDENT BUDGET. A layer may declare a byte budget for its AGENTS.md in AGENTS.budget (one number).
     # That file is injected into every session, so its growth is paid on every turn, and a budget test
     # that runs only when someone runs the suite was passed one reasonable line at a time. Rendering is
     # the one step every change goes through, so an over-budget layer is refused HERE: trim it, or raise
     # the budget in the same change, where the raise is one visible, reviewable line.
+    # Each resident file has its OWN budget (<stem>.budget), so facts never borrow the rules' headroom.
     for n, _, ir in layers:
-        bf, af = os.path.join(ir, "AGENTS.budget"), os.path.join(ir, "AGENTS.md")
-        if not (os.path.isfile(bf) and os.path.isfile(af)):
-            continue
-        with open(bf, encoding="utf-8") as fh:
-            raw = fh.read().strip()
-        if not raw.isdigit():
-            raise Refusal(f"{n} AGENTS.budget must hold one byte count, got {raw!r}: {bf}")
-        plan.sources.setdefault(bf, file_sha(bf))
-        size = os.path.getsize(af)
-        if size > int(raw):
-            raise Refusal(f"{n} AGENTS.md is {size} bytes, over its budget of {raw} ({bf}): trim it, or raise "
-                          f"the budget in the same change")
+        for f in RESIDENT:
+            stem = f[:-len(".md")]
+            bf, af = os.path.join(ir, stem + ".budget"), os.path.join(ir, f)
+            if not (os.path.isfile(bf) and os.path.isfile(af)):
+                continue
+            with open(bf, encoding="utf-8") as fh:
+                raw = fh.read().strip()
+            if not raw.isdigit():
+                raise Refusal(f"{n} {stem}.budget must hold one byte count, got {raw!r}: {bf}")
+            plan.sources.setdefault(bf, file_sha(bf))
+            size = os.path.getsize(af)
+            if size > int(raw):
+                raise Refusal(f"{n} {f} is {size} bytes, over its budget of {raw} ({bf}): trim it, or raise "
+                              f"the budget in the same change")
     providers = [(n, os.path.join(pr, "scheduled-tasks")) for n, pr, _ in layers[1:]
                  if os.path.isdir(os.path.join(pr, "scheduled-tasks"))]
     if len(providers) > 1:
