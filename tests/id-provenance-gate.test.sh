@@ -43,6 +43,45 @@ EOF
 
 echo "── id-provenance-gate"
 
+# --- 0. P1 LIVE regression (cisa c138162): a forge URL anchor "#issuecomment-N" starts with a
+#     non-alphanumeric character. Bounding its LEFT side (no digit immediately before "#") refused
+#     every citation of a tool's own returned html_url, because a forge URL always puts a PR/issue
+#     number directly before the anchor ("…/1368#issuecomment-N"). Digits generated at runtime so
+#     "unseen" is never accidentally true by a fixture collision elsewhere in this file.
+FULL_N=$(( RANDOM % 900000 + 100000 ))   # 6-digit id, minted and cited in full
+TRUNC_N="${FULL_N:0:5}"                  # the same id with its last digit dropped: a different id
+UNSEEN_N=$(( RANDOM % 900000 + 100000 )) # minted nowhere in any transcript below
+URL_SEEN="https://forge.example/owner/repo/pulls/1368#issuecomment-${FULL_N}"
+
+T0a="$TMP/t0a.jsonl"
+mktranscript "$T0a" "{\"type\":\"tool_result\",\"content\":\"posted: $URL_SEEN\"}"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see $URL_SEEN for context" "$T0a"); rc=$?
+[[ $rc -eq 0 ]] && pass "(1) a forge URL anchor is cited verbatim after the SAME URL anchor was seen: allowed" \
+  || fail "(1) a seen URL anchor cited verbatim was wrongly refused (rc=$rc): $out"
+
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c${FULL_N} for context" "$T0a"); rc=$?
+[[ $rc -eq 0 ]] && pass "(2) a URL anchor was seen; the short c-form is cited instead: allowed" \
+  || fail "(2) the short c-form of a seen URL anchor was wrongly refused (rc=$rc): $out"
+
+T0c="$TMP/t0c.jsonl"
+mktranscript "$T0c" "{\"type\":\"tool_result\",\"content\":\"posted as c${FULL_N}\"}"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see https://forge.example/owner/repo/pulls/1368#issuecomment-${FULL_N} for context" "$T0c"); rc=$?
+[[ $rc -eq 0 ]] && pass "(3) a short c-form was seen; the forge URL anchor is cited instead: allowed" \
+  || fail "(3) a URL anchor citing a seen short c-form id was wrongly refused (rc=$rc): $out"
+
+T0d="$TMP/t0d.jsonl"
+mktranscript "$T0d" '{"type":"tool_result","content":"unrelated"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see https://forge.example/owner/repo/pulls/1368#issuecomment-${UNSEEN_N} for context" "$T0d"); rc=$?
+[[ $rc -eq 2 ]] && pass "(4) an id minted nowhere, cited as a URL anchor: refused" \
+  || fail "(4) a wholly unseen id (URL-anchor form) was wrongly allowed (rc=$rc): $out"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c${UNSEEN_N} for context" "$T0d"); rc=$?
+[[ $rc -eq 2 ]] && pass "(4b) the same unseen id, cited in short c-form: refused" \
+  || fail "(4b) a wholly unseen id (short c-form) was wrongly allowed (rc=$rc): $out"
+
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see https://forge.example/owner/repo/pulls/1368#issuecomment-${TRUNC_N} for context" "$T0a"); rc=$?
+[[ $rc -eq 2 ]] && pass "(5) a truncated URL anchor (missing the real id's last digit) is refused" \
+  || fail "(5) a truncated URL anchor matched inside the longer real one (rc=$rc): $out"
+
 # --- 1. an id minted in an EARLIER tool result is allowed ---
 T1="$TMP/t1.jsonl"
 mktranscript "$T1" '{"type":"tool_result","content":"comment posted: https://forge/x/issues/9#issuecomment-76292"}'

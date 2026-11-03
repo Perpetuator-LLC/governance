@@ -186,8 +186,8 @@ def id_variants(kind, raw_id):
 
 
 def _contains_bounded(haystack, needle, right_boundary=True):
-    """True if needle appears in haystack with no alphanumeric character immediately before it
-    (always checked), and — when right_boundary is set — none immediately after it either.
+    """True if needle appears in haystack with no alphanumeric character fused onto either side of
+    it — checked on a side only when the needle's own edge on that side is itself alphanumeric.
 
     A plain substring check lets a truncated guess match inside a longer real id — "c13801" is IN
     "c138010" — which is a false ALLOW (the safe direction for this accident gate), but it is
@@ -198,9 +198,18 @@ def _contains_bounded(haystack, needle, right_boundary=True):
     A commit SHA is the opposite case: citing a short PREFIX of a
     full SHA a tool already returned is the normal, correct form (`0bf5a697` for a SHA a forge API
     returned in full), so the right bound must NOT apply there — only the left, so the match still
-    cannot start mid-word inside an unrelated longer hex run."""
-    tail = r"(?![0-9A-Za-z])" if right_boundary else ""
-    return re.search(r"(?<![0-9A-Za-z])" + re.escape(needle) + tail, haystack) is not None
+    cannot start mid-word inside an unrelated longer hex run (right_boundary=False, passed by the
+    caller for that kind).
+
+    A needle whose OWN edge is not alphanumeric needs no bound there regardless of right_boundary:
+    "#issuecomment-138158" starts with "#", which cannot fuse with a digit before it into one
+    longer token the way two digits or two letters can — a forge's own URL anchor always follows a
+    PR or issue number directly ("…/1368#issuecomment-138158"), so requiring no digit before "#"
+    refused every citation of a tool's own returned html_url. Bound each side only when the
+    needle's character on that side is itself alphanumeric."""
+    left = r"(?<![0-9A-Za-z])" if needle[:1].isalnum() else ""
+    tail = r"(?![0-9A-Za-z])" if (right_boundary and needle[-1:].isalnum()) else ""
+    return re.search(left + re.escape(needle) + tail, haystack) is not None
 
 
 def body_text(fields, tool_input):
