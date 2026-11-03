@@ -65,6 +65,18 @@ out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c120571 for
 [[ $rc -eq 0 ]] && pass "6-digit short-comment id (c + hex-letter digits) matched against its earlier anchor: allowed" \
   || fail "6-digit short-comment id was wrongly refused, likely double-matched as a commit-sha: $out"
 
+# --- 1d. a TRUNCATED guess must not match inside a longer real id: c13801 is a substring of
+#     c138010, but was never itself minted (cisa non-blocking note 2, c138010) ---
+T1d="$TMP/t1d.jsonl"
+mktranscript "$T1d" '{"type":"tool_result","content":"comment posted: https://forge/x/issues/9#issuecomment-138010"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c13801 for context" "$T1d"); rc=$?
+[[ $rc -eq 2 ]] && pass "a 5-digit guess (c13801) is refused even though it is a prefix of the real 6-digit id (c138010)" \
+  || fail "a truncated guess matched inside a longer real id (rc=$rc): $out"
+# control: the full, correctly-minted id still matches
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c138010 for context" "$T1d"); rc=$?
+[[ $rc -eq 0 ]] && pass "control: the full 6-digit id (c138010) still matches its own anchor" \
+  || fail "control: the full id was wrongly refused (rc=$rc): $out"
+
 # --- 2. the SAME id with no earlier occurrence is refused ---
 T2="$TMP/t2.jsonl"
 mktranscript "$T2" '{"type":"tool_result","content":"unrelated"}'
@@ -155,10 +167,54 @@ out=$(run_gate SomeOtherTool comment "see c76292" "$T6"); rc=$?
 [[ $rc -eq 0 ]] && pass "a tool not in the declared list: never checked" \
   || fail "an undeclared tool was blocked: $out"
 
-# --- 7. malformed stdin fails OPEN ---
+# --- 7. malformed stdin fails OPEN, and says so (cisa non-blocking note 1, c138010) ---
 out=$(printf 'not json' | GOVERNANCE_GATED_TOOLS="$GATED" python3 "$HOOK" 2>&1); rc=$?
 [[ $rc -eq 0 ]] && pass "malformed hook payload: fails open (rc 0), not a refusal" \
   || fail "malformed payload did not fail open (rc=$rc)"
+[[ "$out" == *"not checking"* ]] && pass "malformed hook payload: says it is NOT CHECKING, not silently clean" \
+  || fail "malformed hook payload failed open with no 'not checking' signal: $out"
+
+# --- 7b. an UNREADABLE transcript (path given, file absent) fails open, and says so too ---
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c76292 for context" "$TMP/no-such-transcript.jsonl" 2>&1); rc=$?
+[[ $rc -eq 0 ]] && pass "unreadable transcript: fails open (rc 0)" \
+  || fail "unreadable transcript did not fail open (rc=$rc)"
+[[ "$out" == *"not checking"* ]] && pass "unreadable transcript: says it is NOT CHECKING, not silently clean" \
+  || fail "unreadable transcript failed open with no 'not checking' signal: $out"
+
+# --- 7c. no transcript_path AT ALL in the hook payload fails open, and says so ---
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c76292 for context" "" 2>&1); rc=$?
+[[ $rc -eq 0 ]] && pass "no transcript_path in the payload: fails open (rc 0)" \
+  || fail "no transcript_path did not fail open (rc=$rc)"
+[[ "$out" == *"not checking"* ]] && pass "no transcript_path: says it is NOT CHECKING, not silently clean" \
+  || fail "no transcript_path failed open with no 'not checking' signal: $out"
+
+# --- 7d. the transcript read is BOUNDED to a tail window (cisa non-blocking note 3, c138010): an id
+#     minted further back than the window is not found (same refusal as never minted); the same id
+#     minted inside the window is found. Built with python for speed — bash line-by-line padding of
+#     this size is minutes slower for no benefit. ---
+T7D_FAR="$TMP/t7d-far.jsonl"
+T7D_NEAR="$TMP/t7d-near.jsonl"
+python3 - "$T7D_FAR" "$T7D_NEAR" <<'PY'
+import json, sys
+far, near = sys.argv[1], sys.argv[2]
+mint = json.dumps({"type": "tool_result", "content": "comment posted: https://forge/x/issues/9#issuecomment-999001"}) + "\n"
+pad = json.dumps({"type": "tool_result", "content": "x" * 500}) + "\n"
+pad_count = (11 * 1024 * 1024) // len(pad)  # ~11 MB of padding: past the 10 MB tail window
+with open(far, "w") as fh:
+    fh.write(mint)              # the real mint sits BEFORE 11 MB of padding -> falls outside the tail window
+    for _ in range(pad_count):
+        fh.write(pad)
+with open(near, "w") as fh:
+    for _ in range(pad_count):  # ~11 MB of padding FIRST
+        fh.write(pad)
+    fh.write(mint)               # the real mint sits in the last few hundred bytes -> inside the tail window
+PY
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c999001 for context" "$T7D_FAR"); rc=$?
+[[ $rc -eq 2 ]] && pass "an id minted before the tail-read window is treated as not seen (bounded read is live)" \
+  || fail "an id minted outside the 10 MB tail window was still found — the read is not actually bounded (rc=$rc): $out"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c999001 for context" "$T7D_NEAR"); rc=$?
+[[ $rc -eq 0 ]] && pass "the same id minted INSIDE the tail-read window is still found" \
+  || fail "an id minted inside the 10 MB tail window was not found (rc=$rc): $out"
 
 # --- 8. a MISSING gated-tool list fails open, and says so — never a silent allow ---
 T8="$TMP/t8.jsonl"

@@ -42,13 +42,14 @@ results that happened BEFORE this pending call: a sibling call in the same paral
 written its result there yet, which is exactly the gap this gate exists to close.
 
 FAILS OPEN on anything it cannot parse (no transcript path, unreadable file, malformed JSON, no
-gated-tool list): a mis-wired gate should not block every message in the fleet. It fails open silently
-for the same reason `bash-safety-gate.sh` keeps the python3 fallback optional — a missing dependency
-must not become an outage of every tool this gate sits in front of. (Scope note, not a contradiction of
-that file's own OPPOSITE choice there: that gate protects against a destructive command, where failing
-closed is cheap; this one sits in front of ordinary comment/message tools used constantly, where
-failing closed on a parse error would halt the fleet over this gate's own bug, not the thing it checks
-for.)
+gated-tool list): a mis-wired gate should not block every message in the fleet. It fails open LOUDLY,
+not silently, for the same reason `bash-safety-gate.sh` keeps the python3 fallback optional — a
+missing dependency must not become an outage of every tool this gate sits in front of, but a mis-wired
+install must still show itself on stderr as "not checking", never read as a clean pass. (Scope note,
+not a contradiction of that file's own OPPOSITE choice there: that gate protects against a destructive
+command, where failing closed is cheap; this one sits in front of ordinary comment/message tools used
+constantly, where failing closed on a parse error would halt the fleet over this gate's own bug, not
+the thing it checks for.)
 
 ID SHAPES extracted from the OUTGOING body (never from the transcript — the transcript is only ever
 searched, not parsed for ids):
@@ -74,6 +75,14 @@ import sys
 
 GATED_TOOLS_ENV = "GOVERNANCE_GATED_TOOLS"
 DEFAULT_GATED_TOOLS = os.path.join(os.path.expanduser("~"), ".governance", "gated-tools.json")
+
+# Bounds the per-call cost of reading the transcript: without this, re-reading the whole file on
+# every gated call scales with session length, and a long-running session pays that cost on every
+# message it sends. The cost traded for the bound: an id minted further back than this window is
+# treated as not seen (the same refusal as never minted at all), so a very long session citing a very
+# old id would need this raised. 10 MB is several thousand ordinary turns deep — widen it if a real
+# session shows a true citation falling outside the window.
+MAX_TRANSCRIPT_READ_BYTES = 10 * 1024 * 1024
 
 FENCE_RX = re.compile(r"```.*?```", re.DOTALL)
 
@@ -176,6 +185,15 @@ def id_variants(kind, raw_id):
     return {raw_id}
 
 
+def _contains_bounded(haystack, needle):
+    """True if needle appears in haystack with no alphanumeric character immediately before or
+    after it. A plain substring check lets a truncated guess match inside a longer real id —
+    "c13801" is IN "c138010" — which is a false ALLOW (the safe direction for this accident gate),
+    but it is exactly the shape this gate exists to catch: a guessed id that was never actually
+    minted passing because a real, different id happens to start the same way."""
+    return re.search(r"(?<![0-9A-Za-z])" + re.escape(needle) + r"(?![0-9A-Za-z])", haystack) is not None
+
+
 def body_text(fields, tool_input):
     parts = []
     for f in fields:
@@ -187,21 +205,30 @@ def body_text(fields, tool_input):
 
 def read_transcript(path):
     """Concatenate every string value from every JSON line in the transcript. Best-effort: a line
-    that doesn't parse is skipped, never fatal — the transcript is a log, not a contract."""
-    chunks = []
+    that doesn't parse is skipped, never fatal — the transcript is a log, not a contract.
+
+    Bounded to the last MAX_TRANSCRIPT_READ_BYTES of the file (a tail read, binary-seek so the byte
+    offset is unambiguous): the first line after the seek is dropped unconditionally, since the seek
+    almost certainly landed inside it, not at its start."""
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except ValueError:
-                    continue
-                chunks.append(json.dumps(obj))  # keep it simple: search the raw re-serialized line
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            if size > MAX_TRANSCRIPT_READ_BYTES:
+                fh.seek(size - MAX_TRANSCRIPT_READ_BYTES)
+                fh.readline()
+            raw = fh.read()
     except OSError:
         return None
+    chunks = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        chunks.append(json.dumps(obj))  # keep it simple: search the raw re-serialized line
     return "\n".join(chunks)
 
 
@@ -210,6 +237,7 @@ def main():
     try:
         hook_input = json.loads(raw) if raw.strip() else {}
     except ValueError:
+        print("id-provenance-gate: not checking — unparseable hook payload", file=sys.stderr)
         return 0  # fails open: an unparseable hook payload is this gate's bug, not a refusal
 
     gated_path = os.environ.get(GATED_TOOLS_ENV) or DEFAULT_GATED_TOOLS
@@ -244,15 +272,21 @@ def main():
         return 0
 
     transcript_path = hook_input.get("transcript_path", "")
-    transcript = read_transcript(transcript_path) if transcript_path else None
+    if not transcript_path:
+        print("id-provenance-gate: not checking — no transcript_path in the hook payload", file=sys.stderr)
+        return 0
+    transcript = read_transcript(transcript_path)
     if transcript is None:
+        print(f"id-provenance-gate: not checking — transcript unreadable at {transcript_path!r}", file=sys.stderr)
         return 0  # fails open: no transcript to check against is this gate's limitation, not a finding
 
     user_prompt = hook_input.get("prompt", "")  # the current turn's own user message, if the harness provides it
 
     for kind, raw_id in ids:
         variants = id_variants(kind, raw_id)
-        if any(v in transcript for v in variants) or (user_prompt and any(v in user_prompt for v in variants)):
+        if any(_contains_bounded(transcript, v) for v in variants) or (
+            user_prompt and any(_contains_bounded(user_prompt, v) for v in variants)
+        ):
             continue
         print(
             f"BLOCKED: cites {raw_id!r} ({kind}), which no earlier tool result or user message in "
