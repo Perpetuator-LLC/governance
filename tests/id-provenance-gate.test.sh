@@ -138,6 +138,35 @@ out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see 0bf5a69 for
 [[ $rc -eq 2 ]] && pass "a 7-hex string found only MID-WORD inside a longer SHA (not at its start) is refused" \
   || fail "a mid-word hex substring was wrongly allowed as a SHA prefix (rc=$rc): $out"
 
+# --- 1f. AMBIGUOUS span, kept as two readings (cisa non-blocking note on #373, c138710): "c" + 7
+#     digits is both a valid short-comment id and a valid 8-char hex SHA prefix (coa's own example,
+#     "c4791436", an 8-char prefix of a real SHA). Checking only the first-matched kind refuses the
+#     citation whenever THAT reading's own provenance fails, even if the OTHER reading's provenance
+#     would have passed. Fix: allow if EITHER reading has provenance; block only if NEITHER does.
+#     Digits generated at runtime so no fixture collides with "unseen" by accident.
+SHA_DIGITS=$(( RANDOM % 9000000 + 1000000 ))              # 7 digits: "c$SHA_DIGITS" is 8 chars
+SHA_AMBIG="c${SHA_DIGITS}d9451234567890abcdef1234567890a" # 40 hex total, a real SHA "c$SHA_DIGITS" prefixes
+COMMENT_DIGITS=$(( RANDOM % 9000000 + 1000000 ))          # a SEPARATE 7-digit id, minted as a comment only
+NEITHER_DIGITS=$(( RANDOM % 9000000 + 1000000 ))          # minted nowhere, in either reading
+
+T1f_sha="$TMP/t1f-sha.jsonl"
+mktranscript "$T1f_sha" "{\"type\":\"tool_result\",\"content\":\"commit $SHA_AMBIG\"}"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c${SHA_DIGITS} for context" "$T1f_sha"); rc=$?
+[[ $rc -eq 0 ]] && pass "(A) an ambiguous c+7digit span read as a SHA PREFIX of a seen full SHA: allowed" \
+  || fail "(A) a real SHA prefix in c+digits form was wrongly refused as an absent comment id (rc=$rc): $out"
+
+T1f_comment="$TMP/t1f-comment.jsonl"
+mktranscript "$T1f_comment" "{\"type\":\"tool_result\",\"content\":\"comment posted: https://forge.example/x/issues/9#issuecomment-${COMMENT_DIGITS}\"}"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c${COMMENT_DIGITS} for context" "$T1f_comment"); rc=$?
+[[ $rc -eq 0 ]] && pass "(B) an ambiguous c+7digit span read as a minted COMMENT id: allowed" \
+  || fail "(B) a real comment id in c+digits form was wrongly refused as an absent SHA (rc=$rc): $out"
+
+T1f_neither="$TMP/t1f-neither.jsonl"
+mktranscript "$T1f_neither" '{"type":"tool_result","content":"unrelated"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c${NEITHER_DIGITS} for context" "$T1f_neither"); rc=$?
+[[ $rc -eq 2 ]] && pass "(C) an ambiguous c+7digit span minted as NEITHER reading: refused" \
+  || fail "(C) a span seen as neither a comment id nor a SHA was wrongly allowed (rc=$rc): $out"
+
 # --- 2. the SAME id with no earlier occurrence is refused ---
 T2="$TMP/t2.jsonl"
 mktranscript "$T2" '{"type":"tool_result","content":"unrelated"}'
