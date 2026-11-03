@@ -54,6 +54,42 @@ check "R3 fires: 👤 You not last"                            1 "must be the LA
 check "R4 fires alone (no LOGGED marker)"                    1 "R4" "$(printf '%s' "$GOOD" | sed '/LOGGED/d')"
 check "🚫 NOT LOGGED satisfies R4"                           0 "ok" "$(printf '%s' "$GOOD" | sed 's/📝 LOGGED → ~\/.local\/state\/x.log/🚫 NOT LOGGED (no output)/')"
 
+# R5 (2026-11-03 incident): a bao/vault login without -no-print prints the token to whatever reads
+# the block's own output — for a hand-off block, that is the human's terminal.
+GOOD_LOGIN="## ✅ Done
+- rotated nothing yet
+
+## 👤 You
+**Log in to the secret store**
+► alice@workstation · 🔑 PROMPTS: alice · password · workstation (login)
+📝 LOGGED → ~/.local/state/x.log
+${F}bash
+bao login -no-print -method=oidc
+${F}"
+
+check "R5: a login WITH -no-print passes"                     0 "ok" "$GOOD_LOGIN"
+check "R5: a login WITHOUT -no-print is refused"              1 "R5" "$(printf '%s' "$GOOD_LOGIN" | sed 's/ -no-print//')"
+check "R5: -token-only is refused even alongside -no-print"   1 "R5" "$(printf '%s' "$GOOD_LOGIN" | sed 's/-no-print/-no-print -token-only/')"
+check "R5: vault login (not bao) is checked the same way"     1 "R5" "$(printf '%s' "$GOOD_LOGIN" | sed 's/bao login -no-print/vault login/')"
+
+# a login buried inside a heredoc sent to a remote shell is still caught — the check scans the whole
+# fenced block's text, not just its first line
+check "R5: a login inside a heredoc, missing -no-print, is still caught" 1 "R5" "$(printf '%s' "$GOOD_LOGIN" | sed "s/bao login -no-print -method=oidc/ssh host <<'EOF'\nbao login -method=oidc\nEOF/")"
+# the same, correctly flagged-free when -no-print is present inside the heredoc
+check "R5: a login inside a heredoc, WITH -no-print, passes"  0 "ok" "$(printf '%s' "$GOOD_LOGIN" | sed "s/bao login -no-print -method=oidc/ssh host <<'EOF'\nbao login -no-print -method=oidc\nEOF/")"
+# a login missing -no-print, chained after an unrelated command, is still caught
+check "R5: a login in an && chain, missing -no-print, is still caught" 1 "R5" "$(printf '%s' "$GOOD_LOGIN" | sed 's/bao login -no-print -method=oidc/true \&\& bao login -method=oidc/')"
+
+GOOD_TOKEN_CREATE="$(printf '%s' "$GOOD_LOGIN" | sed 's/bao login -no-print -method=oidc/bao token create -field=token -policy=app/')"
+check "R5: token create WITH -field= passes"                  0 "ok" "$GOOD_TOKEN_CREATE"
+check "R5: token create WITHOUT -field= or -format= is refused" 1 "R5" "$(printf '%s' "$GOOD_TOKEN_CREATE" | sed 's/ -field=token//')"
+check "R5: token create with -format= (instead of -field=) passes" 0 "ok" "$(printf '%s' "$GOOD_TOKEN_CREATE" | sed 's/-field=token/-format=json/')"
+
+# prose that only MENTIONS bao login outside any fenced block is not a command and is never checked
+check "R5: prose mentioning 'bao login' outside a fenced block passes" 0 "ok" "$GOOD
+
+(remember: run bao login without -no-print only on a trusted TTY, never in a hand-off block)"
+
 # The header-table form (requested by Nik, 2026-10-25): a two-row table directly above the fence,
 # in place of the `► user@host · 🔑 PROMPTS · 📝 LOGGED` line.
 GOOD_TABLE="## 👤 You

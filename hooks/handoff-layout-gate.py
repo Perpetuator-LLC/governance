@@ -13,6 +13,12 @@ fenced SHELL block (```bash / sh / zsh / shell / console):
   R4  every shell block has `📝 LOGGED` or `🚫 NOT LOGGED` within the 4 non-blank lines above it,
       OR the header table's 📝 cell is non-empty (its text may be "no": the cell only has to say whether
       it was logged, not that it was).
+  R5  a `bao login` / `vault login` in the block carries `-no-print`, and never `-token-only` (which
+      prints the bare token regardless); a `bao token create` / `vault token create` carries `-field=`
+      or `-format=` — without one of these the default output prints the token straight to whatever
+      reads the block's own output, which for a hand-off block is the human's terminal (measured,
+      2026-11-03: a hand-off block ran a login with neither flag, and the token printed into a
+      transcript the block's own author could read, forcing a revoke).
 
 The header table is two markdown rows directly above the fence, in either of two forms:
     | 🖥️ <host> | 👤 <user> | 📝 <logged, or "no"> |          | 👤 <user>@<machine> | 📝 <logged, or "no"> |
@@ -44,6 +50,11 @@ SHELL_FENCE = re.compile(r"^```(bash|sh|zsh|shell|console)\s*$", re.I)
 FENCE_END = re.compile(r"^```\s*$")
 HOST_LINE = re.compile(r"►\s*\S+@\S+")
 PROMPT_WORDS = re.compile(r"read\s+-s|\bsudo\b|\blogin\b|\bssh\s|--ask-")
+BAO_VAULT_LOGIN = re.compile(r"\b(?:bao|vault)\s+login\b")
+BAO_VAULT_TOKEN_CREATE = re.compile(r"\b(?:bao|vault)\s+token\s+create\b")
+NO_PRINT_FLAG = re.compile(r"(?<![\w-])-no-print\b")
+TOKEN_ONLY_FLAG = re.compile(r"(?<![\w-])-token-only\b")
+FIELD_OR_FORMAT_FLAG = re.compile(r"(?<![\w-])-(?:field|format)=")
 TABLE_ROW1 = re.compile(r"^\|\s*🖥️\s*([^|]*?)\s*\|\s*👤\s*([^|]*?)\s*\|\s*📝\s*([^|]*?)\s*\|\s*$")
 TABLE_SEP = re.compile(r"^\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|\s*$")
 TABLE_ROW2 = re.compile(r"^\|\s*🔑\s*([^|]*?)\s*\|\s*\|\s*\|\s*$")
@@ -105,6 +116,13 @@ def violations(text):
         table_prompts = tbl and tbl["prompts"] and tbl["prompts"].lower() != "none"
         if PROMPT_WORDS.search(body) and "🔑 PROMPTS" not in text and not table_prompts:
             out.append(f"R2 line {n}: block prompts (read -s / sudo / login / ssh / --ask-) but the message has no `🔑 PROMPTS` line or header-table 🔑 cell")
+        if BAO_VAULT_LOGIN.search(body):
+            if TOKEN_ONLY_FLAG.search(body):
+                out.append(f"R5 line {n}: `bao/vault login` uses `-token-only`, which prints the bare token to whatever reads the block's output — never in a hand-off block")
+            elif not NO_PRINT_FLAG.search(body):
+                out.append(f"R5 line {n}: `bao/vault login` is missing `-no-print` — without it the token prints to the human's terminal; add `-no-print`")
+        if BAO_VAULT_TOKEN_CREATE.search(body) and not FIELD_OR_FORMAT_FLAG.search(body):
+            out.append(f"R5 line {n}: `bao/vault token create` has no `-field=` or `-format=` — the default table prints the token; add one")
     heads = [l.strip() for l in lines if l.startswith("## ")]
     if not any(h.startswith("## 👤 You") for h in heads):
         out.append("R3: a message with a shell block for the human needs a `## 👤 You` section")
