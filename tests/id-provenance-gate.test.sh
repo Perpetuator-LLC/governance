@@ -30,7 +30,8 @@ cat > "$GATED" <<'JSON'
 {
   "gitea_comment_on_issue": ["comment"],
   "state_item_upsert": ["notes", "current_step"],
-  "SendMessage": ["message"]
+  "SendMessage": ["message"],
+  "send_message": ["message"]
 }
 JSON
 
@@ -78,6 +79,21 @@ mktranscript "$T2b" '{"type":"tool_result","content":"unrelated"}'
 out=$(run_gate mcp__some-other-org__gitea_comment_on_issue comment "see c76292 for context" "$T2b"); rc=$?
 [[ $rc -eq 2 ]] && pass "a differently-prefixed MCP tool name is still gated by its suffix: refused" \
   || fail "a differently-prefixed MCP tool name was not gated (rc=$rc): $out"
+
+# --- 2c. the exact surface named in the fleet-wide SEND-BACK request: a peer-DM tool over MCP,
+#     citing a guessed forge comment id in the same batch as the post that would create it ---
+T2c="$TMP/t2c.jsonl"
+mktranscript "$T2c" '{"type":"tool_result","content":"unrelated"}'
+out=$(run_gate mcp__ccd_session_mgmt__send_message message "see c120571 for context" "$T2c"); rc=$?
+[[ $rc -eq 2 ]] && pass "a guessed comment id cited over an MCP send-message tool: refused" \
+  || fail "a guessed comment id over an MCP send-message tool was not gated (rc=$rc): $out"
+
+# --- 2d. the known-good mirror: the SAME tool, citing an id that was actually minted first ---
+T2d="$TMP/t2d.jsonl"
+mktranscript "$T2d" '{"type":"tool_result","content":"comment posted: https://forge/x/issues/9#issuecomment-120571"}'
+out=$(run_gate mcp__ccd_session_mgmt__send_message message "see c120571 for context" "$T2d"); rc=$?
+[[ $rc -eq 0 ]] && pass "a REAL comment id cited over an MCP send-message tool, minted first: allowed" \
+  || fail "a real, earlier-minted comment id over an MCP send-message tool was wrongly blocked (rc=$rc): $out"
 
 # --- 3. an id the USER typed this turn is allowed ---
 T3="$TMP/t3.jsonl"
