@@ -227,8 +227,18 @@ def body_text(fields, tool_input):
 
 
 def read_transcript(path):
-    """Concatenate every string value from every JSON line in the transcript. Best-effort: a line
-    that doesn't parse is skipped, never fatal — the transcript is a log, not a contract.
+    """Concatenate every string value from every type=="user" JSON line in the transcript.
+    Best-effort: a line that doesn't parse is skipped, never fatal — the transcript is a log, not a
+    contract.
+
+    ONLY type=="user" entries count as provenance. A tool result arrives wrapped in a user-role turn
+    (`{"type": "user", "message": {"content": [{"type": "tool_result", ...}]}}`), and so does a real
+    human-typed prompt — both are what the docstring above means by "an earlier tool result or user
+    message". An assistant entry is the model's OWN text and its OWN pending tool_use, neither of
+    which is evidence of anything; counting them lets an id the agent itself just invented serve as
+    its own provenance, which is exactly the mistake this whole gate exists to catch. This is live and
+    timing-dependent: on a harness that flushes the pending call to the transcript before PreToolUse
+    runs, an id guessed in that very call is already sitting in the file it is checked against.
 
     Bounded to the last MAX_TRANSCRIPT_READ_BYTES of the file (a tail read, binary-seek so the byte
     offset is unambiguous): the first line after the seek is dropped unconditionally, since the seek
@@ -251,6 +261,8 @@ def read_transcript(path):
             obj = json.loads(line)
         except ValueError:
             continue
+        if obj.get("type") != "user":
+            continue  # never assistant: its own text and its own pending tool_use are not provenance
         chunks.append(json.dumps(obj))  # keep it simple: search the raw re-serialized line
     return "\n".join(chunks)
 
