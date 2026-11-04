@@ -45,6 +45,16 @@ without the rules and nothing reports it. A rendered file loads everywhere. Its 
 staleness, which `bin/governance check` detects by comparing the file with the layers it was built
 from.
 
+**A layer may carry resident facts beside its rules.** A `CRITICAL-FACTS.md` next to a layer's
+`AGENTS.md` is rendered right after it, into every harness's instruction file, under its own byte
+budget (`CRITICAL-FACTS.budget`). It holds the few facts an agent gets wrong mid-task unless told:
+an exact value to type, a gate to stop at, who decides. Each is one sentence plus a reference to its
+full source. It exists because retrieval only returns what an agent already suspects is there; a
+fact nobody knows to ask for has to be resident. **Scope:** the file loads into every session the
+home serves, so it holds only facts true for all of them. Anything about one client, project or
+person goes where only that work loads it. A wrong resident line misleads every session, so lines
+are curated and published by a human, never written straight from an extraction.
+
 ## Contributing a rule upstream
 
 A lesson is recorded in two parts: the **rule**, stated so a stranger at another organisation could
