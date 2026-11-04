@@ -423,7 +423,8 @@ human does not type the send.
 
 **Where it does not apply:** a surface with no owning seat, where the human is the owner and the ask is
 legitimate; and a send that must go out under the human's own identity, such as a legal or contractual
-notice. It assumes a harness that gates tool calls per seat. Where every seat holds the same
+notice. That send is handed over as a draft: see *A send that must leave under the human's identity is
+handed over as a DRAFT* below. It assumes a harness that gates tool calls per seat. Where every seat holds the same
 permission, there is no owner to route to, and the refused seat simply retries.
 
 ### A send that must leave under the human's identity is handed over as a DRAFT, never as text to paste
@@ -444,12 +445,14 @@ it, and sends. There are three forms:
 retyped. **Only the first form makes the draft the furthest the agent can go by construction**: an
 account the agent can only draft into, with sending refused at the server. An agent that can script a
 compose window, or that holds any credential able to submit mail, can also send, so for the other two
-forms "never sends" is an instruction, not a property.
+forms "never sends" is an instruction, not a property. Where the harness can deny the client's send
+verb to the agent, deny it: that turns the scripting form's instruction into a gate.
 
 **Five checks before telling the human it is ready:**
-1. **For a drafts-only account, a send is refused.** Prove it once with a positive control: a test send
-   from that account fails at the server. A send-deny that has never refused anything is an
-   assumption.
+1. **For a drafts-only account, a send is refused.** Prove it with a positive control, a test send from
+   that account that fails at the server. Prove it once, and again after any change to that account's
+   grants, because a later grant can silently reopen sending. A send-deny that has never refused
+   anything is an assumption.
 2. **The human can see it.** Confirm which mailbox the tool's default account writes to. A draft in the
    agent's own mailbox is invisible to a human whose client does not show that mailbox. The tool's
    "saved" is not the human's "I see it".
