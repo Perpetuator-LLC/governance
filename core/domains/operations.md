@@ -426,6 +426,43 @@ legitimate; and a send that must go out under the human's own identity, such as 
 notice. It assumes a harness that gates tool calls per seat. Where every seat holds the same
 permission, there is no owner to route to, and the refused seat simply retries.
 
+### A send that must leave under the human's identity is handed over as a DRAFT, never as text to paste
+
+When a message must come from an account the agent cannot send from, such as the human's own address,
+a legal or contractual notice, or a reply the recipient expects from a person, **the agent's last act
+is a draft the human opens in their own mail client.** The human changes the sender if needed, reads
+it, and sends. There are two forms:
+- a draft saved in a mailbox the agent can write to **and the human's client shows**;
+- where the agent runs on the human's own machine, a compose window opened through the mail client's
+  scripting interface, filled in and never sent. This needs no mailbox access, and it is the form that
+  works in every client that can be scripted;
+- a message file marked unsent (an `.eml` with `X-Unsent: 1`). **Only some clients honour that
+  header**: others open the file as a received message, read-only, with no way to edit or send it.
+  Use it only where you know the human's client honours it.
+
+**Why this is the safe shape:** an account an agent can only draft into can have sending disabled at
+the server. The draft is then the furthest the agent can go by construction, not by instruction.
+Recipients, subject and body arrive exactly as reviewed, and nothing is retyped.
+
+**Three checks before telling the human it is ready:**
+1. **The human can see it.** Confirm which mailbox the tool's default account writes to. A draft in the
+   agent's own mailbox is invisible to a human whose client does not show that mailbox. The tool's
+   "saved" is not the human's "I see it".
+2. **The body that arrives is the body that was reviewed.** When the text was approved by hash,
+   re-hash what was written. Normalise the transport first: mail uses CRLF line endings and may
+   quoted-printable-encode long lines. A difference in line endings alone is not a change; anything
+   else is.
+3. **Name the edits the tool forces.** A tool that prefixes the subject, or sets the sender to the
+   agent's own address, makes those the human's edits. List them in the hand-off.
+
+**Where it is wrong:**
+- **The draft crosses a boundary.** A draft for one client's work, saved in a mailbox that belongs to
+  another engagement, is a disclosure even though it was never sent.
+- **The client cannot send as the required address.** Changing the sender then fails, so check the
+  client offers that address before handing over.
+- **The agent's own account is the right sender.** For a routine message, a draft only adds a human
+  step.
+
 ## An ask about a system another agent owns is ROUTED, not worked
 
 **Applies when** agents have declared owners, and an agent can message another. The
