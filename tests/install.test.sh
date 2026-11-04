@@ -477,12 +477,12 @@ check "…and growth past it after install makes check refuse to re-derive, loud
 # harness's instruction file (a SessionStart hook would reach one harness only), under its own budget.
 AF="$TMP/adapter-facts"; HF="$TMP/home-facts"; mkdir -p "$HF"
 put "$AF/AGENTS.md" "# facts adapter rules"
-put "$AF/CRITICAL-FACTS.md" "# facts adapter: test accounts use +cca-<tag>"
+put "$AF/CRITICAL-FACTS.md" "# facts adapter: FACT-SENTINEL-1"
 rc="$(gov install --home "$HF" --repo "$C" --adapter "$AF" --harness claude --harness codex --harness grok --no-local)"
 check "CRITICAL-FACTS.md installs" "[ '$rc' = '0' ]"
 for out in .claude/CLAUDE.md .codex/AGENTS.md .grok/rules/00-governance.md; do
   check "…and is rendered into $out, after its layer's AGENTS.md and after the core" \
-    "python3 -c 'import sys; t=open(sys.argv[1]).read(); a=t.index(\"# core rules\"); b=t.index(\"# facts adapter rules\"); c=t.index(\"+cca-<tag>\"); sys.exit(0 if a < b < c else 1)' '$HF/$out'"
+    "python3 -c 'import sys; t=open(sys.argv[1]).read(); a=t.index(\"# core rules\"); b=t.index(\"# facts adapter rules\"); c=t.index(\"FACT-SENTINEL-1\"); sys.exit(0 if a < b < c else 1)' '$HF/$out'"
 done
 printf 'a second fact\n' >> "$AF/CRITICAL-FACTS.md"
 rc="$(gov check --home "$HF")"
