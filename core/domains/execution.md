@@ -21,6 +21,17 @@ Before ending an authorized implementation turn:
 4. For external progress, use the host's supported wait or monitoring mechanism
    when authorized. State what is actually running; never imply a future action
    is armed merely because it appears under a “next” heading.
+   **When the progress is another agent's or person's work, watch their next
+   artifact, not the end state.** Name the owner, the artifact you expect next
+   (a branch, a commit, a run, a reply) and a deadline. Poll for a *new* artifact
+   (a changed tip or id, never mere presence), and escalate in the same turn when
+   the deadline passes. A watch on the end state reads the same for "slow" and
+   "nobody is working", and a delivered message is not a picked-up task.
+   *Scope:* waits on an actor who must act. A run already started by a system
+   with its own completion signal is itself the artifact: wait on that run.
+   *Mirror:* an owner that shows idle may be waiting on its own background job,
+   so the artifact's timestamp decides whether the work has stalled, not the
+   owner's status.
 5. End only with verified completion, an explicit pause/cancellation, or an
    evidenced blocker with the smallest actionable handoff. Distinguish local
    tests, remote CI, merge, deployment, and end-to-end validation.
