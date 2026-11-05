@@ -258,8 +258,22 @@ Check which kind you are handing over.
 irreversible.** So a delete is done in three stages:
 
 1. **Archive, encrypted, to backup storage whose readers are narrower than the source's.** Encrypt to
-   a key the deleting actor does not hold, and prove the archive restores (read it back, decrypt a
-   sample, compare counts) before stage 2.
+   a key the deleting actor does not hold, and prove the archive arrived intact before stage 2. Its
+   restorability is proven by the key holder's drill, below, not by the deleting actor.
+   - **Record before you create.** Write the archive's registry record (what, from where, why, the
+     key, the destination, the purge date) first, so an archive that is half-made is still findable.
+   - **"A key the actor does not hold" means the organisation's backup recipient: a PUBLIC key,
+     pinned by fingerprint in a reviewed repository.** Import that public half into a throwaway
+     keyring, assert the fingerprint before encrypting, and confirm the throwaway holds no secret key.
+   - **Never a passphrase typed for the occasion.** It is a new secret with no custody: no registry,
+     no rotation, no second holder, so the restore depends on one person's memory. And it is the
+     natural fallback for an actor who cannot find the recipient key, which is exactly when the
+     organisation should be told the key is undiscoverable.
+   - **Prove the copy and the decrypt separately.** A checksum compared at the source and at the
+     destination proves the archive arrived intact, and the actor can do that alone; stage 2 waits
+     for it. Decrypting needs the private key, so the decrypt proof is the key holder's periodic key
+     drill, not a step of every delete. Record which of the two was done.
+   - **Delete the plaintext, and every scratch copy, only after the checksums match.**
 2. **Remove from the live surface.** This step is now reversible, so it is ordinary work under the
    same gates as any reversible change, not a special permission.
 3. **Purge after a soak window, by schedule:** the backup storage's own retention or lifecycle rule,
@@ -279,6 +293,47 @@ once, is what makes the decision safe to take quickly.
 - **The archive must not widen exposure.** If the reason for the delete was *who could read it*, a
   backup location that more people (or more machines) can read defeats it. Readership is part of the
   destination's specification, not an afterthought.
+
+## Removing leaked data from a git forge: a delete removes REFERENCES, not objects
+
+**When data that must not be readable lands in a git forge, deleting the branch or the pull request
+removes the names that point at it, not the data.** The commit stays on the server as an unreachable
+object, fetchable by its id, and copies of it may already sit in places git never prunes. So a
+cleanup enumerates every store that can hold the data and checks each one. The list is long because
+each store is a separate copy:
+
+1. **Every ref, advertised or not:** branches, tags, the forge's pull-request refs, and any internal
+   namespaces it keeps (archive, keep-around, notes). Fetch them all and test which contain the commit.
+2. **The repository's object store:** loose objects, packs, and any alternates it borrows objects
+   from. Prune it on the server itself:
+   - `git reflog expire --expire=now --expire-unreachable=now --all`, then `git gc --prune=now`.
+     A forge's own "run garbage collection" button may not pass `--prune=now`, and then it deletes
+     nothing for the default two-week window.
+   - Assert with `git cat-file -e <id>` for every bad object, commits AND the offending blob, run
+     only after the gc succeeded (chain it), and with a positive control: an object that must still
+     exist must still answer. Without both, a wrong repository path reports every id as gone.
+3. **What the forge derived from the repository:** cached zip/tar archives, the code-search and issue
+   indexes, a separate wiki repository, and large-file (LFS) storage.
+4. **What people wrote around it:** pull-request and issue bodies, review comments that quote the
+   diff, and attachments. Deleting the pull request removes some of these; check the rest by search.
+5. **Copies the forge made:** push mirrors, pull mirrors and forks, and the forge's own backups,
+   which keep the data until *their* retention expires (so the cleanup has an end date, not an end).
+6. **CI:** runner workspaces that checked the commit out, build caches, artifacts and logs.
+7. **Every downstream branch built on the bad commit.** Another author's branch cut from it carries
+   the data forward. Rewriting that branch leaves its old head on the server, so step 2 applies again.
+8. **Local clones**, including remote-tracking refs created by a bulk fetch.
+
+**Scope.** This is for data whose *readership* is the problem (personal data, a secret that cannot
+be rotated). A leaked credential is rotated first, which makes its copies harmless; a merely wrong
+file needs none of this. The mirror case: if the repository is the data's proper home and only a
+*copy* elsewhere leaked, the home is not touched. Clean the copy's stores and leave the original.
+
+**A scrub must not carry its own map.** When a copy replaces private values with stand-ins, its
+documentation names the stand-ins and the rule, never the originals beside them. A substitution
+table, or a script that holds the mapping, inside the destination is the only place the originals
+remain, so it IS the leak. Keep the mapping where the originals already live, and scan the staged
+diff, the commit message, and untracked build artefacts (a bytecode cache holds a script's strings)
+before the first push: once pushed, every store above may hold it.
 
 ## MISPLACED is the finder's call; SENSITIVE is the owner's
 
