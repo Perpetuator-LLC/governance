@@ -105,6 +105,32 @@ rc="$(run --json --private-patterns "$TMP/shared-tag.md" "$TMP/shared-tag-hit.md
 check "governance#398: a list fenced under the shared household-patterns tag compiles and is caught" \
   "grep -q '1 pattern(s)' '$TMP/out' && grep -q 'instance-name' '$TMP/out'"
 
+# --- governance#398, cisa/coa SEND-BACK on PR #399: \b on BOTH ends of a literal fails open when
+#     the literal's own edge character is punctuation (a domain suffix, an email fragment, a
+#     trailing-dot host) — the exact shapes a private list holds. The guard now applies PER EDGE,
+#     only where that edge's own character is a word character. ----------------------------------
+printf 'literal:.example.org\n' > "$TMP/dot.txt"
+# A SPACE directly before the dot is the discriminating fixture: a word char there (e.g. "host.")
+# already satisfies a bare \b on the left, so it cannot tell the fix apart from the old bug — a
+# non-word char (a space) on both sides of the dot is where an unconditional \b fails to fire.
+echo 'see .example.org in the routing table' > "$TMP/dot-hit.md"
+rc="$(run --json --private-patterns "$TMP/dot.txt" "$TMP/dot-hit.md")"
+check "governance#398: a dot-led literal .example.org is caught after a space (not just after a word char)" \
+  "grep -q 'instance-name' '$TMP/out'"
+
+rc="$(run --json --private-patterns "$TMP/ci.txt" "$TMP/ci-word.md")"
+check "governance#398: alice still is not caught inside malice (word-edged literal, unchanged)" \
+  "grep -q '\"findings\": \[\]' '$TMP/out'"
+
+printf 'literal-cs:.Example.Org\n' > "$TMP/dot-cs.txt"
+rc="$(run --json --private-patterns "$TMP/dot-cs.txt" "$TMP/dot-hit.md")"
+check "governance#398: literal-cs: with a punctuation edge is unchanged — wrong case is not caught" \
+  "grep -q '\"findings\": \[\]' '$TMP/out'"
+echo 'mail is routed via host.Example.Org for the team' > "$TMP/dot-cs-hit.md"
+rc="$(run --json --private-patterns "$TMP/dot-cs.txt" "$TMP/dot-cs-hit.md")"
+check "governance#398: literal-cs: with a punctuation edge still catches the exact case" \
+  "grep -q 'instance-name' '$TMP/out'"
+
 # --- report-only vs enforce; paths ------------------------------------------------
 rc="$(run --private-patterns "$TMP/private.txt" "$TMP/c/dirty.md")"
 check "report-only: findings do not fail" "[ '$rc' = '0' ]"

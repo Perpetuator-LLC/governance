@@ -102,6 +102,20 @@ def fenced_lines(raw, tags=FENCE_TAGS):
     return ([], "unterminated") if inside else ([], "no-fence")
 
 
+def _bounded(body):
+    """Escape `body` and guard it against matching inside a longer word — but only on an edge whose
+    OWN character is a word character. `\\b` needs a word character on one side to fire at all: an
+    unconditional `\\b` on a punctuation-first/last literal (`.example.org`, `@example.org`, `acme.`)
+    demands a boundary where there is no word character to anchor it, so it silently stops matching
+    at all — and these are exactly the shapes a private list holds: a domain suffix, an email
+    fragment, a trailing-dot host. A punctuation edge needs no guard: the punctuation itself already
+    keeps the match from running into a letter or digit."""
+    esc = re.escape(body)
+    prefix = r"(?<!\w)" if re.match(r"\w", body[0]) else ""
+    suffix = r"(?!\w)" if re.match(r"\w", body[-1]) else ""
+    return prefix + esc + suffix
+
+
 def compile_pattern(line):
     """`literal:` means a name, not a pattern, matched CASE-INSENSITIVELY as a WHOLE WORD by default —
     an instance name shows up in whatever casing someone typed it in, and an unescaped dot in a
@@ -111,12 +125,12 @@ def compile_pattern(line):
         body = line[len("literal-cs:"):].strip()
         if not body:
             raise re.error("empty literal-cs:")
-        return re.compile(r"\b" + re.escape(body) + r"\b"), "literal-cs"
+        return re.compile(_bounded(body)), "literal-cs"
     if line.startswith("literal:"):
         body = line[len("literal:"):].strip()
         if not body:
             raise re.error("empty literal:")
-        return re.compile(r"\b" + re.escape(body) + r"\b", re.I), "literal"
+        return re.compile(_bounded(body), re.I), "literal"
     return re.compile(line), "regex"
 
 
