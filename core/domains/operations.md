@@ -269,6 +269,29 @@ All three forms are checked independently — use whichever fits the surface; no
 Enforced by `hooks/handoff-layout-gate.py`: a shell block preceded by none of the three, or a table
 whose 🔑 cell is absent or reads "none" while the command actually prompts, is refused.
 
+**Every shell block opens with a banner line and closes with an end line, so the shell itself says
+which request it is.** A human running blocks from many agents loses track of which block came from
+whom, which step of a request they are on, and whether the last one finished. The terminal
+scrollback is where they look, so the label goes there:
+
+```
+echo '▶ <agent> · <card> · <step>/<total> · <MM-DD HH:MM>'
+<the commands>
+echo "■ <agent> · <card> · <step>/<total> · done rc=$?"
+```
+
+- **`<agent>`**: the asking agent's short name, as the human sees it in session titles.
+- **`<card>`**: the ticket or block the request belongs to, short (`#12 B`).
+- **`<step>/<total>`**: this block's place among the blocks of one request. A one-block request is
+  `1/1`; a request whose next block depends on this one's output still counts it (`1/2`).
+- **The time** is when the agent asked, read from the clock, in the human's local time.
+- **The end line repeats the banner's label.** `rc=$?` is the exit status of the line just before it,
+  not of the whole block.
+
+**Scope:** shell blocks the human pastes. A fence holding a message to send is not a shell block and
+carries no banner. A hash is deliberately left out: two hashes are hard to tell apart at a glance,
+and the card and step already distinguish requests. Enforced by the same gate, as rule R5.
+
 ### A credential the human must create is handed over with its mint recipe, from the last run that worked
 
 A prompt such as `ADMIN token (hidden)` names what to paste, not how to get it, and a reader told

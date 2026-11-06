@@ -32,14 +32,14 @@ full: block before the co-author
 
 Harness: claude
 Model: claude-opus-5-5
-Initiated-By: nik
+Initiated-By: alice
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
 commit <<'EOF'
 footer: one line
 
-Harness: claude · Model: claude-opus-5-5 · Seat: x · Initiated-By: nik
+Harness: claude · Model: claude-opus-5-5 · Seat: x · Initiated-By: alice
 EOF
 GOOD=$(g rev-parse HEAD)
 commit <<'EOF'
@@ -67,7 +67,7 @@ side: attributed
 
 Harness: claude
 Model: claude-opus-5-5
-Initiated-By: nik
+Initiated-By: alice
 EOF
 g checkout -q -
 g merge -q --no-ff side -m "merge side, no trailers"
@@ -118,7 +118,7 @@ empty-value: Harness is declared but given no value
 
 Harness:
 Model: claude-opus-5-5
-Initiated-By: nik
+Initiated-By: alice
 EOF
 EMPTY_VALUE=$(g rev-parse HEAD)
 
@@ -130,7 +130,7 @@ EMPTY_VALUE=$(g rev-parse HEAD)
 commit <<'EOF'
 prose-mention: a conversational reference to the trailer names, never actually set as trailers
 
-This explains why Harness: claude and Model: claude-opus-5-5 and Initiated-By: nik are the three
+This explains why Harness: claude and Model: claude-opus-5-5 and Initiated-By: alice are the three
 fields the gate requires, without actually declaring any of them on this commit.
 EOF
 PROSE_MENTION=$(g rev-parse HEAD)
