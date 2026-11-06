@@ -10,13 +10,17 @@ session, and because a recency rule (latest-wins) compares event dates, a record
 reorders history: a reader acts on the "newer" one, which is really the older one. Prose asking for
 `date -u` has not held across repeated measurement.
 
-SCOPE: only the AUTHORING stamp — a time on the body's FIRST LINE (a header such as `<seat>, HH:MMZ:`
-or `(HH:MMZ)`), or that line labelled as now (`(now)`, `(at the time of writing)`) instead of a numeric
-time. NOT a past event's time cited anywhere in the body ("the run failed ~15:38Z") — that is
-legitimate history, often approximate by nature, and stays allowed regardless of where it sits.
+SCOPE: only the AUTHORING stamp — a time in the OPENING LABEL POSITION of the body's first non-blank
+line: right after the label's own trailing comma or open-paren, as in `<seat>, HH:MMZ:` or
+`<seat> (HH:MMZ):`, or that same position labelled as now (`(now)`, `(at the time of writing)`)
+instead of a numeric time. A time appearing anywhere ELSE — after the label's closing colon/paren, on
+a later line, or on a first line that has no `<label>,`/`<label>(` opening at all (e.g. `coa verdict:
+PASS ... (01:00-01:35Z)`, where the colon after "coa verdict" is not a stamp delimiter) — is a cited
+event, never an authoring stamp, and is never examined: it stays allowed regardless of how it reads.
 
-THREE OUTCOMES for whatever the first line holds:
-  - no recognizable stamp at all                                  -> allowed, nothing to check
+THREE OUTCOMES for whatever sits in that label position:
+  - no label-plus-delimiter opening at all, or a label followed by something that is not a
+    stamp-shaped token                                            -> allowed, nothing to check
   - an APPROXIMATE or unread form (`~HH:MMZ`, `HH:0xZ`, `HH:MMish`, `(now)`, `(at the time of
     writing)`) -> refused outright, regardless of how close it actually is: none of these were read
     off a clock, which is the one thing this gate exists to require
@@ -57,21 +61,25 @@ STAMP_NOW_ENV = "GOVERNANCE_STAMP_NOW"  # "HH:MM", test-injectable clock overrid
 TOLERANCE_MINUTES = 3
 REFUSAL_FIX = "stamp from `date -u +%H:%MZ` in the same step"
 
-# An approximate or unread form on the first line — never a clock reading, refused regardless of how
-# close the guess actually lands. "now"/"at the time of writing" only count in STAMP POSITION
-# (parenthesized, or after a comma before a colon, mirroring where a real time would sit) so that
-# ordinary prose containing the word "now" is never caught by accident.
-APPROX_RX = re.compile(
-    r"~\s*\d{1,2}:\d{2}\s*Z"            # ~HH:MMZ
-    r"|\d{1,2}:\d{2}\s*ish\b"           # HH:MMish
-    r"|\d{1,2}:\s*\d?[xX]\s*Z"          # HH:0xZ / HH:xZ
-    r"|[,(]\s*now\s*[:)]"               # (now) / , now:
-    r"|\(\s*at the time of writing\s*\)",
+# The opening label itself: a short "<seat>[ (host)]" run at the very start of the line, ending in
+# the comma or open-paren that introduces the stamp — `<seat>, HH:MMZ:` or `<seat> (HH:MMZ):`. The
+# middle group is deliberately narrow ([\w .-], i.e. no ":" or ";") and lazy, so a line whose label is
+# instead followed by a colon ("coa verdict: PASS ... (01:00-01:35Z)") never reaches a later comma or
+# paren at all: there is no label-delimiter opening on that line, so nothing is in stamp position.
+LABEL_RX = re.compile(r"^\W*[\w .-]{1,40}?[,(]\s*")
+
+# Checked against the text RIGHT AFTER the label delimiter (never searched for elsewhere on the line)
+# so a stamp-shaped token must be the very next thing after "<label>," or "<label>(" to count at all.
+APPROX_HEAD_RX = re.compile(
+    r"^~\s*\d{1,2}:\d{2}\s*Z"           # ~HH:MMZ
+    r"|^\d{1,2}:\d{2}\s*ish\b"          # HH:MMish
+    r"|^\d{1,2}:\s*\d?[xX]\s*Z"         # HH:0xZ / HH:xZ
+    r"|^now\s*[:)]"                     # now) / now:
+    r"|^at the time of writing\s*\)",
     re.I,
 )
-# An exact HH:MMZ, not already claimed by the approximate forms above (checked first in stamp_violation,
-# so this never needs to exclude them itself).
-EXACT_RX = re.compile(r"\b(\d{1,2}):(\d{2})\s*Z\b")
+# An exact HH:MMZ, also anchored to right after the label delimiter.
+EXACT_HEAD_RX = re.compile(r"^(\d{1,2}):(\d{2})\s*Z\b")
 
 
 def load_gated_tools(path):
@@ -118,7 +126,13 @@ def body_text(fields, tool_input):
 def current_hhmm():
     override = os.environ.get(STAMP_NOW_ENV)
     if override:
-        return override
+        try:
+            h, m = override.split(":")
+            h, m = int(h), int(m)
+            if 0 <= h <= 23 and 0 <= m <= 59:
+                return f"{h:02d}:{m:02d}"
+        except (ValueError, AttributeError):
+            pass  # malformed override: fall through to the real clock
     return datetime.now(timezone.utc).strftime("%H:%M")
 
 
@@ -135,18 +149,29 @@ def _circular_diff(a, b):
 
 
 def first_line(text):
-    return text.splitlines()[0] if text else ""
+    """The first NON-BLANK line — a leading blank line is not a dodge around the check."""
+    for line in text.splitlines():
+        if line.strip():
+            return line
+    return ""
 
 
 def stamp_violation(text):
-    """None if the first line's stamp (if any) is fine; else a refusal reason."""
+    """None if the opening label's stamp position (if any) is fine; else a refusal reason. Only the
+    text immediately after the label's own trailing comma/open-paren is ever examined — a time
+    anywhere else on the line (or the line's absence of a label-delimiter opening at all) is out of
+    scope and is never inspected, let alone refused."""
     line = first_line(text)
-    if APPROX_RX.search(line):
-        return f"an approximate or unread first-line stamp — {REFUSAL_FIX}"
-    m = EXACT_RX.search(line)
+    m = LABEL_RX.match(line)
     if not m:
-        return None  # no stamp at all: nothing to check
-    stamp = f"{int(m.group(1)):02d}:{m.group(2)}"
+        return None  # no "<label>," / "<label>(" opening at all: nothing is in stamp position
+    rest = line[m.end():]
+    if APPROX_HEAD_RX.match(rest):
+        return f"an approximate or unread first-line stamp — {REFUSAL_FIX}"
+    m2 = EXACT_HEAD_RX.match(rest)
+    if not m2:
+        return None  # the label is followed by something else: not a stamp attempt
+    stamp = f"{int(m2.group(1)):02d}:{m2.group(2)}"
     now = current_hhmm()
     diff = _circular_diff(stamp, now)
     if diff > TOLERANCE_MINUTES:
@@ -161,6 +186,9 @@ def main():
     except ValueError:
         print("authoring-stamp-gate: not checking — unparseable hook payload", file=sys.stderr)
         return 0
+    if not isinstance(hook_input, dict):
+        print("authoring-stamp-gate: not checking — hook payload is not a JSON object", file=sys.stderr)
+        return 0
 
     gated_path = os.environ.get(GATED_TOOLS_ENV) or DEFAULT_GATED_TOOLS
     gated, note = load_gated_tools(gated_path)
@@ -169,11 +197,15 @@ def main():
         return 0
 
     tool_name = hook_input.get("tool_name", "")
+    if not isinstance(tool_name, str):
+        return 0  # not a recognizable tool name: nothing declared could match it
     fields = gated_fields(tool_name, gated)
     if fields is None:
         return 0
 
-    tool_input = hook_input.get("tool_input") or {}
+    tool_input = hook_input.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return 0  # no body fields to read
     text = body_text(fields, tool_input)
     if not text:
         return 0
