@@ -34,6 +34,35 @@ single-owner repository does not need the layer.
 - **Requirements are the source of truth for scope** and live in the initiative repo, versioned
   alongside what they define (`core/AGENTS.md` → *Artifact placement*).
 
+## An initiative's architecture diagram is its definition of done
+
+**Every initiative keeps a C4 System Context diagram and a C4 Container diagram as text source in
+its own repo.** Each box carries one status from the North Star vocabulary (`operations.md` →
+*North Star — enduring goals that outlive a session*): done · partial · missing · tool not yet chosen. **The initiative is
+done when every box is done**, and not before, whatever its ticket count says. Each box that is not
+done names the work that will change it.
+
+- **Scope.** This applies to an initiative that runs or is deployed, or that an outside person or
+  system touches. A library or a single script needs only the Context diagram. A diagram that spans
+  initiatives belongs with strategy, not in any one repo (`core/AGENTS.md` → *A document that spans
+  initiatives*).
+- **Green is only as true as the box list is complete.** Every requirement maps to a box. A
+  requirement with no box makes "all green" a false done. So check the box list against the
+  requirements when the diagram is drawn, and again at each release.
+- **Done means verified where users meet it**, not merged (the North Star rule's mirror case).
+- **A platform product never finishes.** An engine with extensions, or a product with a continuing
+  feature stream, keeps a third diagram: the **extension map**. It shows the core plus one box per
+  extension (done, in progress or planned), using the same colours. **One extension box is one
+  milestone on the forge, and it links to it.** A feature is done when its box is green. The core's
+  Container diagram going green finishes the core, not the product. **Mirror:** a box per *ticket*
+  turns the map into a ticket list. A box is a unit someone would ship and name, so it maps to a
+  milestone.
+- **Rendering is a machine's job.** The text source is canonical. The images are generated from it
+  on every change, by a hook or CI, and a check fails when an image is older than its source.
+  Prefer SVG, because box links survive in it. A link is clickable only where the SVG is inlined
+  or embedded as an object; embedded as an image, it is a picture.
+- **Flip a box in the same change that flips the part**, and re-render then.
+
 ## Sequencing: order by dependency, then by leverage
 
 **Order work by hard dependency first, then by which work makes the rest cheaper, then everything
