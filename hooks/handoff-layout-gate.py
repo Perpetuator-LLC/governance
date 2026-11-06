@@ -13,8 +13,8 @@ fenced SHELL block (```bash / sh / zsh / shell / console):
   R4  every shell block has `📝 LOGGED` or `🚫 NOT LOGGED` within the 4 non-blank lines above it,
       OR the header table's 📝 cell is non-empty (its text may be "no": the cell only has to say whether
       it was logged, not that it was).
-  R5  every shell block opens with a BANNER line and closes with an END line (Nik, 2026-11-06: he runs blocks
-      from many agents and needs to see, in the shell itself, which request and which step he is on):
+  R5  every shell block opens with a BANNER line and closes with an END line (the human, 2026-11-06: they run blocks
+      from many agents and need to see, in the shell itself, which request and which step they are on):
           echo '▶ <agent> · <card> · <step>/<total> · <MM-DD HH:MM>'      (first line: who asked, for what, when)
           echo "■ <agent> · <card> · <step>/<total> · done rc=$?"          (last line: it finished, and how)
       <card> is the ticket or block the request belongs to (e.g. `#12 B`); <step>/<total> counts the blocks of
@@ -25,9 +25,9 @@ The header table is two markdown rows directly above the fence, in either of two
     | --- | --- | --- |                              or       | --- | --- |
     | 🔑 <prompts, or "none"> | | |                           | 🔑 <prompts, or "none"> | |
 3-cell form: host and user are separate cells. 2-cell form: one cell merges them as `user@machine`,
-parsed the same way as the `►` line's own `<user>@<host>`. All three forms are accepted; Nik asked for
+parsed the same way as the `►` line's own `<user>@<host>`. All three forms are accepted; the human asked for
 the 3-cell table on 2026-10-25 and the 2-cell table the same day, each replacing the one before it in
-his own use, but none is retired here — the gate checks whichever one precedes a given block.
+their own use, but none is retired here — the gate checks whichever one precedes a given block.
 
 Scope: the final message to the human (the last assistant text in the transcript). Peer DMs and forge comments are
 tool calls, never final text, so they are exempt by construction. A block relayed for the human is final text: checked.

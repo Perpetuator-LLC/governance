@@ -56,7 +56,7 @@ check "R3 fires: 👤 You not last"                            1 "must be the LA
 check "R4 fires alone (no LOGGED marker)"                    1 "R4" "$(printf '%s' "$GOOD" | sed '/LOGGED/d')"
 check "🚫 NOT LOGGED satisfies R4"                           0 "ok" "$(printf '%s' "$GOOD" | sed 's/📝 LOGGED → ~\/.local\/state\/x.log/🚫 NOT LOGGED (no output)/')"
 
-# R5 (Nik, 2026-11-06): the shell itself shows which agent, card, step and request time a block is,
+# R5 (the human, 2026-11-06): the shell itself shows which agent, card, step and request time a block is,
 # and that it finished. Each mutation of GOOD's banner must fire R5 alone.
 check "R5 fires: no banner line"                             1 "must open with" "$(printf '%s' "$GOOD" | sed "/^echo '▶/d")"
 check "R5 fires: no end line"                                1 "must close with" "$(printf '%s' "$GOOD" | sed '/^echo "■/d')"
@@ -65,7 +65,7 @@ check "R5 fires: step beyond total"                          1 "out of range" "$
 check "R5 fires: banner without a time"                      1 "must open with" "$(printf '%s' "$GOOD" | sed 's/ · 11-06 19:20//')"
 check "R5: a banner in double quotes is accepted too"        0 "ok" "$(printf '%s' "$GOOD" | sed "s/^echo '▶ \(.*\)'\$/echo \"▶ \1\"/")"
 
-# The header-table form (requested by Nik, 2026-10-25): a two-row table directly above the fence,
+# The header-table form (requested by the human, 2026-10-25): a two-row table directly above the fence,
 # in place of the `► user@host · 🔑 PROMPTS · 📝 LOGGED` line.
 GOOD_TABLE="## 👤 You
 **Rotate the key**
@@ -97,7 +97,7 @@ ${F}"
 check "table's 🔑 row says 'none' but the block prompts: R2 fires" 1 "R2" "$(printf '%s' "$GOOD_TABLE" | sed 's/🔑 alice · password · workstation (sudo)/🔑 none/')"
 check "table with 📝 cell 'no' still satisfies R4 (states the answer, need not BE logged)" 0 "ok" "$(printf '%s' "$GOOD_TABLE" | sed 's/📝 ~\/.local\/state\/x.log/📝 no/')"
 
-# The 2-cell header table (requested by Nik, same day): user and machine merged into one cell.
+# The 2-cell header table (requested by the human, same day): user and machine merged into one cell.
 GOOD_TABLE2="## 👤 You
 **Rotate the key**
 | 👤 alice@workstation | 📝 ~/.local/state/x.log |
