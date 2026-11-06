@@ -76,6 +76,34 @@ check "a fenced Markdown inventory reads only the fence" "grep -q '1 pattern(s)'
 printf -- '---\ntype: note\n---\nSome prose.\n' > "$TMP/nofence.md"
 rc="$(run --private-patterns "$TMP/nofence.md" "$TMP/c/clean.md")"
 check "Markdown with no fence ⇒ refused (exit 3), never compiled" "[ '$rc' = '3' ]"
+printf -- '---\ntype: note\n---\n\n```other-tool-tag\nliteral:host-01.corp\n```\n' > "$TMP/wrongfence.md"
+rc="$(run --private-patterns "$TMP/wrongfence.md" "$TMP/c/clean.md")"
+check "a fence tagged with neither recognised tag ⇒ still refused (exit 3)" "[ '$rc' = '3' ]"
+
+# --- governance#398: literal: is case-insensitive and whole-word; literal-cs: is the exception;
+#     a second fence tag (the one a household-routing tool also reads) is accepted -----------------
+printf 'literal:Alice\n' > "$TMP/ci.txt"
+echo 'a message mentions alice in passing' > "$TMP/ci.md"
+rc="$(run --json --private-patterns "$TMP/ci.txt" "$TMP/ci.md")"
+check "governance#398: a lowercase use of a capitalised literal: is caught" "grep -q 'instance-name' '$TMP/out'"
+
+echo 'alicemail is a different word entirely' > "$TMP/ci-word.md"
+rc="$(run --json --private-patterns "$TMP/ci.txt" "$TMP/ci-word.md")"
+check "literal: matches a WHOLE WORD — a substring inside a longer word is not caught" \
+  "grep -q '\"findings\": \[\]' '$TMP/out'"
+
+printf 'literal-cs:Alice\n' > "$TMP/cs.txt"
+rc="$(run --json --private-patterns "$TMP/cs.txt" "$TMP/ci.md")"
+check "literal-cs: stays case-sensitive — the lowercase use is NOT caught" "grep -q '\"findings\": \[\]' '$TMP/out'"
+echo 'Alice is capitalised here' > "$TMP/cs-hit.md"
+rc="$(run --json --private-patterns "$TMP/cs.txt" "$TMP/cs-hit.md")"
+check "literal-cs: still catches the exact case" "grep -q 'instance-name' '$TMP/out'"
+
+printf -- '```household-patterns\nliteral:example-household\n```\n' > "$TMP/shared-tag.md"
+echo 'the note names Example-Household as the fixture' > "$TMP/shared-tag-hit.md"
+rc="$(run --json --private-patterns "$TMP/shared-tag.md" "$TMP/shared-tag-hit.md")"
+check "governance#398: a list fenced under the shared household-patterns tag compiles and is caught" \
+  "grep -q '1 pattern(s)' '$TMP/out' && grep -q 'instance-name' '$TMP/out'"
 
 # --- report-only vs enforce; paths ------------------------------------------------
 rc="$(run --private-patterns "$TMP/private.txt" "$TMP/c/dirty.md")"

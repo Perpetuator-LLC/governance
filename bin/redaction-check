@@ -20,10 +20,13 @@ assertion reads, the same way a known-bad control needs the real shape to prove 
 private-name leg still reads every line of every test file: a real instance name is exactly as public
 in a fixture as in prose, and this exemption must never widen into one.
 
-PRIVATE LIST FORMAT: a Markdown note with the patterns in one fence tagged ```redaction-instances, or
-a plain file with one pattern per line. `#` starts a comment; a `literal:` prefix means "a name, not a
-regex" and is escaped. A Markdown file WITHOUT the fence is refused, because prose compiles into
-patterns that match ordinary English.
+PRIVATE LIST FORMAT: a Markdown note with the patterns in one fence tagged ```redaction-instances or
+```household-patterns (the shared tag a household-routing tool also reads, so one private list serves
+both), or a plain file with one pattern per line. `#` starts a comment; a `literal:` prefix means "a
+name, not a regex", escaped and matched CASE-INSENSITIVELY as a WHOLE WORD — an instance name shows up
+in whatever casing someone typed it in. `literal-cs:` is the rare case-sensitive exception, still
+whole-word. A Markdown file WITHOUT a recognised fence is refused, because prose compiles into patterns
+that match ordinary English.
 
 COMMIT MESSAGES ARE PUBLISHED TOO. --commits RANGE scans the message of every commit in a git range
 (merges included) instead of files: the name leg, plus only the personal-data shapes (a message may
@@ -78,18 +81,19 @@ TEST_FIXTURE_FILE = re.compile(r"(^|/)tests/[^/]+\.test\.sh$")
 # A commit message is a RECORD, not a rule: it cites its ticket (tracing up) and may name a workflow
 # file it changed. Only the shapes that are personal or identifying data apply to it.
 MESSAGE_SHAPES = {"home-path", "contact-address", "registration-id"}
-FENCE_TAG = "redaction-instances"
+FENCE_TAGS = ("redaction-instances", "household-patterns")
 DEFAULT_PATHS = ["README.md", "core", "adapter-template", "agents", "templates"]
 DEFAULT_PRIVATE = os.path.join(os.path.expanduser("~"), ".governance", "private-patterns")
 
 
-def fenced_lines(raw, tag=FENCE_TAG):
-    """Lines inside the first ```<tag> fence → (lines, status); status is ok · no-fence · unterminated."""
+def fenced_lines(raw, tags=FENCE_TAGS):
+    """Lines inside the first fence tagged with any of `tags` → (lines, status); status is
+    ok · no-fence · unterminated."""
     out, inside = [], False
     for n, line in enumerate(raw.splitlines(), 1):
         s = line.strip()
         if not inside:
-            if s.startswith("```") and s[3:].strip() == tag:
+            if s.startswith("```") and s[3:].strip() in tags:
                 inside = True
             continue
         if s.startswith("```"):
@@ -99,13 +103,20 @@ def fenced_lines(raw, tag=FENCE_TAG):
 
 
 def compile_pattern(line):
-    """`literal:` means a name, not a pattern — an unescaped dot in a hostname is a wildcard that still
-    matches the intended string, so it reads as working while over-matching."""
+    """`literal:` means a name, not a pattern, matched CASE-INSENSITIVELY as a WHOLE WORD by default —
+    an instance name shows up in whatever casing someone typed it in, and an unescaped dot in a
+    hostname is a wildcard that still matches the intended string, so it reads as working while
+    over-matching either way. `literal-cs:` is the rare case-sensitive exception, still whole-word."""
+    if line.startswith("literal-cs:"):
+        body = line[len("literal-cs:"):].strip()
+        if not body:
+            raise re.error("empty literal-cs:")
+        return re.compile(r"\b" + re.escape(body) + r"\b"), "literal-cs"
     if line.startswith("literal:"):
         body = line[len("literal:"):].strip()
         if not body:
             raise re.error("empty literal:")
-        return re.compile(re.escape(body)), "literal"
+        return re.compile(r"\b" + re.escape(body) + r"\b", re.I), "literal"
     return re.compile(line), "regex"
 
 
@@ -119,11 +130,12 @@ def load_private(path):
     with open(path, encoding="utf-8") as fh:
         raw = fh.read()
     lines, status = fenced_lines(raw)
+    tag_list = " or ```".join(FENCE_TAGS)
     if status == "unterminated":
-        return None, f"the ```{FENCE_TAG} fence is never closed — refusing to guess where it ends"
+        return None, f"the ```{tag_list} fence is never closed — refusing to guess where it ends"
     if status == "no-fence":
         if raw.lstrip().startswith("---") or "```" in raw:
-            return None, f"Markdown with no ```{FENCE_TAG} fence — refusing to compile prose into patterns"
+            return None, f"Markdown with no ```{tag_list} fence — refusing to compile prose into patterns"
         lines = list(enumerate(raw.splitlines(), 1))
     pats = []
     for n, line in lines:
