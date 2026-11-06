@@ -1280,6 +1280,41 @@ and a check that silently adapts to it hides a drift it should be reporting inst
 discriminator is whether the destination is a different *authority* for the classification, not
 merely a different subsystem of the same one.
 
+## A person- or household-specific need is stated in NEUTRAL terms, and linked to its private context by id
+
+**A ticket, a PR description, a dispatch brief or a test fixture describes a need in the terms a
+stranger reading only that text could act on: "a household member," "the operator," "a dependent
+account" — never the verbatim name, relationship or situation that made the need concrete.** The
+concrete, identifying detail is exactly what the private context exists to hold, and it is linked by
+a stable id the reader can resolve if they have access, not restated: `Context: <private
+store>/<doc id>`. A record that paraphrases the private detail instead of linking it has copied the
+disclosure one hop further out and made it harder to find, because now two places need scrubbing
+instead of one.
+
+**This is the same move as citing by id instead of by path** (*An id used as a resolution key is
+validated like one*, above): the identifying record stays in one place, and everything that needs to
+act on it holds a reference, not a restatement.
+
+**Scope.** Binds any text bound for a repo, forge, a shared or team chat surface, or a fixture that is
+**not** the private notebook or journal itself — product tickets, PR titles and bodies, commit
+messages, dispatch briefs, hand-off blocks, and test or example data, wherever they are filed. What
+this rule binds is what gets **persisted or broadcast** to an audience wider than the data's owners.
+
+**Not bound:** the live conversation between a person and their own assistant, answering that
+person's own question about their own data, and a message deliberately sent *to* the people the
+detail concerns. Neutralising those would forbid the reason the private context exists — an assistant
+that cannot say a looked-up detail back to the person who owns it, or relay it to the person it is
+about, is not protecting anyone. The boundary is the same one the rule already draws: a *record* that
+outlives the moment and reaches readers beyond the data's owners is bound; an answer or a message that
+goes only to someone the detail already belongs to or concerns is not.
+
+⚠️ **A private repo is not an exemption.** "This repo is already private" answers who can read it
+*today*; it says nothing about who can read it after a visibility change, a fork, a backup copy, or a
+merge into a less-private tree — and version-control history is permanent, so a name or detail
+committed under today's privacy setting survives every later tightening of it. Write every such
+record as if it will be public by the time someone reads it, because repos get published and
+history does not forget that they once were not.
+
 ## A record's coverage ends at its LAST CITED EVENT, not at when it was WRITTEN
 
 **"The record is recent" is not evidence that it is current.** A hand-off, status or summary is
