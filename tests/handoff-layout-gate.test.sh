@@ -27,12 +27,14 @@ GOOD="## ✅ Done
 ► alice@workstation · 🔑 PROMPTS: alice · password · workstation (sudo)
 📝 LOGGED → ~/.local/state/x.log
 ${F}bash
+echo '▶ deploy · #12 B · 2/3 · 11-06 19:20'
 sudo ./rotate.sh
+echo \"■ deploy · #12 B · 2/3 · done rc=\$?\"
 ${F}"
 
 EXHIBIT="Run this:
 ${F}bash
-for k in a b c; do bao kv put secret/x/\$k v=1; done
+for k in a b c; do printf %s \$k; done
 ${F}"
 
 check "exhibit (bare for-loop, 2026-10-20) is refused"       1 "R1" "$EXHIBIT"
@@ -54,6 +56,15 @@ check "R3 fires: 👤 You not last"                            1 "must be the LA
 check "R4 fires alone (no LOGGED marker)"                    1 "R4" "$(printf '%s' "$GOOD" | sed '/LOGGED/d')"
 check "🚫 NOT LOGGED satisfies R4"                           0 "ok" "$(printf '%s' "$GOOD" | sed 's/📝 LOGGED → ~\/.local\/state\/x.log/🚫 NOT LOGGED (no output)/')"
 
+# R5 (Nik, 2026-11-06): the shell itself shows which agent, card, step and request time a block is,
+# and that it finished. Each mutation of GOOD's banner must fire R5 alone.
+check "R5 fires: no banner line"                             1 "must open with" "$(printf '%s' "$GOOD" | sed "/^echo '▶/d")"
+check "R5 fires: no end line"                                1 "must close with" "$(printf '%s' "$GOOD" | sed '/^echo "■/d')"
+check "R5 fires: end label differs from the banner"          1 "does not repeat" "$(printf '%s' "$GOOD" | sed 's/■ deploy · #12 B · 2\/3/■ deploy · #12 A · 2\/3/')"
+check "R5 fires: step beyond total"                          1 "out of range" "$(printf '%s' "$GOOD" | sed 's/2\/3/4\/3/g')"
+check "R5 fires: banner without a time"                      1 "must open with" "$(printf '%s' "$GOOD" | sed 's/ · 11-06 19:20//')"
+check "R5: a banner in double quotes is accepted too"        0 "ok" "$(printf '%s' "$GOOD" | sed "s/^echo '▶ \(.*\)'\$/echo \"▶ \1\"/")"
+
 # The header-table form (requested by Nik, 2026-10-25): a two-row table directly above the fence,
 # in place of the `► user@host · 🔑 PROMPTS · 📝 LOGGED` line.
 GOOD_TABLE="## 👤 You
@@ -62,20 +73,26 @@ GOOD_TABLE="## 👤 You
 | --- | --- | --- |
 | 🔑 alice · password · workstation (sudo) | | |
 ${F}bash
+echo '▶ deploy · #12 B · 2/3 · 11-06 19:20'
 sudo ./rotate.sh
+echo \"■ deploy · #12 B · 2/3 · done rc=\$?\"
 ${F}"
 
 check "header table alone (no ► line) satisfies R1/R2/R4"    0 "ok" "$GOOD_TABLE"
 check "fence with NEITHER the ► line nor a table fails"      1 "R1" "## 👤 You
 Run this:
 ${F}bash
+echo '▶ deploy · #12 B · 2/3 · 11-06 19:20'
 sudo ./rotate.sh
+echo \"■ deploy · #12 B · 2/3 · done rc=\$?\"
 ${F}"
 check "table missing its 🔑 row fails R2 when the block prompts" 1 "R2" "## 👤 You
 | 🖥️ workstation | 👤 alice | 📝 no |
 | --- | --- | --- |
 ${F}bash
+echo '▶ deploy · #12 B · 2/3 · 11-06 19:20'
 sudo ./rotate.sh
+echo \"■ deploy · #12 B · 2/3 · done rc=\$?\"
 ${F}"
 check "table's 🔑 row says 'none' but the block prompts: R2 fires" 1 "R2" "$(printf '%s' "$GOOD_TABLE" | sed 's/🔑 alice · password · workstation (sudo)/🔑 none/')"
 check "table with 📝 cell 'no' still satisfies R4 (states the answer, need not BE logged)" 0 "ok" "$(printf '%s' "$GOOD_TABLE" | sed 's/📝 ~\/.local\/state\/x.log/📝 no/')"
@@ -87,7 +104,9 @@ GOOD_TABLE2="## 👤 You
 | --- | --- |
 | 🔑 alice · password · workstation (sudo) | |
 ${F}bash
+echo '▶ deploy · #12 B · 2/3 · 11-06 19:20'
 sudo ./rotate.sh
+echo \"■ deploy · #12 B · 2/3 · done rc=\$?\"
 ${F}"
 
 check "2-cell table (user@machine merged) satisfies R1/R2/R4"  0 "ok" "$GOOD_TABLE2"
@@ -95,7 +114,9 @@ check "2-cell table missing its 🔑 row fails R2 when the block prompts" 1 "R2"
 | 👤 alice@workstation | 📝 no |
 | --- | --- |
 ${F}bash
+echo '▶ deploy · #12 B · 2/3 · 11-06 19:20'
 sudo ./rotate.sh
+echo \"■ deploy · #12 B · 2/3 · done rc=\$?\"
 ${F}"
 check "2-cell table's 🔑 row says 'none' but the block prompts: R2 fires" 1 "R2" "$(printf '%s' "$GOOD_TABLE2" | sed 's/🔑 alice · password · workstation (sudo)/🔑 none/')"
 check "2-cell table's identity cell with no '@' (not user@machine) fails R1" 1 "R1" "$(printf '%s' "$GOOD_TABLE2" | sed 's/👤 alice@workstation/👤 alice/')"
@@ -112,7 +133,7 @@ out=$(printf '{"transcript_path":"%s","stop_hook_active":false}' "$TMP/t.jsonl" 
 if [ $rc = 0 ] && printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d["decision"]=="block" and "R1" in d["reason"] else 1)'; then pass "Stop channel: exhibit -> decision block with reason"; else fail "Stop channel block: rc=$rc out=$out"; fi
 out=$(printf '{"transcript_path":"%s","stop_hook_active":true}' "$TMP/t.jsonl" | GOVERNANCE_DENY_LOG="$TMP/deny.jsonl" python3 "$HOOK"); rc=$?
 if [ $rc = 0 ] && [ -z "$out" ]; then pass "Stop channel: retry (stop_hook_active) is allowed, never loops"; else fail "retry: rc=$rc out=$out"; fi
-if [ -s "$TMP/deny.jsonl" ] && ! grep -q 'bao kv put' "$TMP/deny.jsonl"; then pass "refusal recorded in the deny trail, without the message text"; else fail "deny trail missing or leaks text"; fi
+if [ -s "$TMP/deny.jsonl" ] && ! grep -q 'printf %s' "$TMP/deny.jsonl"; then pass "refusal recorded in the deny trail, without the message text"; else fail "deny trail missing or leaks text"; fi
 mk "$TMP/g.jsonl" "$GOOD"
 out=$(printf '{"transcript_path":"%s","stop_hook_active":false}' "$TMP/g.jsonl" | python3 "$HOOK"); rc=$?
 if [ $rc = 0 ] && [ -z "$out" ]; then pass "Stop channel: correct layout -> no block"; else fail "good on Stop channel: rc=$rc out=$out"; fi

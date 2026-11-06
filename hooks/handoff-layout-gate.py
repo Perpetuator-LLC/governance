@@ -13,6 +13,12 @@ fenced SHELL block (```bash / sh / zsh / shell / console):
   R4  every shell block has `📝 LOGGED` or `🚫 NOT LOGGED` within the 4 non-blank lines above it,
       OR the header table's 📝 cell is non-empty (its text may be "no": the cell only has to say whether
       it was logged, not that it was).
+  R5  every shell block opens with a BANNER line and closes with an END line (Nik, 2026-11-06: he runs blocks
+      from many agents and needs to see, in the shell itself, which request and which step he is on):
+          echo '▶ <agent> · <card> · <step>/<total> · <MM-DD HH:MM>'      (first line: who asked, for what, when)
+          echo "■ <agent> · <card> · <step>/<total> · done rc=$?"          (last line: it finished, and how)
+      <card> is the ticket or block the request belongs to (e.g. `#12 B`); <step>/<total> counts the blocks of
+      one request; the time is when the agent asked, read from the clock. The END label repeats the BANNER's.
 
 The header table is two markdown rows directly above the fence, in either of two forms:
     | 🖥️ <host> | 👤 <user> | 📝 <logged, or "no"> |          | 👤 <user>@<machine> | 📝 <logged, or "no"> |
@@ -51,6 +57,8 @@ TABLE2_ROW1 = re.compile(r"^\|\s*👤\s*([^|]*?)\s*\|\s*📝\s*([^|]*?)\s*\|\s*$
 TABLE2_SEP = re.compile(r"^\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|\s*$")
 TABLE2_ROW2 = re.compile(r"^\|\s*🔑\s*([^|]*?)\s*\|\s*\|\s*$")
 USER_HOST = re.compile(r"(\S+)@(\S+)")
+BANNER = re.compile(r"""^echo\s+(['"])▶\s+(\S.*?\s·\s.+?\s·\s(\d+)/(\d+))\s·\s\d\d-\d\d\s\d\d:\d\d\1\s*$""")
+END_LINE = re.compile(r"""^echo\s+"■\s+(.+?)\s·\sdone\s+rc=\$\?"\s*$""")
 
 
 def table_header(above):
@@ -80,6 +88,24 @@ def table_header(above):
     return None
 
 
+def banner_violations(n, body):
+    """R5: the block's first line names who asked, for which card, which step of how many, and when; its last
+    line says it finished, with the same label and the exit status."""
+    code = [l.strip() for l in body.splitlines() if l.strip()]
+    first = BANNER.match(code[0]) if code else None
+    if not first:
+        return [f"R5 line {n}: shell block must open with `echo '▶ <agent> · <card> · <step>/<total> · <MM-DD HH:MM>'`"]
+    step, total = int(first.group(3)), int(first.group(4))
+    if not 1 <= step <= total:
+        return [f"R5 line {n}: banner step {step}/{total} is out of range"]
+    last = END_LINE.match(code[-1]) if len(code) > 1 else None
+    if not last:
+        return [f"R5 line {n}: shell block must close with `echo \"■ <agent> · <card> · <step>/<total> · done rc=$?\"`"]
+    if last.group(1) != first.group(2):
+        return [f"R5 line {n}: end label `{last.group(1)}` does not repeat the banner's `{first.group(2)}`"]
+    return []
+
+
 def violations(text):
     lines = text.splitlines()
     blocks, i = [], 0
@@ -105,6 +131,7 @@ def violations(text):
         table_prompts = tbl and tbl["prompts"] and tbl["prompts"].lower() != "none"
         if PROMPT_WORDS.search(body) and "🔑 PROMPTS" not in text and not table_prompts:
             out.append(f"R2 line {n}: block prompts (read -s / sudo / login / ssh / --ask-) but the message has no `🔑 PROMPTS` line or header-table 🔑 cell")
+        out.extend(banner_violations(n, body))
     heads = [l.strip() for l in lines if l.startswith("## ")]
     if not any(h.startswith("## 👤 You") for h in heads):
         out.append("R3: a message with a shell block for the human needs a `## 👤 You` section")
