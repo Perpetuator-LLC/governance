@@ -1272,9 +1272,18 @@ instead of one.
 validated like one*, above): the identifying record stays in one place, and everything that needs to
 act on it holds a reference, not a restatement.
 
-**Scope.** Binds any text bound for a repo, forge, chat surface or fixture that is **not** the
-private notebook or journal itself — product tickets, PR titles and bodies, commit messages, dispatch
-briefs, hand-off blocks, and test or example data, wherever they are filed.
+**Scope.** Binds any text bound for a repo, forge, a shared or team chat surface, or a fixture that is
+**not** the private notebook or journal itself — product tickets, PR titles and bodies, commit
+messages, dispatch briefs, hand-off blocks, and test or example data, wherever they are filed. What
+this rule binds is what gets **persisted or broadcast** to an audience wider than the data's owners.
+
+**Not bound:** the live conversation between a person and their own assistant, answering that
+person's own question about their own data, and a message deliberately sent *to* the people the
+detail concerns. Neutralising those would forbid the reason the private context exists — an assistant
+that cannot say a looked-up detail back to the person who owns it, or relay it to the person it is
+about, is not protecting anyone. The boundary is the same one the rule already draws: a *record* that
+outlives the moment and reaches readers beyond the data's owners is bound; an answer or a message that
+goes only to someone the detail already belongs to or concerns is not.
 
 ⚠️ **A private repo is not an exemption.** "This repo is already private" answers who can read it
 *today*; it says nothing about who can read it after a visibility change, a fork, a backup copy, or a
