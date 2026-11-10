@@ -83,7 +83,7 @@ check "…and nothing else${extra:+ (unexpected: $extra)}" "[ -z '$extra' ]"
 check "MOVED.md.template is not rendered: no MOVED.md, no *.template" \
   "[ ! -e '$S/MOVED.md' ] && [ -z \"\$(find '$S' -name '*.template')\" ] && [ -f '$TPL/MOVED.md.template' ]"
 check "{{name}} is filled with the --out directory's name in README.md and AGENTS.md" \
-  "head -1 '$S/README.md' | grep -qx '# demo-stack' && grep -q 'Lane:\*\* \`demo-stack\`' '$S/AGENTS.md' && ! grep -q '{{name}}' '$S/README.md' '$S/AGENTS.md'"
+  "head -1 '$S/README.md' | grep -qx '# demo-stack' && grep -q 'Agent:\*\* \`demo-stack\`' '$S/AGENTS.md' && ! grep -q '{{name}}' '$S/README.md' '$S/AGENTS.md'"
 same=1
 for f in "${EXPECTED[@]}"; do
   case "$f" in README.md|AGENTS.md) continue ;; esac
