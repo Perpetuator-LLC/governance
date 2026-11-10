@@ -23,11 +23,11 @@ month, and nothing detects the drift because both files look maintained.
 | `AGENTS.md` (this file) | conventions, tripwires, the decisions that are closed |
 | `docs/decisions/` | ADRs — why the repo is shaped the way it is |
 
-## Lane and flow
+## Agent and flow
 
-- **Lane:** `{{name}}`. One agent seat owns changes here; anyone else proposes through their own
+- **Agent:** `{{name}}`. One agent seat owns changes here; anyone else proposes through their own
   branch and a pull request — never in the owner's checkout.
-- **Feature branch → this lane's integration branch → ONE open pull request → the default branch.**
+- **Feature branch → this agent's integration branch → ONE open pull request → the default branch.**
   Never push the default branch directly. **Read the integration branch** (`git ls-remote --heads
   origin 'merge/*'`); never compute its name.
 - **Stage explicit pathspecs.** Never `git add -A`, `git add .` or `git commit -a`.
@@ -55,6 +55,6 @@ secret store by path; a path is safe to name, a value never is.
 
 ## Hand-off
 
-The first agent seat to work this lane writes `docs/handoff/HANDOFF-{{name}}-worker-continuation.md`
+The first agent seat to work this agent writes `docs/handoff/HANDOFF-{{name}}-worker-continuation.md`
 — the repo-local pointer a fresh seat reads first. It records the topology no one can infer:
 integration branch, open pull request, foreign uncommitted edits, and the landmines already paid for.

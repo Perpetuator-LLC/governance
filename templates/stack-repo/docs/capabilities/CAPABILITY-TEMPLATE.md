@@ -4,7 +4,7 @@ id: CAP-<STACK>-<n>
 title: "<what a user or an agent can DO because this exists, as a verb phrase>"
 stack: <this repository, or the module/services/<name> that runs alone>
 status: draft                     # draft | published; published by a human
-owner: <the lane or team that owns it>
+owner: <the agent or team that owns it>
 created: YYYY-MM-DD
 objective: "<the strategy objective this capability serves, as a link>"
 requirement_packages: []          # the requirement-package epics that build it, fully qualified
