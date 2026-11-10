@@ -450,7 +450,9 @@ as its new top priority makes the whole system thrash.
 - **An orchestrator** captures the item and keeps its current dispatch plan; it does not
   re-dispatch running agents on a new idea.
 - **A review gate's verdict on the task the agent is on is part of that task**, not new work: a
-  send-back on A is A. A review request from someone else is queued work, not a switch.
+  send-back on A is A, and within it a security finding is fixed first. A send-back that names a
+  **live exposure** (a credential already pushed or logged) is a P0 whoever's task it is, and its
+  containment runs as its own task. A review request from someone else is queued work, not a switch.
 
 **Scope: where switching is right, and you write down which one applied.**
 - **An explicit stop or redirect** from the human, or from the dispatcher that owns the queue.
