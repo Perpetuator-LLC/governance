@@ -19,6 +19,14 @@ fenced SHELL block (```bash / sh / zsh / shell / console):
           echo "■ <agent> · <card> · <step>/<total> · done rc=$?"          (last line: it finished, and how)
       <card> is the ticket or block the request belongs to (e.g. `#12 B`); <step>/<total> counts the blocks of
       one request; the time is when the agent asked, read from the clock. The END label repeats the BANNER's.
+      TIMED form (the human, 2026-11-09): the shell also records when the block actually ran,
+      how long it took, and the agent's estimate, so a slow or hung step shows up next to its guess:
+          T0=$(date +%s); echo "▶ <label> · asked <MM-DD HH:MM> · est ~<N><s|m|h> · start $(date '+%H:%M:%S')"
+          rc=$?; echo "■ <label> · done rc=$rc · end $(date '+%H:%M:%S') · took $(( $(date +%s) - T0 ))s"
+      `rc=$?` comes FIRST on the end line: any command substitution before it (a `date`) would overwrite `$?`.
+      The only expansions accepted are those literal ones; the label stays expansion-free. A timed banner needs
+      a timed end (it sets T0) and an untimed banner an untimed end. Both pairs are accepted while hand-off
+      examples move to the timed form.
 
 The header table is two markdown rows directly above the fence, in either of two forms:
     | 🖥️ <host> | 👤 <user> | 📝 <logged, or "no"> |          | 👤 <user>@<machine> | 📝 <logged, or "no"> |
@@ -63,6 +71,15 @@ USER_HOST = re.compile(r"(\S+)@(\S+)")
 LABEL = r"[A-Za-z0-9 #._:/+\-]+"
 BANNER = re.compile(r"""^echo\s+(['"])▶\s+(""" + LABEL + r"""\s·\s""" + LABEL + r"""\s·\s(\d+)/(\d+))\s·\s\d\d-\d\d\s\d\d:\d\d\1\s*$""")
 END_LINE = re.compile(r"""^echo\s+"■\s+(""" + LABEL + r"""\s·\s""" + LABEL + r"""\s·\s\d+/\d+)\s·\sdone\s+rc=\$\?"\s*$""")
+# The timed pair. Every expansion in it is spelled out literally here, so the gate still admits
+# no expansion the agent chose: only T0, the clock, and the captured rc.
+_LBL = r"(" + LABEL + r"""\s·\s""" + LABEL + r"""\s·\s(\d+)/(\d+))"""
+TIMED_BANNER = re.compile(r"""^T0=\$\(date \+%s\);\s*echo\s+"▶\s+""" + _LBL
+                          + r"""\s·\sasked\s\d\d-\d\d\s\d\d:\d\d\s·\sest\s~\d+[smh]"""
+                          + r"""\s·\sstart\s\$\(date '\+%H:%M:%S'\)"\s*$""")
+TIMED_END = re.compile(r"""^rc=\$\?;\s*echo\s+"■\s+(""" + LABEL + r"""\s·\s""" + LABEL + r"""\s·\s\d+/\d+)"""
+                       + r"""\s·\sdone\s+rc=\$rc\s·\send\s\$\(date '\+%H:%M:%S'\)"""
+                       + r"""\s·\stook\s\$\(\( \$\(date \+%s\) - T0 \)\)s"\s*$""")
 
 
 def table_header(above):
@@ -94,20 +111,26 @@ def table_header(above):
 
 def banner_violations(n, body):
     """R5: the block's first line names who asked, for which card, which step of how many, and when; its last
-    line says it finished, with the same label and the exit status."""
+    line says it finished, with the same label and the exit status. The timed pair also records start, end,
+    duration and the agent's estimate."""
     code = [l.strip() for l in body.splitlines() if l.strip()]
-    first = BANNER.match(code[0]) if code else None
+    timed = TIMED_BANNER.match(code[0]) if code else None
+    first = timed or (BANNER.match(code[0]) if code else None)
     if not first:
-        return [f"R5 line {n}: shell block must open with `echo '▶ <agent> · <card> · <step>/<total> · <MM-DD HH:MM>'`"
+        return [f"R5 line {n}: shell block must open with "
+                "`T0=$(date +%s); echo \"▶ <agent> · <card> · <step>/<total> · asked <MM-DD HH:MM> · est ~<N>m · start $(date '+%H:%M:%S')\"`"
                 " (label characters: letters, digits, space and # . _ : / + -)"]
-    step, total = int(first.group(3)), int(first.group(4))
+    label = first.group(1) if timed else first.group(2)
+    step, total = (int(first.group(2)), int(first.group(3))) if timed else (int(first.group(3)), int(first.group(4)))
     if not 1 <= step <= total:
         return [f"R5 line {n}: banner step {step}/{total} is out of range"]
-    last = END_LINE.match(code[-1]) if len(code) > 1 else None
+    end_re, end_shape = (TIMED_END, "`rc=$?; echo \"■ <agent> · <card> · <step>/<total> · done rc=$rc · end $(date '+%H:%M:%S') · took $(( $(date +%s) - T0 ))s\"`"
+                         " (rc=$? FIRST, before any date)") if timed else (END_LINE, "`echo \"■ <agent> · <card> · <step>/<total> · done rc=$?\"`")
+    last = end_re.match(code[-1]) if len(code) > 1 else None
     if not last:
-        return [f"R5 line {n}: shell block must close with `echo \"■ <agent> · <card> · <step>/<total> · done rc=$?\"`"]
-    if last.group(1) != first.group(2):
-        return [f"R5 line {n}: end label `{last.group(1)}` does not repeat the banner's `{first.group(2)}`"]
+        return [f"R5 line {n}: shell block must close with {end_shape}"]
+    if last.group(1) != label:
+        return [f"R5 line {n}: end label `{last.group(1)}` does not repeat the banner's `{label}`"]
     return []
 
 

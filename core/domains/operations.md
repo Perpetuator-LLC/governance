@@ -275,18 +275,28 @@ whom, which step of a request they are on, and whether the last one finished. Th
 scrollback is where they look, so the label goes there:
 
 ```
-echo '▶ <agent> · <card> · <step>/<total> · <MM-DD HH:MM>'
+T0=$(date +%s); echo "▶ <agent> · <card> · <step>/<total> · asked <MM-DD HH:MM> · est ~<N>m · start $(date '+%H:%M:%S')"
 <the commands>
-echo "■ <agent> · <card> · <step>/<total> · done rc=$?"
+rc=$?; echo "■ <agent> · <card> · <step>/<total> · done rc=$rc · end $(date '+%H:%M:%S') · took $(( $(date +%s) - T0 ))s"
 ```
 
 - **`<agent>`**: the asking agent's short name, as the human sees it in session titles.
 - **`<card>`**: the ticket or block the request belongs to, short (`#12 B`).
 - **`<step>/<total>`**: this block's place among the blocks of one request. A one-block request is
   `1/1`; a request whose next block depends on this one's output still counts it (`1/2`).
-- **The time** is when the agent asked, read from the clock, in the human's local time.
-- **The end line repeats the banner's label.** `rc=$?` is the exit status of the line just before it,
-  not of the whole block.
+- **`asked`** is when the agent asked, read from the clock, in the human's local time. **`start`**,
+  **`end`** and **`took`** are filled in by the shell when the block actually runs, so a block run
+  hours later, or one that hung, shows it.
+- **`est`** is the agent's estimate of the block's run time (`s`, `m` or `h`). A `took` far above it
+  is a finding: the agent reads the end line back and explains the gap before the next step.
+- **The end line repeats the banner's label.** `rc=$?` comes **first** on it, because any command
+  substitution before it (a `date`) overwrites `$?`. It is the exit status of the line just before
+  it, not of the whole block.
+- **The label carries no shell expansion.** The only expansions in the two lines are the literal
+  ones above: `T0`, the clock, and the captured `rc`.
+
+The untimed pair (`echo '▶ <label> · <MM-DD HH:MM>'` … `echo "■ <label> · done rc=$?"`) is still
+accepted while hand-off examples move over; a timed banner needs a timed end, since it sets `T0`.
 
 **Scope:** shell blocks the human pastes. A fence holding a message to send is not a shell block and
 carries no banner. A hash is deliberately left out: two hashes are hard to tell apart at a glance,
