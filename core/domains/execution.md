@@ -24,6 +24,11 @@ Before ending an authorized implementation turn:
 5. End only with verified completion, an explicit pause/cancellation, or an
    evidenced blocker with the smallest actionable handoff. Distinguish local
    tests, remote CI, merge, deployment, and end-to-end validation.
+6. If new work arrived during the turn, the task you were on is finished, or
+   explicitly parked with its reason (a stop, a P0, a fact that made it
+   unsafe, or waiting on an external gate); the new work is captured with a priority and an owner, not
+   silently started in its place (operations → *Capturing new work does not
+   switch to it*).
 
 When challenged about inactivity during an unfinished implementation request,
 give a brief factual explanation and resume authorized work in the same turn.
