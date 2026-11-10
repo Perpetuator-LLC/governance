@@ -25,8 +25,8 @@ Before ending an authorized implementation turn:
    evidenced blocker with the smallest actionable handoff. Distinguish local
    tests, remote CI, merge, deployment, and end-to-end validation.
 6. If new work arrived during the turn, the task you were on is finished, or
-   explicitly parked with its reason (a stop, a P0, or a fact that made it
-   unsafe); the new work is captured with a priority and an owner, not
+   explicitly parked with its reason (a stop, a P0, a fact that made it
+   unsafe, or waiting on an external gate); the new work is captured with a priority and an owner, not
    silently started in its place (operations → *Capturing new work does not
    switch to it*).
 
