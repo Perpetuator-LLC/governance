@@ -430,6 +430,48 @@ utterance in the imperative mood. **Four neighbouring cases where recording woul
   second one — the same dedupe-by-GOAL discipline that applies to any other item, not a new exception
   for this one.
 
+### Capturing new work does not switch to it: the agent RESUMES the task it was on
+
+**A new request that arrives while an agent is working task A is captured, then A is finished.**
+Capturing means: file the item (deduped by goal against what exists), give it a priority against the
+current plan, and name its owner, all in the same turn. Then the agent goes back to A. It switches
+to the new item **only when told to stop A**, even when the new item ranks higher.
+
+**Why:** a switch costs more than it looks. It leaves half-finished branches, heads whose reviews
+are void once anyone pushes again, context to be re-read, and work with no owner. Finishing a
+lower-priority task and then taking the highest next one is cheaper than layers of unfinished work.
+A human thinking aloud is capturing ideas, not redirecting work; an agent that treats every remark
+as its new top priority makes the whole system thrash.
+
+**How it binds, by kind of agent:**
+- **An agent that owns its own queue** captures, then resumes A.
+- **A dispatched agent never decides to switch.** A new item that reaches it mid-task goes back to
+  its dispatcher as a captured ticket, and it resumes A. Only the dispatcher reorders its queue.
+- **An orchestrator** captures the item and keeps its current dispatch plan; it does not
+  re-dispatch running agents on a new idea.
+- **A review gate's verdict on the task the agent is on is part of that task**, not new work: a
+  send-back on A is A. A review request from someone else is queued work, not a switch.
+
+**Scope: where switching is right, and you write down which one applied.**
+- **An explicit stop or redirect** from the human, or from the dispatcher that owns the queue.
+- **A P0**: an active incident, data loss or a security exposure interrupts at once.
+- **A new fact that makes A wrong or unsafe to finish.** That is a stop condition on A, not a new
+  task: stop A, record why, and then rank the new fact like any other item.
+- **The mirror cases — no task in flight.** An idle agent has no A, so the new item is simply its
+  next task by priority. Likewise an agent whose A is **waiting on an external gate** (a review, CI,
+  a human's answer) is not mid-task: it takes the next item by priority and returns to A when the
+  gate fires. Neither case may read this rule as "never start new work".
+
+**The failure mode this rule invites:** *captured* becomes a reason never to start. So a captured
+item gets its priority and owner in the same turn, its owner's next free slot picks it up by
+priority, and an item captured but never started within its release is a finding on the next sweep.
+
+**Measure it before limiting it.** Two numbers per agent per day: a **thrash ratio** (tasks started
+÷ tasks finished, where *started* is the first claim or dispatch and *finished* is an accepted
+change, a closed ticket or a released claim) and **open work in progress** (open feeder branches
+plus claimed tickets). Take a baseline first; the ratio should move toward 1 and open work should
+fall. Set a work-in-progress limit only after the baseline shows where it belongs.
+
 ## A blocked outward send goes to the surface's owning seat, never to the human as a paste
 
 **Each outward messaging surface has one owning seat**: the one that holds the harness permission to
