@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/handoff-layout-gate.test.sh — known-answer tests for hooks/handoff-layout-gate.py.
 # The exhibit (a bare one-line `for` loop handed to the human) must be refused; a correct block must pass;
-# each rule R1–R4 must fire alone; the Stop-hook channel must emit {"decision":"block"} and allow a retry.
+# each rule R1–R5 must fire alone (R5 in its untimed and timed forms); the Stop-hook channel must emit {"decision":"block"} and allow a retry.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="$ROOT/hooks/handoff-layout-gate.py"
@@ -89,6 +89,58 @@ ${HOME}
 "
 \
 PAYLOADS
+
+# R5 TIMED form (the human, 2026-11-09, governance#403): the shell records when the block actually ran, how long
+# it took, and the agent's estimate. Lines are built from QUOTED heredocs so bash never expands them here.
+TB=$(cat <<'L'
+T0=$(date +%s); echo "▶ deploy · #12 B · 2/3 · asked 11-09 07:10 · est ~2m · start $(date '+%H:%M:%S')"
+L
+)
+TE=$(cat <<'L'
+rc=$?; echo "■ deploy · #12 B · 2/3 · done rc=$rc · end $(date '+%H:%M:%S') · took $(( $(date +%s) - T0 ))s"
+L
+)
+# The mutant coa named: a `date` runs before `$?` is read, so the end line reports date's rc, not the block's.
+TE_MUT=$(cat <<'L'
+echo "■ deploy · #12 B · 2/3 · end $(date '+%H:%M:%S') · done rc=$? · took $(( $(date +%s) - T0 ))s"
+L
+)
+timed() {  # timed <banner> <end>: GOOD with its banner and end lines replaced
+  python3 - "$GOOD" "$1" "$2" <<'PY2'
+import sys
+good, b, e = sys.argv[1:]
+out = []
+for l in good.split("\n"):
+    out.append(b if l.startswith("echo '▶") else e if l.startswith('echo "■') else l)
+print("\n".join(out), end="")
+PY2
+}
+GOOD_TIMED=$(timed "$TB" "$TE")
+check "R5 timed: banner + end pass"                             0 "ok" "$GOOD_TIMED"
+check "R5 timed: rc read after a date (the mutant) is refused"  1 "must close with" "$(timed "$TB" "$TE_MUT")"
+check "R5 timed: timed banner with an untimed end is refused"   1 "rc=\$? FIRST" "$(timed "$TB" 'echo "■ deploy · #12 B · 2/3 · done rc=$?"')"
+check "R5 timed: untimed banner with a timed end is refused"    1 "must close with" "$(timed "echo '▶ deploy · #12 B · 2/3 · 11-06 19:20'" "$TE")"
+check "R5 timed: banner without an estimate is refused"         1 "must open with" "$(timed "${TB/ · est ~2m/}" "$TE")"
+check "R5 timed: banner without the start clock is refused"     1 "must open with" "$(timed "${TB/ · start \$(date \'+%H:%M:%S\')/}" "$TE")"
+check "R5 timed: end without took is refused"                   1 "must close with" "$(timed "$TB" "${TE/ · took*s\"/\"}")"
+check "R5 timed: end label differs from the banner"             1 "does not repeat" "$(timed "$TB" "${TE/\#12 B/#12 A}")"
+check "R5 timed: step beyond total"                             1 "out of range" "$(timed "${TB/2\/3/4\/3}" "${TE/2\/3/4\/3}")"
+check "R5 timed: any other expansion in the banner is refused"  1 "must open with" "$(timed "${TB/est ~2m/est ~2m \$(id)}" "$TE")"
+check "R5 timed: any other expansion in the end is refused"     1 "must close with" "$(timed "$TB" "${TE/done rc=\$rc/done rc=\$rc \$(id)}")"
+
+# Execution: the canonical pair, run around a failing command, must report THAT command's status; the mutant
+# must not (this is why the gate insists on `rc=$?` first). Run in every shell a human may paste into.
+for sh in bash zsh; do
+  command -v "$sh" >/dev/null || { pass "R5 timed exec: $sh not installed, skipped"; continue; }
+  out=$(printf '%s\n%s\n%s\n' "$TB" "(exit 3)" "$TE" | "$sh" 2>&1)
+  if printf '%s' "$out" | grep -qE '■ deploy · #12 B · 2/3 · done rc=3 · end [0-9]{2}:[0-9]{2}:[0-9]{2} · took [0-9]+s$' \
+     && printf '%s' "$out" | grep -qE '^▶ deploy · #12 B · 2/3 · asked 11-09 07:10 · est ~2m · start [0-9]{2}:[0-9]{2}:[0-9]{2}$'; then
+    pass "R5 timed exec ($sh): end line reports the failing command's rc=3, start/end/took filled"
+  else fail "R5 timed exec ($sh): $out"; fi
+  out=$(printf '%s\n%s\n%s\n' "$TB" "(exit 3)" "$TE_MUT" | "$sh" 2>&1)
+  if printf '%s' "$out" | grep -q 'done rc=0'; then pass "R5 timed exec ($sh): the mutant loses rc=3 (reports 0)"
+  else fail "R5 timed exec ($sh): mutant kept the rc, so the test cannot tell them apart: $out"; fi
+done
 
 # The header-table form (requested by the human, 2026-10-25): a two-row table directly above the fence,
 # in place of the `► user@host · 🔑 PROMPTS · 📝 LOGGED` line.
