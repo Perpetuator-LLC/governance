@@ -289,8 +289,22 @@ if printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_acro
   deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
 fi
 
-if echo "$cmd" | grep -qE 'security\s+find-generic-password|security\s+find-internet-password'; then
+# Credential-store reads. Two failures this rule had, both measured against a reference case list: it
+# needed the tool word DIRECTLY before the subcommand, case-sensitively, so a list-form argv inside an
+# interpreter wrapper, padding between the two, or the tool spelled in capitals (the default macOS disk
+# is case-insensitive) all passed; and it knew two subcommands, so a whole-keychain dump and a `keyring`
+# library read passed with no tool word to find. So: the SUBCOMMAND WORD ALONE refuses, anywhere in the
+# flattened, lower-cased text, with no tool word and no proximity required; and a keyring READ call
+# refuses on its own. Best effort, not a parser: a subcommand assembled at run time is not seen.
+# Cost, accepted: a command that only MENTIONS one of these words (a grep, a commit -m) is refused too;
+# search by the rule id, and pass a message by file.
+kc=$(printf '%s' "$cmd" | tr '\n\r' '  ' | tr '[:upper:]' '[:lower:]')
+if printf '%s' "$kc" | grep -qE '(^|[^a-z0-9_-])(find-generic-password|find-internet-password|dump-keychain)([^a-z0-9_-]|$)'; then
   deny keychain-read "Keychain access would expose secrets to the AI context. Keychain reads belong in runtime code only, not in development commands."
+fi
+if printf '%s' "$kc" | grep -qE '(^|[^a-z0-9_])keyring([^a-z0-9_]|$)' \
+   && printf '%s' "$kc" | grep -qE 'get_password|get_credential|keyring[[:space:]]+get([^a-z0-9_]|$)'; then
+  deny keyring-read "Keychain access through a keyring library would expose secrets to the AI context. Credential-store reads belong in runtime code only, not in development commands."
 fi
 
 if echo "$cmd" | grep -qE 'docker\s+(exec|inspect).*env|docker\s+(exec|inspect).*\.env|docker\s+(exec|inspect).*secret|docker\s+(exec|inspect).*token|docker\s+(exec|inspect).*password'; then
