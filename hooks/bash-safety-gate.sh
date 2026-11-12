@@ -304,7 +304,7 @@ if printf '%s' "$kc" | grep -qE '(^|[^a-z0-9_-])(find-generic-password|find-inte
 fi
 if printf '%s' "$kc" | grep -qE '(^|[^a-z0-9_])keyring([^a-z0-9_]|$)' \
    && printf '%s' "$kc" | grep -qE 'get_password|get_credential|keyring[[:space:]]+get([^a-z0-9_]|$)'; then
-  deny keychain-read "Keychain access through a keyring library would expose secrets to the AI context. Credential-store reads belong in runtime code only, not in development commands."
+  deny keyring-read "Keychain access through a keyring library would expose secrets to the AI context. Credential-store reads belong in runtime code only, not in development commands."
 fi
 
 if echo "$cmd" | grep -qE 'docker\s+(exec|inspect).*env|docker\s+(exec|inspect).*\.env|docker\s+(exec|inspect).*secret|docker\s+(exec|inspect).*token|docker\s+(exec|inspect).*password'; then

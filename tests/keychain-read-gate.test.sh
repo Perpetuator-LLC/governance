@@ -108,7 +108,7 @@ done < "$TMP/cases.jsonl"
 
 # The deny trail records the rule id and never the refused text.
 if [[ -s "$GOVERNANCE_DENY_LOG" ]]; then
-  grep -q 'keychain-read' "$GOVERNANCE_DENY_LOG" && ok "deny trail names the rule" || bad "deny trail lacks the rule id"
+  grep -q 'keychain-read' "$GOVERNANCE_DENY_LOG" && grep -q 'keyring-read' "$GOVERNANCE_DENY_LOG" && ok "deny trail names both rules" || bad "deny trail lacks the rule id"
   grep -q 'example-seat-item' "$GOVERNANCE_DENY_LOG" && bad "deny trail carries the refused text" || ok "deny trail carries no refused text"
 fi
 
