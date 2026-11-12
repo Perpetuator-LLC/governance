@@ -535,6 +535,42 @@ something it must hide and something adjacent it must not. **Where it is wrong:*
 broad, fail-closed suppressor (a secret scrubber on an outbound channel should over-redact rather than
 miss); the count is still required, because it shows the cost you accepted.
 
+## One naming rule for every identity, checked in every store
+
+**An agent or service is named once, by one rule, and every store spells that same name.** A
+secret path, an auth role, a key-store item, a chat account, a lane table and a scheduler label all
+name the same agent. Left to each store, the names drift into several shapes, a retired name stays
+live in one store after it left the others, and nobody can tell which entries are one agent. That
+is an audit gap, and on a credential store it is a security gap: a key nobody can attribute is a
+key nobody rotates.
+
+Rules:
+- **The rule is DATA: closed lists of words, and one shape per kind.** The lists are the segments a
+  name is built from (which lanes or roles exist, which places they run, which harnesses); the shape
+  says how a kind of identity joins them (`{lane}-{place}-{harness}`, `svc-{service}-{place}`). Each
+  list is a closed vocabulary (*Closed-vocabulary values are ENUMS*): a word not on it is not a name.
+- **Every segment is always present.** A shape with an optional segment is two shapes, and readers
+  stop being able to tell them apart. If one identity seems to need an exception, change the rule
+  for all of them, and migrate the rest.
+- **A name parses one way only.** If two words on the lists can combine into the same string, the
+  lists are wrong; the check refuses the name as ambiguous rather than picking a reading.
+- **A store's spelling is a fixed prefix and suffix around the name** (`agent-{name}-key`,
+  `secret/agents/{name}`), declared once beside the lists. A store that needs a different
+  spelling adds a derived form; it never shortens or reorders the name.
+- **A retired word is listed with its successor, and refused everywhere.** Renaming an identity that holds a credential is a credential
+  event: the new name gets a new credential and the old one is revoked, in the same rotation, never
+  as a hand move.
+- **A display name may differ from the identifier only by a rule that covers every identifier of
+  that kind** (a machine's shown name beside its stable id). A one-off alias is drift.
+- **A check fails the build on any name that breaks the rule, in every store that holds names.**
+  `bin/name-check --spec <file>` reads the lists and shapes from the organisation's layer and the
+  names from each store's export. It reports *not checked*, never clean, when it cannot read either.
+
+**Scope:** identities a system authenticates or authorises (agents, services, probes) and the
+stores that key on them. **Where it is wrong:** a human's account, which the identity provider
+names; and a third-party product's own identifiers, which you do not choose. Those are mapped to a
+conforming name in one table, not renamed.
+
 ## An invariant with more than one SOURCE is answered by ONE choke-point function
 
 **Money (an allowance pool plus a paid balance), a quota, a permission: when an invariant can be
