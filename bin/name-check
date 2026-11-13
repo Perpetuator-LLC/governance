@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""name-check — refuse an agent or service identity whose name breaks the one naming rule.
+
+  name-check --spec FILE [--names FILE] [--json]
+
+An organisation names the same agent in many stores: a secret path, an auth role, a key-store item,
+a chat account, a lane table, a scheduler label. When each store grows its own idea of the name, the
+names drift into several shapes, retired names stay live, and nobody can tell which entries are the
+same agent (core technical.md → "One naming rule for every identity, checked in every store").
+
+This check holds the rule as DATA. The SPEC (an organisation's adapter keeps it) declares:
+  - the SEGMENTS: closed lists of the words a name may be built from (lanes, places, harnesses …);
+  - the KINDS: one shape per kind of identity, written with those segments;
+  - the DERIVED forms: how each store spells a name (a prefix and suffix around it);
+  - the RETIRED words, each with its successor.
+A name conforms when it parses as EXACTLY ONE kind, every segment taken from its list, and no part of
+it is a retired word. Two parses is a failure too: an ambiguous name is two identities in one string.
+
+It never reports clean when it could not look: a missing or invalid spec, an unknown form, or an empty
+input exits 2 with the reason.
+
+SPEC (JSON):
+  {"version": 1,
+   "max_length": 40,                                                 optional, default 40
+   "segments": {"lane": ["web", "api-two"], "place": ["ctr", "m1"], "harness": ["claude", "codex"],
+                "service": ["scheduler"], "probe": ["canary"]},
+   "kinds":    [{"kind": "agent",   "shape": "{lane}-{place}-{harness}"},
+                {"kind": "service", "shape": "svc-{service}-{place}"},
+                {"kind": "probe",   "shape": "probe-{probe}"}],
+   "derived":  {"secret-path": "secret/agents/{name}", "approle": "agent-{name}-key"},
+   "retired":  {"frontend": "web", "legacy": null}}
+  A segment value and the literal text of a shape use [a-z0-9] and single hyphens only.
+
+INPUT (--names FILE, or stdin): one entry per line, tab-separated:
+  <form>  <value>  [<where it was read>]
+  <form> is `name` for a bare identity, or a key of "derived". Blank lines and `#` lines are skipped.
+
+Exit: 0 every entry conforms · 1 at least one does not · 2 the check could not run.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+
+CHARSET = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
+SEGMENT_VALUE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
+
+
+class SpecError(Exception):
+    pass
+
+
+def load_spec(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as f:
+            spec = json.load(f)
+    except OSError as e:
+        raise SpecError(f"cannot read spec {path}: {e.strerror}")
+    except json.JSONDecodeError as e:
+        raise SpecError(f"spec {path} is not valid JSON: {e}")
+    if not isinstance(spec, dict) or spec.get("version") != 1:
+        raise SpecError("spec must be a JSON object with \"version\": 1")
+    segments = spec.get("segments")
+    kinds = spec.get("kinds")
+    if not isinstance(segments, dict) or not segments:
+        raise SpecError("spec needs a non-empty \"segments\" object")
+    if not isinstance(kinds, list) or not kinds:
+        raise SpecError("spec needs a non-empty \"kinds\" list")
+    for seg, values in segments.items():
+        if not isinstance(values, list) or not values:
+            raise SpecError(f"segment {seg!r} needs a non-empty list")
+        for v in values:
+            if not isinstance(v, str) or not SEGMENT_VALUE.match(v):
+                raise SpecError(f"segment {seg!r} value {v!r} is not lower-case words joined by single hyphens")
+        if len(set(values)) != len(values):
+            raise SpecError(f"segment {seg!r} lists a value twice")
+    retired = spec.get("retired", {})
+    if not isinstance(retired, dict):
+        raise SpecError("\"retired\" must be an object {old: successor}")
+    for old in retired:
+        for seg, values in segments.items():
+            if old in values:
+                raise SpecError(f"{old!r} is both retired and a live {seg} value")
+    seen_kinds = set()
+    for k in kinds:
+        if not isinstance(k, dict) or not isinstance(k.get("kind"), str) or not isinstance(k.get("shape"), str):
+            raise SpecError("each kind needs a string \"kind\" and \"shape\"")
+        if k["kind"] in seen_kinds:
+            raise SpecError(f"kind {k['kind']!r} is declared twice")
+        seen_kinds.add(k["kind"])
+        names = PLACEHOLDER.findall(k["shape"])
+        if not names:
+            raise SpecError(f"kind {k['kind']!r} has no segment in its shape")
+        for n in names:
+            if n not in segments:
+                raise SpecError(f"kind {k['kind']!r} uses unknown segment {{{n}}}")
+        literal = PLACEHOLDER.sub("x", k["shape"])
+        if not CHARSET.match(literal):
+            raise SpecError(f"kind {k['kind']!r} shape {k['shape']!r} has text outside lower-case words and single hyphens")
+    derived = spec.get("derived", {})
+    if not isinstance(derived, dict):
+        raise SpecError("\"derived\" must be an object {form: template}")
+    for form, tpl in derived.items():
+        if form == "name":
+            raise SpecError("\"name\" is reserved for the bare identity")
+        if not isinstance(tpl, str) or tpl.count("{name}") != 1 or PLACEHOLDER.sub("", tpl.replace("{name}", "")) != tpl.replace("{name}", ""):
+            raise SpecError(f"derived form {form!r} must contain {{name}} exactly once and no other placeholder")
+    ml = spec.get("max_length", 40)
+    if not isinstance(ml, int) or ml < 1:
+        raise SpecError("\"max_length\" must be a positive integer")
+    spec["max_length"] = ml
+    spec["retired"] = retired
+    spec["derived"] = derived
+    return spec
+
+
+def shape_parts(shape: str) -> list:
+    """A shape as a list of ("lit", text) and ("seg", name) parts."""
+    parts, pos = [], 0
+    for m in PLACEHOLDER.finditer(shape):
+        if m.start() > pos:
+            parts.append(("lit", shape[pos:m.start()]))
+        parts.append(("seg", m.group(1)))
+        pos = m.end()
+    if pos < len(shape):
+        parts.append(("lit", shape[pos:]))
+    return parts
+
+
+def parses(name: str, parts: list, segments: dict) -> list:
+    """EVERY way `name` fills `parts` (a regex stops at the first; ambiguity needs all of them)."""
+    out = []
+
+    def walk(i: int, pos: int, got: dict) -> None:
+        if i == len(parts):
+            if pos == len(name):
+                out.append(dict(got))
+            return
+        typ, val = parts[i]
+        if typ == "lit":
+            if name.startswith(val, pos):
+                walk(i + 1, pos + len(val), got)
+            return
+        for v in segments[val]:
+            if name.startswith(v, pos):
+                got[val] = v
+                walk(i + 1, pos + len(v), got)
+                del got[val]
+
+    walk(0, 0, {})
+    return out
+
+
+def strip_derived(form: str, value: str, spec: dict) -> tuple[str | None, str | None]:
+    if form == "name":
+        return value, None
+    tpl = spec["derived"].get(form)
+    if tpl is None:
+        return None, f"unknown form {form!r} (known: name, {', '.join(sorted(spec['derived']))})"
+    pre, post = tpl.split("{name}")
+    if not value.startswith(pre) or not value.endswith(post) or len(value) <= len(pre) + len(post):
+        return None, f"is not spelled as {form} ({tpl})"
+    return value[len(pre):len(value) - len(post) if post else None], None
+
+
+def check_name(name: str, spec: dict, regexes: list) -> tuple[str | None, str | None]:
+    """(kind, None) when the name conforms, else (None, reason)."""
+    words = name.split("-")
+    for i in range(len(words)):
+        for j in range(i + 1, len(words) + 1):
+            part = "-".join(words[i:j])
+            if part in spec["retired"]:
+                succ = spec["retired"][part] or "none"
+                return None, f"uses the retired word {part!r} (successor: {succ})"
+    if len(name) > spec["max_length"]:
+        return None, f"is {len(name)} characters, over the limit of {spec['max_length']}"
+    if not CHARSET.match(name):
+        return None, "must be lower-case letters and digits in words joined by single hyphens, starting with a letter"
+    hits = [(k, p) for k, parts in regexes for p in parses(name, parts, spec["segments"])]
+    if not hits:
+        shapes = "; ".join(f"{k['kind']}: {k['shape']}" for k in spec["kinds"])
+        return None, f"matches no shape ({shapes}), or uses a word not on its segment's list"
+    if len(hits) > 1:
+        return None, "is ambiguous: it parses as " + " and as ".join(
+            f"{k} {p}" for k, p in hits)
+    return hits[0][0], None
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="name-check", description=__doc__.split("\n")[0])
+    ap.add_argument("--spec", required=True)
+    ap.add_argument("--names", help="input file; default stdin")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args(argv)
+    try:
+        spec = load_spec(a.spec)
+    except SpecError as e:
+        print(f"name-check: NOT CHECKED: {e}", file=sys.stderr)
+        return 2
+    regexes = [(k["kind"], shape_parts(k["shape"])) for k in spec["kinds"]]
+    try:
+        text = open(a.names, encoding="utf-8").read() if a.names else sys.stdin.read()
+    except OSError as e:
+        print(f"name-check: NOT CHECKED: cannot read {a.names}: {e.strerror}", file=sys.stderr)
+        return 2
+    results, bad_input = [], []
+    for n, line in enumerate(text.splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        cols = line.split("\t")
+        if len(cols) < 2 or not cols[0] or not cols[1]:
+            bad_input.append(f"line {n}: expected <form><TAB><value>[<TAB><where>]")
+            continue
+        form, value, where = cols[0].strip(), cols[1].strip(), (cols[2].strip() if len(cols) > 2 else "")
+        name, err = strip_derived(form, value, spec)
+        if err and err.startswith("unknown form"):
+            bad_input.append(f"line {n}: {err}")
+            continue
+        kind = None
+        if name is not None:
+            kind, err = check_name(name, spec, regexes)
+        results.append({"form": form, "value": value, "where": where, "name": name,
+                        "kind": kind, "ok": err is None, "reason": err})
+    if bad_input:
+        for b in bad_input:
+            print(f"name-check: NOT CHECKED: {b}", file=sys.stderr)
+        return 2
+    if not results:
+        print("name-check: NOT CHECKED: no entries in the input", file=sys.stderr)
+        return 2
+    failed = [r for r in results if not r["ok"]]
+    if a.json:
+        print(json.dumps({"checked": len(results), "failed": len(failed), "results": results}, indent=1))
+    else:
+        for r in results:
+            loc = f"  ({r['where']})" if r["where"] else ""
+            if r["ok"]:
+                print(f"ok    {r['form']:<12} {r['value']}  [{r['kind']}]{loc}")
+            else:
+                print(f"FAIL  {r['form']:<12} {r['value']}  {r['reason']}{loc}")
+        print(f"name-check: {len(results)} checked, {len(failed)} failed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
