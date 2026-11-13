@@ -64,6 +64,9 @@ cases = [
     (REFUSE, "export subcommand, list-form argv in a wrapper", bash(
         f"python3 -c \"import subprocess; subprocess.run(['{TOOL}','export','-k','login.keychain'])\"")),
     (REFUSE, "export subcommand after a line continuation", bash(f"{TOOL} \\\n  export -k login.keychain")),
+    (REFUSE, "export subcommand after the global -v option", bash(f"{TOOL} -v export -k login.keychain")),
+    (REFUSE, "export subcommand after the global -q option", bash(f"{TOOL} -q export -k login.keychain")),
+    (REFUSE, "export subcommand after the global -p option and its value", bash(f"{TOOL} -p x export -k login.keychain")),
     # ── must allow: nothing here reads a credential store
     (ALLOW, "a shell export", bash("export FOO=1")),
     (ALLOW, "a shell export after the tool word and a command separator", bash(f"which {TOOL} && export FOO=1")),
@@ -86,6 +89,7 @@ cases = [
     (GAP, "subcommand split by quotes", bash(f'{TOOL} find-"generic-password" -s {ITEM}alpha-key -w')),
     (GAP, "subcommand assembled from a variable", bash(f'S=find-generic; {TOOL} "$S-password" -s {ITEM}alpha-key -w')),
     (GAP, "export subcommand assembled from a variable", bash(f'X=export; {TOOL} "$X" -k login.keychain')),
+    (GAP, "interactive mode, subcommand fed on stdin", bash(f"printf 'export -k login.keychain\\n' | {TOOL} -i")),
     (GAP, "keyring read reached through getattr", bash(
         "python3 -c \"import keyring; print(getattr(keyring, 'get_' + 'password')('svc', 'user'))\"")),
     (GAP, "Linux secret-tool lookup", bash("secret-tool lookup service svc user alpha")),
