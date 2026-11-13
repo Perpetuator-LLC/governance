@@ -503,6 +503,24 @@ legitimate; and a send that must go out under the human's own identity, such as 
 notice. It assumes a harness that gates tool calls per seat. Where every seat holds the same
 permission, there is no owner to route to, and the refused seat simply retries.
 
+## An ask goes to the seat that owns the answer; a dispatcher is not a relay
+
+**A seat that needs something from another seat asks that seat directly**: a price, a review verdict,
+a design step, a fix in code it owns. It addresses the owner by the identifier a live listing gives,
+names the artifact (ticket, pull request, head), and states what it needs back. A dispatcher that
+carries those asks becomes the slowest hop in every exchange: each one waits for its turn, arrives
+paraphrased, and its answer travels back the same way. Asks then pile up on the dispatcher while
+their owners sit idle, and from outside it looks as though the dispatcher is the one holding things up.
+
+**The dispatcher carries only three kinds of traffic:** asks that need the human, dispatch of new work
+to a seat, and folds or other acts only it is permitted to do. A step that only one seat holds the
+permission for goes to that seat as an ask like any other, not through the dispatcher for convenience.
+
+**Where it does not apply:** the asker does not know which seat owns the answer. Then it asks the
+dispatcher *who owns it*, a routing question, and sends the ask itself once it has the answer. It also
+assumes seats can message each other; where only the dispatcher can reach the others, the dispatcher
+relays, and should say so in its status, because it carries a cost nobody else can see.
+
 ### A send that must leave under the human's identity is handed over as a DRAFT, never as text to paste
 
 When a message must come from an account the agent cannot send from, such as the human's own address,
