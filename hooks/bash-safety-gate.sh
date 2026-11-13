@@ -298,8 +298,12 @@ fi
 # refuses on its own. Best effort, not a parser: a subcommand assembled at run time is not seen.
 # Cost, accepted: a command that only MENTIONS one of these words (a grep, a commit -m) is refused too;
 # search by the rule id, and pass a message by file.
+# `export` (it writes items, private keys included, to a file) is too common a word to refuse alone, so
+# it refuses only right after the store's tool word, separated by nothing but non-word characters other
+# than a command separator: a list-form argv and a line continuation are caught, a shell `export` is not.
 kc=$(printf '%s' "$cmd" | tr '\n\r' '  ' | tr '[:upper:]' '[:lower:]')
-if printf '%s' "$kc" | grep -qE '(^|[^a-z0-9_-])(find-generic-password|find-internet-password|dump-keychain)([^a-z0-9_-]|$)'; then
+if printf '%s' "$kc" | grep -qE '(^|[^a-z0-9_-])(find-generic-password|find-internet-password|dump-keychain)([^a-z0-9_-]|$)' \
+   || printf '%s' "$kc" | grep -qE '(^|[^a-z0-9_-])security[^a-z0-9_;&|-]+export([^a-z0-9_-]|$)'; then
   deny keychain-read "Keychain access would expose secrets to the AI context. Keychain reads belong in runtime code only, not in development commands."
 fi
 if printf '%s' "$kc" | grep -qE '(^|[^a-z0-9_])keyring([^a-z0-9_]|$)' \
