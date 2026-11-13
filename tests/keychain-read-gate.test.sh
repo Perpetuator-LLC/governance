@@ -11,6 +11,9 @@
 #
 # Every item name here is made up. Nothing is executed: the gate only inspects text.
 #
+# GAP rows name read forms the rule is known NOT to see. They assert today's "allowed" on purpose: a
+# gap is a measured fact, and a later change to it, either way, should be visible in this suite.
+#
 # One rule, not two files: an organisation that keeps its own exhibit of this rule points
 # GOVERNANCE_KEYCHAIN_EXHIBIT at a Python file defining BAD_CASES ({label: command}); every one of them
 # must be refused by THIS hook, so the exhibit and the hook cannot drift apart unseen.
@@ -26,7 +29,7 @@ python3 - "$TMP/cases.jsonl" "${GOVERNANCE_KEYCHAIN_EXHIBIT:-}" <<'PY'
 import importlib.util, json, sys
 TOOL, FIND, FINDI, DUMP = "security", "find-generic-password", "find-internet-password", "dump-keychain"
 ITEM = "example-seat-item-"          # a made-up item-name prefix
-REFUSE, ALLOW, CLOSED = "REFUSE", "ALLOW", "CLOSED"
+REFUSE, ALLOW, CLOSED, GAP = "REFUSE", "ALLOW", "CLOSED", "GAP"
 bash = lambda c: {"tool_name": "Bash", "tool_input": {"command": c}}
 cases = [
     # ── must refuse: every read form
@@ -70,6 +73,15 @@ cases = [
     (CLOSED, "command is a list", {"tool_name": "Bash", "tool_input": {"command": [TOOL, DUMP]}}),
     (CLOSED, "command is missing", {"tool_name": "Bash", "tool_input": {}}),
     (CLOSED, "command is a number", {"tool_name": "Bash", "tool_input": {"command": 12345}}),
+    # ── known gaps, informational: read forms the rule does NOT see today (it is best effort). Each row
+    #    asserts today's "allowed", so a change that starts refusing one fails here and the row moves up.
+    (GAP, "subcommand split by quotes", bash(f'{TOOL} find-"generic-password" -s {ITEM}alpha-key -w')),
+    (GAP, "subcommand assembled from a variable", bash(f'S=find-generic; {TOOL} "$S-password" -s {ITEM}alpha-key -w')),
+    (GAP, "export subcommand (whole identity export)", bash(
+        f"{TOOL} export -k login.keychain -t identities -f pkcs12 -o /tmp/made-up.p12")),
+    (GAP, "keyring read reached through getattr", bash(
+        "python3 -c \"import keyring; print(getattr(keyring, 'get_' + 'password')('svc', 'user'))\"")),
+    (GAP, "Linux secret-tool lookup", bash("secret-tool lookup service svc user alpha")),
 ]
 if sys.argv[2]:
     spec = importlib.util.spec_from_file_location("exhibit", sys.argv[2])
@@ -103,6 +115,9 @@ while IFS= read -r row; do
     ALLOW)
       if [[ $rc -eq 0 ]] && [[ ! -s "$TMP/err" ]]; then ok "allowed: $label"
       else bad "refused, should be allowed (rc=$rc, $(head -c 120 "$TMP/err")): $label"; fi ;;
+    GAP)
+      if [[ $rc -eq 0 ]] && [[ ! -s "$TMP/err" ]]; then ok "known gap, still allowed: $label"
+      else bad "known gap is now refused (rc=$rc): move this row to REFUSE: $label"; fi ;;
   esac
 done < "$TMP/cases.jsonl"
 
