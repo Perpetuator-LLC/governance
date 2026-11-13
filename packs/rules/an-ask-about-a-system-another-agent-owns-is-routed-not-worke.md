@@ -21,3 +21,6 @@ question splits the record: two partial answers, neither one the system of recor
 
 **The mirror:** an ask about your OWN system that touches another agent's data is still yours. Do your
 part and route only the other agent's part.
+
+Sibling: *An ask goes to the seat that owns the answer; a dispatcher is not a relay* covers the ask
+one seat sends another, which goes to the owner directly; the coordinator only when the owner is absent.
