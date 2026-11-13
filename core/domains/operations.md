@@ -515,6 +515,9 @@ their owners sit idle, and from outside it looks as though the dispatcher is the
 **The dispatcher carries only three kinds of traffic:** asks that need the human, dispatch of new work
 to a seat, and folds or other acts only it is permitted to do. A step that only one seat holds the
 permission for goes to that seat as an ask like any other, not through the dispatcher for convenience.
+This covers work that is the other seat's to do. It never covers a step you tried and were refused: a
+refusal goes to the human, not to a seat with a wider grant, and the owning seat declines an ask that
+arrives that way.
 
 **Where it does not apply:** the asker does not know which seat owns the answer. Then it asks the
 dispatcher *who owns it*, a routing question, and sends the ask itself once it has the answer. It also
