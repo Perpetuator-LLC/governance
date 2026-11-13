@@ -571,6 +571,34 @@ question splits the record: two partial answers, neither one the system of recor
 **The mirror:** an ask about your OWN system that touches another agent's data is still yours. Do your
 part and route only the other agent's part.
 
+Sibling: *An ask goes to the seat that owns the answer; a dispatcher is not a relay* covers the ask
+one seat sends another, which goes to the owner directly; the coordinator only when the owner is absent.
+
+## An ask goes to the seat that owns the answer; a dispatcher is not a relay
+
+**A seat that needs something from another seat asks that seat directly**: a price, a review verdict,
+a design step, a fix in code it owns. It addresses the owner by the identifier a live listing gives,
+names the artifact (ticket, pull request, head), and states what it needs back. A dispatcher that
+carries those asks becomes the slowest hop in every exchange: each one waits for its turn, arrives
+paraphrased, and its answer travels back the same way. Asks then pile up on the dispatcher while
+their owners sit idle, and from outside it looks as though the dispatcher is the one holding things up.
+
+Sibling: *An ask about a system another agent owns is ROUTED, not worked* covers an ask the human sends
+you; this one covers an ask one seat sends another.
+
+**The dispatcher carries only three kinds of traffic:** asks that need the human, dispatch of new work
+to a seat, and folds or other acts only it is permitted to do. A step that only one seat holds the
+permission for goes to that seat as an ask like any other, not through the dispatcher for convenience.
+This covers work that is the other seat's to do. It never covers a step you tried and were refused: a
+refusal goes to the human, not to a seat with a wider grant, and the owning seat declines an ask that
+arrives that way.
+
+**Where it does not apply:** the asker does not know which seat owns the answer. Then it asks the
+dispatcher *who owns it*, a routing question, and sends the ask itself once it has the answer. When
+the owner is absent, the ask goes to the dispatcher, as in the sibling rule. It also
+assumes seats can message each other; where only the dispatcher can reach the others, the dispatcher
+relays, and should say so in its status, because it carries a cost nobody else can see.
+
 ## An agent team is organised like an executive team, not around a router
 
 **Scope.** This applies when one human principal directs **several concurrent agents** that own
