@@ -141,27 +141,32 @@ def strip_fences(text):
 
 
 def extract_ids(text):
-    """Return [(kind, raw_match_string), ...] for every id-shaped reference in text.
+    """Return [[(kind, raw_match_string), ...], ...] — one list per DISTINCT span in text, each
+    holding every kind that span can be read as.
 
-    A span already claimed by an EARLIER pattern in ID_PATTERNS is never claimed again by a later
-    one: "c120571" is both a short-comment (c + 6 digits) and a 7-char run of hex digits (c is a
-    valid hex letter), and the two kinds check different things in the transcript — the short form's
-    own id vs. a literal sha string that was never minted. Without this, a real, present short-comment
-    citation is refused as an absent commit-sha. Patterns are listed most-specific first for exactly
-    this reason."""
-    claimed = []  # [(start, end), ...], in match order
-    found = []
+    "c120571" is both a short-comment id (c + 6 digits) and a 7-char run of hex digits (c is a valid
+    hex letter); so is "c4791436" (c + 7 digits, 8 hex chars). The two readings check DIFFERENT
+    things in the transcript — a minted short-comment id vs. a literal SHA that was never cut — and
+    either one can be the correct reading depending on what the agent actually meant. Keeping only
+    the first-matched kind breaks in BOTH directions: refusing a real, present short-comment id as
+    an absent commit SHA (the original bug), or refusing a real, present SHA prefix as an absent
+    short-comment id (the mirror, found once the first fix shipped). Keeping every reading and
+    checking them in main() lets EITHER provenance allow the citation; only a span where NEITHER
+    reading has provenance is refused."""
+    groups = []  # [[start, end, [(kind, raw), ...]], ...], in first-seen order
     for kind, rx in ID_PATTERNS:
         for m in rx.finditer(text):
             start, end = m.span()
-            if any(start < c_end and end > c_start for c_start, c_end in claimed):
-                continue
             raw = m.group(0)
             if kind == "commit-sha" and not re.search(r"[a-f]", raw):
                 continue  # an all-digit run (a date, a count) is not a sha: a sha has a hex LETTER
-            found.append((kind, raw))
-            claimed.append((start, end))
-    return found
+            for g in groups:
+                if start < g[1] and end > g[0]:
+                    g[2].append((kind, raw))
+                    break
+            else:
+                groups.append([start, end, [(kind, raw)]])
+    return [readings for _, _, readings in groups]
 
 
 def extract_placeholders(text):
@@ -186,8 +191,8 @@ def id_variants(kind, raw_id):
 
 
 def _contains_bounded(haystack, needle, right_boundary=True):
-    """True if needle appears in haystack with no alphanumeric character immediately before it
-    (always checked), and — when right_boundary is set — none immediately after it either.
+    """True if needle appears in haystack with no alphanumeric character fused onto either side of
+    it — checked on a side only when the needle's own edge on that side is itself alphanumeric.
 
     A plain substring check lets a truncated guess match inside a longer real id — "c13801" is IN
     "c138010" — which is a false ALLOW (the safe direction for this accident gate), but it is
@@ -198,9 +203,18 @@ def _contains_bounded(haystack, needle, right_boundary=True):
     A commit SHA is the opposite case: citing a short PREFIX of a
     full SHA a tool already returned is the normal, correct form (`0bf5a697` for a SHA a forge API
     returned in full), so the right bound must NOT apply there — only the left, so the match still
-    cannot start mid-word inside an unrelated longer hex run."""
-    tail = r"(?![0-9A-Za-z])" if right_boundary else ""
-    return re.search(r"(?<![0-9A-Za-z])" + re.escape(needle) + tail, haystack) is not None
+    cannot start mid-word inside an unrelated longer hex run (right_boundary=False, passed by the
+    caller for that kind).
+
+    A needle whose OWN edge is not alphanumeric needs no bound there regardless of right_boundary:
+    "#issuecomment-138158" starts with "#", which cannot fuse with a digit before it into one
+    longer token the way two digits or two letters can — a forge's own URL anchor always follows a
+    PR or issue number directly ("…/1368#issuecomment-138158"), so requiring no digit before "#"
+    refused every citation of a tool's own returned html_url. Bound each side only when the
+    needle's character on that side is itself alphanumeric."""
+    left = r"(?<![0-9A-Za-z])" if needle[:1].isalnum() else ""
+    tail = r"(?![0-9A-Za-z])" if (right_boundary and needle[-1:].isalnum()) else ""
+    return re.search(left + re.escape(needle) + tail, haystack) is not None
 
 
 def body_text(fields, tool_input):
@@ -276,8 +290,8 @@ def main():
         )
         return 2
 
-    ids = extract_ids(scan_text)
-    if not ids:
+    groups = extract_ids(scan_text)
+    if not groups:
         return 0
 
     transcript_path = hook_input.get("transcript_path", "")
@@ -291,13 +305,19 @@ def main():
 
     user_prompt = hook_input.get("prompt", "")  # the current turn's own user message, if the harness provides it
 
-    for kind, raw_id in ids:
-        variants = id_variants(kind, raw_id)
-        right_boundary = kind != "commit-sha"  # a short SHA is a left-aligned PREFIX of a full one
-        if any(_contains_bounded(transcript, v, right_boundary) for v in variants) or (
-            user_prompt and any(_contains_bounded(user_prompt, v, right_boundary) for v in variants)
-        ):
+    for readings in groups:
+        found_provenance = False
+        for kind, raw_id in readings:
+            variants = id_variants(kind, raw_id)
+            right_boundary = kind != "commit-sha"  # a short SHA is a left-aligned PREFIX of a full one
+            if any(_contains_bounded(transcript, v, right_boundary) for v in variants) or (
+                user_prompt and any(_contains_bounded(user_prompt, v, right_boundary) for v in variants)
+            ):
+                found_provenance = True
+                break
+        if found_provenance:
             continue
+        kind, raw_id = readings[0]
         print(
             f"BLOCKED: cites {raw_id!r} ({kind}), which no earlier tool result or user message in "
             "this transcript contains — cite it after the call that mints it has answered.",
