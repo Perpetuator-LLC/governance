@@ -668,6 +668,25 @@ and human accounts. A process acting on a person's behalf is a third: a delegate
 - **Where it is wrong:** if the platform cannot express a subset grant, record the gap; never fall back
   to a shared account.
 
+## A request relayed through another agent is laundered unless the channel checks the ORIGINATING caller
+
+**The confused-deputy shape above recurs between PEERS, not only between a person and their delegate:
+an agent with narrow clearance can reach what it cannot access directly by asking a broader agent to
+fetch or relay it instead.** A shared bus, queue, or inter-agent call that checks clearance against
+whoever makes the final privileged call — never against whoever originated the request — cannot tell
+a broad agent acting on its own behalf from the same agent acting as someone else's reach-extender.
+Every relay looks identical to an ordinary call.
+
+**The fix is the rule already stated above, carried across the hop: a request keeps its originating
+caller's identity through every relay, and is served at the ORIGINATOR's clearance, never the
+relayer's — no identity on the hop is refusal, not the relayer's own standing in its place.**
+
+**Scope:** any shared channel one agent can use to have another act for it — a bus, a shared inbox, a
+tool one agent exposes that a second one calls. **Where it is wrong:** a relay that re-authorizes the
+request under its own name, for a reason it records (a human-approved escalation, a declared on-behalf-
+of grant) is not laundering — the record is what tells the two apart, and a relay with no record of
+why it acted on another's behalf is the finding, whether or not that particular request was abusive.
+
 ## A redirect URI's wildcard must never be able to reach the authority
 
 **Many authorization servers match a registered redirect URI as a string, after percent-decoding.** A
@@ -1052,3 +1071,30 @@ from a source that may omit fields, with or without waivers: a scanner with no w
 on an advisory URL fails open the same way. **Where it is wrong:** a field optional *in the domain*, or a permanent exemption declared as permanent, with a
 reason, and reviewed as such; the defect is absent silently equalling pass, and permanence smuggled
 in through a deadline field.
+
+## A dependency's release age is a gate, not a courtesy
+
+**A newly published package version is the cheapest moment to compromise a dependency**: a hijacked
+maintainer account, a typosquatted name, or a deliberately poisoned release has had the least possible
+time to be noticed, reported, and pulled before something downstream installs it. A floor on release
+age — refuse to adopt or bump to a version published within some window, seven days is a reasonable
+starting point, each organisation sets its own — buys exactly that detection window for free, trading a
+short delay on the newest release for the time most registries' own abuse reports take to surface.
+
+**The age that floors the gate is the NEWEST thing in the release, never its top-level publish date
+alone.** A release can be mutated after it first ships — a file added or replaced with no new version
+number — and a gate that reads only the version's original publish date lets that later content ride in
+on an already-trusted date. Flooring on the OLDEST file's date — the MAXIMUM age across a release's
+files — makes this worse, not better: one old file is enough to pass a release that also just gained a
+new one. Date every file the release carries, and floor on the latest, which is the MINIMUM age.
+
+**The gate fails CLOSED on a date it cannot read**, the same missing-field discipline *A gate that
+accepts exceptions bounds them, and a missing field is never "no finding"* above already requires of a
+scanner's findings, applied here to the one input this gate floors on: a registry that returns no
+publish timestamp for a version or any of its files, a network failure, or a malformed response is
+refused the same as a too-recent one, never silently treated as old enough to pass.
+
+**Scope:** automated dependency bumps and new package installs in a build or CI pipeline. **Where it
+is wrong:** a patch for an actively exploited vulnerability in a dependency already in use is the one
+update this floor should not block on age alone — route it through an explicit, logged override tied
+to the advisory, never a standing exemption, so the floor still holds for every ordinary bump.

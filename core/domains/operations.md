@@ -1556,6 +1556,27 @@ exempt.
 better — the rule is receipt-first, not short. Length is the symptom; a terse comment that omits the
 verdict fails the rule while satisfying its letter.
 
+## A finding made reviewing a pull request is posted ON that pull request, not filed as a new ticket
+
+**The diff, the author, and whoever reads the verdict are all already on the pull request — filing the
+same finding as a separate ticket instead splits one piece of work across two records that nothing
+keeps in sync.** The ticket opens detached from the diff that caused it and competes for priority
+against work that does not block anything, while the pull request it actually blocks shows no finding
+at all unless someone remembers to cross-link back. A reviewer who could leave a comment chooses the
+channel the diff already lives on.
+
+**Scope:** a finding whose fix is a change to the code already under review, found while reviewing it.
+
+**Where it is wrong:** a finding that would still be true if this pull request were closed and
+forgotten — a design debt it merely exposed, a defect in a file it happens to touch but does not
+change — outlives the review and is a ticket, not a comment, because the review closing must not make
+the finding disappear with it.
+
+**This does not contradict a standalone security audit's own rule** (`security.md` → *Security
+review: identify → ticket → hand off*): that pass has no open pull request to post to, so a ticket is
+its only channel. Here the pull request already is the channel a finding on its own diff belongs on —
+the same preference for wherever the work already lives, pointed at whichever channel that actually is.
+
 ## A message to another seat states one change and links the artifact; it never restates what the artifact says
 
 **A message to another seat states one change and links the artifact it concerns, and never restates
