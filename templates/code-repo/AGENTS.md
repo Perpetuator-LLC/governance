@@ -29,7 +29,8 @@ month, and nothing detects the drift because both files look maintained.
   branch and a pull request — never in the owner's checkout.
 - **Feature branch → this agent's integration branch → ONE open pull request → the default branch.**
   Never push the default branch directly. **Read the integration branch** (`git ls-remote --heads
-  origin 'merge/*'`); never compute its name.
+  origin 'merge/*'`); never compute its name. It is long-lived: refresh it after each merge and
+  open the next pull request from it; never create a new one per batch.
 - **Stage explicit pathspecs.** Never `git add -A`, `git add .` or `git commit -a`.
 - **Commit → push in the same turn.** Unpushed commits are invisible to every other seat.
 - Every agent commit carries its attribution trailers.

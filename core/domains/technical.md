@@ -1574,6 +1574,68 @@ command caused them.
 - **The property this depends on is a merge back into that base.** A branch that never returns (a
   fork, a vendor snapshot) can discard the base freely.
 
+## One long-lived integration branch per worker — a new branch per batch buys back every cost the batch was meant to share
+
+**Where work lands through a batching branch, each worker keeps ONE integration branch per repository
+for as long as it works there, and ONE open pull request from it.** A batch exists to share a fixed
+cost: one full CI run, one review and one walk-through for many changes. A fresh integration branch
+for each batch, each cycle or each date brings its own pull request and its own run, and the batch
+quietly shrinks until one run is buying one or two changes again. Nothing fails, and the practice
+still reads as batching, because every change still passes through "an integration branch".
+
+| Item | Rule |
+|---|---|
+| Branch (the stream) | One per worker per repository, named from every part that tells workers apart: `merge/<repository>-<machine>-<harness>`. Read it from the remote, never compute it (`technical.md` → *"Read the integration branch, never compute it"*). |
+| Pull request | One open pull request from that branch, titled by what it holds: `<repository> <machine> stream: <contents>`. Held as a draft until it is gated. |
+| Feature branches | Merged into the stream locally, one merge commit each, so a leg can be named and backed out. No pull request and no full CI run of their own. A branch that someone other than its author must read (a reviewer gating it by its head, or the worker who assembles the batch) is pushed as a plain branch, still with no pull request. |
+| CI | The full suite runs on the stream's pull request, once per batch pushed. |
+| After the pull request merges | Refresh the SAME branch from the default branch, locally. Push it again only with a new commit on top, then open the next pull request from it. Never delete and re-create it. |
+| Never | A new integration branch per batch, per cycle or per date. |
+| A second stream | Only when one worker must hold two batches apart, such as a release being stabilised and the work for the next one: the same name with a numeric suffix, stacked on the first. |
+| An urgent fix | The exception: cut from the deployed revision on its own branch, because the stream holds unreleased work. |
+
+**Why the branch has to outlive the batch:**
+
+- **The saving is the batch size, and a branch per batch drives it to one.** Measured across six
+  repositories: integration branches merged per month went from single digits, one rolling branch per
+  repository, to 282 in the first month of a per-batch naming habit, and the median merged pull request
+  then carried one to three feature branches. Every one of those paid for a full run.
+- **A branch per batch leaves a branch per batch behind.** Each stays on the remote until someone
+  proves it landed and removes it. The listing that *read, never compute* depends on then returns
+  dozens of look-alikes, and selecting from that list is the half that goes wrong.
+- **Reviewers' marks follow a head.** One stable branch gives a gate one place to read the current
+  head; a new branch per batch makes "which branch is the batch" a question before every review.
+
+**Measure it, because the failure is silent.** Count the integration branches merged to the default
+branch per month beside the feature branches per merged pull request. A batch size near one means the
+stream has become a pull request per change under another name.
+
+**Scope: a repository whose work lands through a batch pull request, where the full CI run is the
+expensive step.** A repository that merges single pull requests straight to its default branch has no
+batch. There the pull request is the batch, and this rule adds nothing.
+
+**Two properties of the forge this depends on. Check both before adopting it:**
+
+- **The merge keeps the stream's commits reachable from the default branch** (a merge commit, or a
+  fast-forward). Where the forge squashes or rebases on merge, the old commits never become ancestors
+  of the default branch, so the refresh cannot be a fast-forward: move the branch to the default tip
+  only after patch identity shows nothing on it is unmerged. The name still does not change.
+- **The forge leaves a merged pull request's head branch in place.** A "delete the branch on merge"
+  setting re-creates the per-batch habit for you; turn it off for integration branches.
+
+**The mirror cases:**
+
+- **One branch shared by several workers is the opposite error, and the worse one:** two writers on
+  one ref overwrite each other. That is why the name carries every distinguishing part: the same
+  agent running on two machines, or two harnesses on one machine, are different workers. A worker
+  here is whoever ASSEMBLES a batch. A seat that only contributes feature branches to someone else's
+  batch holds no stream of its own, however many such seats share the repository.
+- **A long-lived branch is not a long-lived pull request.** A stream that only grows is the batch
+  that is too big: review stalls, a red run is hard to pin on one leg, and unreleased work piles up
+  behind it. The branch persists; each pull request from it merges on the repository's usual cadence.
+- **Refresh is not rewrite.** Refreshing brings the default branch in. It never force-pushes over
+  commits another seat may have read or based work on.
+
 ## "Read the integration branch, never compute it" — the read returns a LIST, and selecting from it is the hard half
 
 **A rule that says READ rather than COMPUTE has not finished until it says how to SELECT.** Listing
@@ -1583,8 +1645,8 @@ not firmly know its own seat name picks a plausible wrong one, and a machine-sco
 branch left over from an earlier convention is the most plausible wrong one of all, because it looks
 like the general-purpose choice.
 
-**So the selection is by exact match on the seat's own identity — agent AND harness — and a near
-match is a stop, not a default.** If exactly one candidate matches, use it. If none does, **create
+**So the selection is by exact match on the seat's own identity — every part the name carries:
+agent or repository, machine AND harness — and a near match is a stop, not a default.** If exactly one candidate matches, use it. If none does, **create
 it**; a missing branch is not licence to open a feature pull request against the default branch,
 which is the failure this rule exists to prevent and the one an empty read invites. If several match,
 stop and ask: two branches claiming one seat is a collision somebody must adjudicate.
