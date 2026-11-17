@@ -10,8 +10,8 @@ not firmly know its own seat name picks a plausible wrong one, and a machine-sco
 branch left over from an earlier convention is the most plausible wrong one of all, because it looks
 like the general-purpose choice.
 
-**So the selection is by exact match on the seat's own identity — agent AND harness — and a near
-match is a stop, not a default.** If exactly one candidate matches, use it. If none does, **create
+**So the selection is by exact match on the seat's own identity — every part the name carries:
+agent or repository, machine AND harness — and a near match is a stop, not a default.** If exactly one candidate matches, use it. If none does, **create
 it**; a missing branch is not licence to open a feature pull request against the default branch,
 which is the failure this rule exists to prevent and the one an empty read invites. If several match,
 stop and ask: two branches claiming one seat is a collision somebody must adjudicate.
