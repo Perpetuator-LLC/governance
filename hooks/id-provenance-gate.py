@@ -175,13 +175,16 @@ def id_variants(kind, raw_id):
     convention (c76292) and a forge's own anchor (#issuecomment-76292) can name the same comment; a
     literal string match on raw_id alone misses that every time one form was minted and the other is
     what got cited, which is the common case (a tool result returns the forge's full anchor, a human
-    or an earlier turn writes the short form back)."""
+    or an earlier turn writes the short form back).
+
+    The anchor is searched WITHOUT its "#": a forge URL always puts the issue number right before it
+    (".../issues/787#issuecomment-165925"), so the left bound tested on "#" always sees a digit and a
+    URL a tool just returned could never match itself. Bounded on "issuecomment-", the left neighbour
+    is the "#" (or start), which is never alphanumeric."""
     digits = re.search(r"\d+", raw_id)
     digits = digits.group(0) if digits else ""
-    if kind == "short-comment":
-        return {raw_id, f"issuecomment-{digits}", f"#issuecomment-{digits}"}
-    if kind == "issuecomment":
-        return {raw_id, f"c{digits}"}
+    if kind in ("short-comment", "issuecomment"):
+        return {f"c{digits}", f"issuecomment-{digits}"}
     return {raw_id}
 
 

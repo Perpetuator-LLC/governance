@@ -77,6 +77,23 @@ out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c138010 for
 [[ $rc -eq 0 ]] && pass "control: the full 6-digit id (c138010) still matches its own anchor" \
   || fail "control: the full id was wrongly refused (rc=$rc): $out"
 
+# --- 1d2. citing the forge URL a tool JUST returned, in the same full form: a forge anchor always
+#     follows the issue number (".../issues/787#issuecomment-165925"), so the left bound must not be
+#     tested on the "#" -- a digit always sits there, and the minted URL could never match itself ---
+T1d2="$TMP/t1d2.jsonl"
+mktranscript "$T1d2" '{"type":"tool_result","content":"{\"html_url\": \"https://forge/x/issues/787#issuecomment-165925\"}"}'
+out=$(run_gate SendMessage message "see https://forge/x/issues/787#issuecomment-165925" "$T1d2"); rc=$?
+[[ $rc -eq 0 ]] && pass "the full forge URL a tool just returned, cited verbatim: allowed" \
+  || fail "the full forge URL a tool just returned was refused (rc=$rc): $out"
+# control: a different comment id in the same URL shape is still refused
+out=$(run_gate SendMessage message "see https://forge/x/issues/787#issuecomment-165926" "$T1d2"); rc=$?
+[[ $rc -eq 2 ]] && pass "control: an unminted comment id in the same URL shape is still refused" \
+  || fail "control: an unminted comment id was allowed (rc=$rc): $out"
+# control: a truncated id in the full form is still refused (right bound kept)
+out=$(run_gate SendMessage message "see https://forge/x/issues/787#issuecomment-16592" "$T1d2"); rc=$?
+[[ $rc -eq 2 ]] && pass "control: a truncated id in the full URL form is still refused" \
+  || fail "control: a truncated full-form id matched inside the real one (rc=$rc): $out"
+
 # --- 1e. the MIRROR of 1d: a commit SHA is bounded on the LEFT only, because citing a short PREFIX
 #     of a full SHA a tool already returned is the normal, correct form (coa SEND-BACK on #330,
 #     c138080) — the right-hand bound added for comment ids must not also apply here.
