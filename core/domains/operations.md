@@ -1058,6 +1058,52 @@ blocker, and why clearing it belongs to landing the blocker.
 sequences the work. It depends on something reading the labels to sequence; where nothing does, they are
 still the most compact statement of the dependency, but they gate nothing.
 
+## A peer's report that it PLACED something is read back by the owner, from the place
+
+**Trust means you do not redo a peer's work; verify means you do not repeat its sentence.** When
+another agent reports that it stored, copied, exported or migrated something the owner is
+accountable for, the owner reads it back before calling the work done:
+
+1. Get the exact location and a manifest (path, count, content hash) in writing, on the record the
+   work is tracked in.
+2. Reach the place by the owner's own access, not through the peer's summary or screenshot.
+3. Assert count and content hash against the manifest, and against the source while the source
+   is still readable.
+4. Say which leg could not be checked and why. An encrypted copy the owner cannot open is "well
+   formed, addressed to the right key, hashes match the manifest", never "matches the source".
+
+**Scope:** it binds when the thing must outlive its source (a backup, an export ahead of an account
+closing, a migration) or gates a release. For a reversible, low-stakes placement, the placer's own
+read-back is enough. **The mirrors:** "I could not find it" is also a claim, so an owner who cannot
+reach the place reports NOT VERIFIED and asks for the path, never "missing"; and the placer still
+verifies its own act, because the owner's check is a second route, not a substitute. The case this
+catches: the human believes a copy exists, the tracking record says it was never made, and the
+planned path is wrong by one folder. Belief, record and place give three answers until someone
+reads the place.
+
+## Find before you ask: when agents run on several machines, a search of one is not a search
+
+An agent on one machine cannot see another machine's sessions; work done there reaches shared
+surfaces only. **Before asking the human where something is, whether it was done, or what was
+decided, read every shared surface and say which ones you read:**
+
+1. the tracking record's whole thread (the ticket, every comment, not the newest few);
+2. every machine's status rows for the agents working on it;
+3. the shared agent message board, from your last-read mark;
+4. this machine's transcripts, and the hand-off record on the remote's default branch (a peer's
+   note reaches you through the remote, not your working tree);
+5. the resource registry, then the place itself.
+
+**Scope:** facts about shared work. A fact only the human holds (a preference, a decision not yet
+made, what they saw on their own screen) is asked after step 1.
+
+**An owned item is watched, not parked.** The owner re-reads its thread at every step and before
+every question to the human, even while its own next step waits on a person; a status that says
+"after the human does X" goes stale the moment a peer does X instead. **The mirror:** an agent that
+does another agent's work posts the result on that owner's record and names the owner on the
+board, never only "coordinator, please pass this on", because a relay fails when its machine
+restarts.
+
 ## A search that returns ZERO before you create is evidence about the QUERY
 
 **Before concluding "nothing exists yet, so I'll file one", corroborate a zero from a keyword search.**
