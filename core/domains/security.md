@@ -1067,7 +1067,7 @@ Activate it only when every condition holds:
 | 1 | Every remote hook's `rev:` is a **full commit SHA** (the version in a comment beside it), at a release past the organisation's soak window | a tag can be moved upstream, and the hook environment is built from whatever the tag points at the first time |
 | 2 | Every hook repository is the tool's **official upstream**, never a fork or a mirror | that repository is the code that runs |
 | 3 | Every extra dependency a hook installs is **exact-pinned** | a hook that builds from source, or installs its own packages, fetches more than its pin covers |
-| 4 | Prefer **local or system hooks** that call tools the machine already pins and verifies: a checksum-pinned binary over building the same tool from its hook repository | one verified copy of each tool, not a second build path. A local hook that runs the repository's own committed tests is fine: that code already passed the repository's review |
+| 4 | Prefer **local or system hooks** that call tools the machine already pins and verifies: a checksum-pinned binary over building the same tool from its hook repository | one verified copy of each tool, not a second build path. A local hook that runs the repository's own committed tests is fine **on a reviewed revision**: that code already passed the repository's review. On a branch that has not passed review (a feeder, a contributor's pull request, a merge of one), the hook configuration and every script it calls are that branch's unreviewed code, and committing, merging or pushing there with hooks active runs them. There, review the hook-config and hook-script diff before the first commit, or do the work in a checkout where hooks are not active and run the default branch's gate by hand. |
 | 5 | The hook manager itself comes from the **official channel, at a pinned version** | it is the first thing that runs |
 | 6 | The **first** time a machine trusts a new upstream hook repository, a **human** decides. Later revision bumps of an approved repository go through the normal dependency review | trusting a new upstream is a trust decision; a bump is a change |
 
@@ -1086,7 +1086,8 @@ developer carries the risk alone. It is about activating a hook manager on a wor
 repository's CI runs inside its own isolated runners are its pipeline's concern.
 
 **Where it is wrong:** a repository whose hooks are all local, running only its own committed
-scripts with tools already on the machine, has no third-party upstream to vet. Conditions 1, 2, 3 and
-6 then have nothing to check, and activation needs only conditions 4 and 5, **unless a local hook
-fetches anything at run time**: `npx` without a lockfile, a `pip install`, `go run` of a remote module.
-A hook that downloads when it runs is back under condition 3.
+scripts with tools already on the machine, has no third-party upstream to vet **on a reviewed
+revision**. Conditions 1, 2, 3 and 6 then have nothing to check, and activation needs only conditions
+4 and 5, **unless a local hook fetches anything at run time**: `npx` without a lockfile, a `pip
+install`, `go run` of a remote module. A hook that downloads when it runs is back under condition 3.
+On a branch that has not passed review (a feeder, a contributor's pull request, a merge of one), the hook configuration and every script it calls are that branch's unreviewed code, and committing, merging or pushing there with hooks active runs them. There, review the hook-config and hook-script diff before the first commit, or do the work in a checkout where hooks are not active and run the default branch's gate by hand.
