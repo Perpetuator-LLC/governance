@@ -466,6 +466,7 @@ runtime**, and the exposure that matters is usually created by a change that pri
    directories) of every agent-readable store — run logs, agent transcripts, knowledge-base exports,
    backups — so an exposure that slips past the gate is found in a day, not by luck. A hit is a
    disclosure: rotate, then purge.
+
 ## A secret census over a set of repositories runs on the BARE MIRROR, with a positive control
 
 **A secret census over a set of repositories is the same shape-only discipline as the shape scan in

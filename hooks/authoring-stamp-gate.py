@@ -18,6 +18,16 @@ a later line, or on a first line that has no `<label>,`/`<label>(` opening at al
 PASS ... (01:00-01:35Z)`, where the colon after "coa verdict" is not a stamp delimiter) — is a cited
 event, never an authoring stamp, and is never examined: it stays allowed regardless of how it reads.
 
+THE LABEL'S OWN CLOSER IS PART OF THE MATCH (coa SEND-BACK on governance PR 422, c165519). A stamp is in
+label position only when the closer the label shape promises follows it: a COLON after a comma-opened
+stamp (`<seat>, HH:MMZ:`), and `):` after a paren-opened one (`<seat> (HH:MMZ):`). Without that closer,
+a short run of ordinary prose before a comma or paren reads as a label, and a cited event is refused:
+`CI run 19346 finished (20:26Z) and is green`, `Deployed to stage, 09:12Z, then walked`, `The fold
+landed, 02:10Z was the merge time`. Obeying that refusal would write a false time into the record, the
+harm this gate exists to prevent. The cost, stated: a stamp the author closed some other way
+(`<seat> (HH:MMZ), …` or `<seat>, HH:MMZ — …`) is not examined. That is a missed check on an accident
+gate, never a false refusal.
+
 THREE OUTCOMES for whatever sits in that label position:
   - no label-plus-delimiter opening at all, or a label followed by something that is not a
     stamp-shaped token                                            -> allowed, nothing to check
@@ -59,27 +69,38 @@ DEFAULT_GATED_TOOLS = os.path.join(os.path.expanduser("~"), ".governance", "gate
 STAMP_NOW_ENV = "GOVERNANCE_STAMP_NOW"  # "HH:MM", test-injectable clock override
 
 TOLERANCE_MINUTES = 3
-REFUSAL_FIX = "stamp from `date -u +%H:%MZ` in the same step"
+REFUSAL_FIX = (
+    "stamp from `date -u +%H:%MZ` in the same step. If this time is a past event you are citing, not "
+    "when you wrote this, it is not a stamp: keep the real time and move it out of the label position "
+    "(after the label's colon, or to a later line)"
+)
 
 # The opening label itself: a short "<seat>[ (host)]" run at the very start of the line, ending in
 # the comma or open-paren that introduces the stamp — `<seat>, HH:MMZ:` or `<seat> (HH:MMZ):`. The
 # middle group is deliberately narrow ([\w .-], i.e. no ":" or ";") and lazy, so a line whose label is
 # instead followed by a colon ("coa verdict: PASS ... (01:00-01:35Z)") never reaches a later comma or
 # paren at all: there is no label-delimiter opening on that line, so nothing is in stamp position.
-LABEL_RX = re.compile(r"^\W*[\w .-]{1,40}?[,(]\s*")
+# The delimiter is captured: it decides which closer must follow the stamp (CLOSER below).
+LABEL_RX = re.compile(r"^\W*[\w .-]{1,40}?([,(])\s*")
+
+# The closer each opening delimiter promises; a token counts as a stamp only when it is followed by
+# it (module docstring, "THE LABEL'S OWN CLOSER").
+CLOSER = {",": r"\s*:", "(": r"\s*\)\s*:"}
+
+APPROX_TOKEN = (
+    r"(?:~\s*\d{1,2}:\d{2}\s*Z"         # ~HH:MMZ
+    r"|\d{1,2}:\d{2}\s*ish\b"           # HH:MMish
+    r"|\d{1,2}:\s*\d?[xX]\s*Z"          # HH:0xZ / HH:xZ
+    r"|now"                             # (now): / , now:
+    r"|at the time of writing)"
+)
+EXACT_TOKEN = r"(\d{1,2}):(\d{2})\s*Z"
 
 # Checked against the text RIGHT AFTER the label delimiter (never searched for elsewhere on the line)
-# so a stamp-shaped token must be the very next thing after "<label>," or "<label>(" to count at all.
-APPROX_HEAD_RX = re.compile(
-    r"^~\s*\d{1,2}:\d{2}\s*Z"           # ~HH:MMZ
-    r"|^\d{1,2}:\d{2}\s*ish\b"          # HH:MMish
-    r"|^\d{1,2}:\s*\d?[xX]\s*Z"         # HH:0xZ / HH:xZ
-    r"|^now\s*[:)]"                     # now) / now:
-    r"|^at the time of writing\s*\)",
-    re.I,
-)
-# An exact HH:MMZ, also anchored to right after the label delimiter.
-EXACT_HEAD_RX = re.compile(r"^(\d{1,2}):(\d{2})\s*Z\b")
+# so a stamp-shaped token must be the very next thing after "<label>," or "<label>(", AND be followed
+# by that delimiter's closer, to count at all.
+APPROX_HEAD_RX = {d: re.compile("^" + APPROX_TOKEN + c, re.I) for d, c in CLOSER.items()}
+EXACT_HEAD_RX = {d: re.compile("^" + EXACT_TOKEN + c) for d, c in CLOSER.items()}
 
 
 def load_gated_tools(path):
@@ -165,10 +186,11 @@ def stamp_violation(text):
     m = LABEL_RX.match(line)
     if not m:
         return None  # no "<label>," / "<label>(" opening at all: nothing is in stamp position
+    delim = m.group(1)
     rest = line[m.end():]
-    if APPROX_HEAD_RX.match(rest):
+    if APPROX_HEAD_RX[delim].match(rest):
         return f"an approximate or unread first-line stamp — {REFUSAL_FIX}"
-    m2 = EXACT_HEAD_RX.match(rest)
+    m2 = EXACT_HEAD_RX[delim].match(rest)
     if not m2:
         return None  # the label is followed by something else: not a stamp attempt
     stamp = f"{int(m2.group(1)):02d}:{m2.group(2)}"

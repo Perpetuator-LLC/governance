@@ -119,6 +119,37 @@ check "REFUSE: an approximate label-position stamp is still caught with a later 
 check "REFUSE: a leading blank line still exposes the real first line's bad stamp" \
   "01:39" "$(printf '\nagent-a, ~01:30Z: status update')" BLOCK
 
+# --- coa SEND-BACK c165519 (governance PR 422): a stamp counts only when the label's own closer
+#     follows it (`<label>, HH:MMZ:` / `<label> (HH:MMZ):`). Prose that only LOOKS like a label
+#     before a comma or paren cites an event; refusing it would push a false time into the record ---
+check "ALLOW: c165519 row 3 — a cited run time in prose parens, no '):' closer" \
+  "17:05" "$(printf 'CI run 19346 finished (20:26Z) and is green')" ALLOW
+
+check "ALLOW: c165519 row 4 — a cited deploy time after a comma, then a comma, not a colon" \
+  "17:05" "$(printf 'Deployed to stage, 09:12Z, then walked')" ALLOW
+
+check "ALLOW: c165519 row 5 — a cited merge time after a comma, then prose, not a colon" \
+  "17:05" "$(printf 'The fold landed, 02:10Z was the merge time')" ALLOW
+
+check "ALLOW: c165519 row 1 — a comma-form stamp on the clock, with its colon closer" \
+  "17:05" "$(printf 'cos, 17:05Z: hello')" ALLOW
+
+check "REFUSE: c165519 row 2 — a comma-form stamp off the clock, with its colon closer" \
+  "17:05" "$(printf 'cos, 16:30Z: hello')" BLOCK
+
+check "ALLOW: a paren-form stamp on the clock, with its '):' closer" \
+  "17:05" "$(printf 'cos (17:05Z): hello')" ALLOW
+
+check "REFUSE: a paren-form stamp off the clock, with its '):' closer" \
+  "17:05" "$(printf 'cos (16:30Z): hello')" BLOCK
+
+check "ALLOW (stated cost): a paren stamp closed by a comma is not examined" \
+  "17:05" "$(printf 'cos (16:30Z), acting on the ruling')" ALLOW
+
+out=$(run_gate "17:05" "$(printf 'cos, 16:30Z: hello')" 2>&1)
+[[ "$out" == *"past event you are citing"* ]] && ok "refusal text says what to do when the time is a cited event" \
+  || bad "refusal text gives no remedy for a cited event: $out"
+
 # --- tool scoping: an undeclared tool is never checked; different fields/tools work the same way ---
 check "ALLOW: a tool not in the declared list is never checked" \
   "01:39" "$(printf 'agent-a, ~01:30Z: status update')" ALLOW "SomeOtherTool" "comment"
