@@ -174,13 +174,72 @@ if echo "$cmd" | grep -qE '[a-zA-Z_:][a-zA-Z0-9_:]*\s*\(\s*\)\s*\{[^}]*\|[^}]*&[
 fi
 
 # Block secret extraction — secrets must never enter agent context.
-# Catches: cat/grep/rg/head/tail on .env files, keychain access, docker env dumps.
+# Catches: any command that names an env file (any verb), keychain access, docker env dumps.
+# The NAME and its template allowance come from secret-names.sh (found as below), the same file
+# write-safety-gate.sh sources, so the two gates refuse the same names. Its header states the SCOPE
+# (the name as written; no indirection) and the COST (a command that only names the file is refused).
 # The name has a RIGHT BOUNDARY: `.env` followed by a non-letter, `rc`, or the end. That still matches
 # `.env`, `.env.local`, `.env_x`, `"$D/.env"` and `.envrc` (direnv files hold secrets too), and stops
 # matching a longer word that merely starts with the letters: `properties.environment`,
-# `sample.environment.ts`, `.envoy.yaml`. Without it, any reader verb near such a word was refused.
-SECRET_NAME='\.env([^A-Za-z]|rc|$)'
-SECRET_READ="cat\s+.*$SECRET_NAME|grep\s+.*$SECRET_NAME|rg\s+.*$SECRET_NAME|head\s+.*$SECRET_NAME|tail\s+.*$SECRET_NAME|less\s+.*$SECRET_NAME|more\s+.*$SECRET_NAME"
+# `sample.environment.ts`, `.envoy.yaml`. The name is CASE-INSENSITIVE: on Windows and default macOS
+# (APFS) `.ENV` and `.Env` open the same file as `.env`.
+# A FIXED LIST OF READER VERBS is a list that is always one verb behind: `sed -n p`, `awk 1`, `cp`,
+# `xxd` and the case variant `CAT` (a case-SENSITIVE verb list, on the very filesystems where the name
+# itself is matched case-insensitively) all read or relocated the file unrefused (#301), each one
+# either a verb the list hadn't named or the same verb spelled differently. The verb never narrows the
+# risk anyway: `cp` doesn't print to stdout, but it stages the SAME bytes under a name this gate no
+# longer recognises, for an allowed-looking read later. So the match drops the verb list entirely —
+# a sub-command naming a secret-bearing file AT ALL is the floor, whatever reads or moves it.
+#
+# WHERE the list is found. The installer links hooks FILE BY FILE into the harness's hooks directory,
+# so the directory of BASH_SOURCE is that link directory, not the clone that holds secret-names.sh.
+# Looking only beside the link refused every Bash and Write call on a machine whose links predated the
+# new file, the agent's own `reconcile` included, until a human ran it from a terminal. So the list is
+# loaded from this script's REAL directory (symlinks followed), then from beside the link; and when
+# neither has it, the copy embedded below is used, so a missing file still yields the right list, never
+# a refuse-everything gate. tests/secret-names-fallback.test.sh diffs this copy against the file.
+# >>> embedded copy of secret-names.sh (code lines only; keep identical)
+SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
+SECRET_TEMPLATES='example|sample|template'
+strip_secret_templates() {
+  local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>].*|\\)+(\$|[[:space:];&|<>].*))\$" nocase=0 mark=$'\001'
+  case "$s" in *'$'*|*'`'*) printf '%s' "$s"; return 0 ;; esac   # a `$` or a backtick: no template is removed
+  shopt -q nocasematch && nocase=1
+  shopt -s nocasematch
+  while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${mark}${BASH_REMATCH[3]}"; done
+  [ "$nocase" = 1 ] || shopt -u nocasematch
+  printf '%s' "${s//$mark/}"
+}
+# <<< end of embedded copy
+gate_real_dir() {  # the directory of this script's REAL file, symlinks followed (portable: no readlink -f)
+  local src="${BASH_SOURCE[0]}" dir
+  while [[ -L "$src" ]]; do
+    dir="$(cd -P "$(dirname "$src")" 2>/dev/null && pwd)" || return 0
+    src="$(readlink "$src")" || return 0
+    [[ "$src" == /* ]] || src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" 2>/dev/null && pwd
+}
+# A list file with no code in it (empty, whitespace or comments only: a truncated or blanked file)
+# holds no list, so it counts as MISSING: the gate warns and keeps its built-in copy. Refusing on it
+# locked every seat out of Bash and Write, the repair included.
+SECRET_NAMES_FILE=""
+for secret_names_candidate in "$(gate_real_dir)/secret-names.sh" "$(dirname "${BASH_SOURCE[0]}")/secret-names.sh"; do
+  [[ -f "$secret_names_candidate" ]] || continue
+  if ! grep -qvE '^[[:space:]]*(#|$)' "$secret_names_candidate" 2>/dev/null; then
+    echo "safety gate: $secret_names_candidate is empty; ignored, using the built-in copy of the secret-name list in this gate. Restore it (git checkout -- hooks/secret-names.sh in the governance clone)." >&2
+    continue
+  fi
+  SECRET_NAMES_FILE="$secret_names_candidate"
+  # shellcheck source=secret-names.sh
+  . "$secret_names_candidate" && break
+done
+# A file that DOES load but leaves a value empty would check against no list. Refuse, and say how out:
+# every Bash and Write call is refused from here on, the agent's own repair included.
+if [[ -z "${SECRET_NAME:-}" || -z "${SECRET_TEMPLATES:-}" ]]; then
+  deny secret-names-missing "this safety gate's secret-name list is empty: ${SECRET_NAMES_FILE:-the copy built into this gate} leaves SECRET_NAME or SECRET_TEMPLATES unset, so every call is refused rather than checked against no list. Way out: a human, in a terminal (this agent's Bash and Write are refused), restores that file (git checkout -- hooks/secret-names.sh in the governance clone, then reconcile) or deletes it; the gate then uses its built-in copy."
+fi
+SECRET_READ="$SECRET_NAME"
 
 # A heredoc BODY given to `cat` or `tee` is DATA: those two only copy their stdin, so prose in the body
 # that names the file reads nothing. Refusing it blocked a seat's hand-off append (`cat >> <file> <<EOF`
@@ -280,14 +339,166 @@ sys.exit(1 if any(rx.search(" ".join(s)) for s in segs) else 0)
 PY
 }
 
+# A template (`.env.example`, `.env.sample`, `.env.template`) holds no secret — the same allowance
+# write-safety-gate.sh gives it on the write side (#301). Dropping the verb list above means every
+# mention of one now matches SECRET_READ, so it is stripped from a COPY built ONLY to test that match,
+# never from `scan` itself: a sub-command naming a real secret ALONGSIDE a template (`cp .env.example
+# .env.local`) must still match on the real name that survives the strip. No python3: this copy is
+# unchanged, so a template name still reads as a secret name — every doubt keeps the block, same as
+# `strip_data_heredocs` above.
+# Only a WHOLE template name is removed: it must end the text or be followed by whitespace, a quote,
+# `/` or a shell separator. A template prefix followed by more name (`.env.example.local`,
+# `.env.sample2`) is a real file, refused here and by the write gate alike.
+# NAME BUILDERS (r10, cisa ruling c168216 on governance#301, option (a) of c117502: fail closed). The
+# template allowance is an exemption from the floor, so it holds only where the gate can see the
+# template used as a literal file argument. A command holding ANY of these gets NO template removal
+# and no code-reference removal, so any `.env` name in it is refused, as on main:
+#   1. any `$`: a parameter (`$_`, `$1`), a default (`${u:-…}`), bash 5.3's `${ cmd; }` and `${|…}`,
+#      a substitution `$( )`, and `$'…'` quoting too;
+#   2. a backtick;
+#   3. `<<<`, or a `<<` whose owner is not `cat`/`tee` (a `cat`/`tee` heredoc body is data, removed above);
+#   4. an interpreter or name-builder word: bash sh zsh dash ksh eval source exec env xargs python
+#      python3 perl ruby node awk parallel, the flags -exec -execdir -I, and `.` as a command;
+#   5. a function definition (`name()`, `function name`).
+# Checked on the text after the data-heredoc removal, as given AND in each spelling below (so `b''ash`
+# counts), before any template is removed. Each of these read `.env.example.local` and r9 allowed it
+# (coa c116639): `cat ${ echo .env.example; }.local`, `xargs -I% cat %.local <<< .env.example`,
+# `bash -c 'cat $0.local' .env.example`, `printf 'cat %s.local' .env.example | bash`,
+# `cat .env.example > /dev/null; cat $_.local`, `f() { cat $1.local; }; f .env.example`.
+#   COST: every template read in a command with a builder is refused, including harmless ones:
+#   `for f in .env.example; do cat $f; done`, `cat $'.env.example'`, `awk 1 .env.example`,
+#   `grep -I KEY .env.example`. Run the template read as its own plain command.
+#   LIMIT: item 4 is a list and will be one word behind. Its backstop is items 1 to 3: a name built
+#   by an unlisted program still has to reach it through `$`, a pipe into a listed word, or stdin.
+# SUBSTITUTION (r9, now item 1 and 2 above): a command holding `$(` or a backtick ANYWHERE gets NO
+# template removal. What a substitution
+# prints becomes the name, so a template inside one reaches the real file however it is spelled:
+# `cat $(echo .env.example).local`, `$(echo .env.example ).local`, `$(printf %s.local .env.example)`,
+# `$(case a in a) echo .env.example;; esac).local` all read `.env.example.local`. r1 to r7 patched one
+# spelling per round; r8 counted `$(`/`(`/`)` depth, and a `case` pattern's `)` or a `#)` comment
+# closed the count early and ALLOWED the read. No parse is attempted now: the test is a substring
+# match on the text the gate checks (heredoc data bodies already removed), so it cannot close early.
+#   COST: a template in any command with a substitution is refused, even when harmless
+#   (`echo $(cat .env.example)`) and even when the `$(` is quoted text (`git commit -m 'see $(x)
+#   .env.example'`). Run the template read as its own command, without a substitution.
+#   A subshell `( )` or a process substitution `<( )` is not a command substitution: those commands
+#   keep the template allowance.
+# Without a substitution, a `)` ends a template only when a real end follows it (or a run of them):
+# the end of the text, whitespace, `;`, `&`, `|`, `<` or `>`. Same rule as `strip_secret_templates` in
+# secret-names.sh, which the write gate runs, and the same ONE pass over the original text: repeating
+# the strip let `.env.sample.env.example` lose `.env.example`, then `.env.sample`, and pass both gates
+# as nothing.
+#
+# Two more steps run on that same copy, before the template strip:
+#   - SPELLINGS. Bash removes quotes and backslash escapes before a program sees a name, and a match on
+#     the text as written misses what that removal joins. A quote ended the template strip, so
+#     `cat .env.example''.local` (or `'.env.example'.local`) read the real `.env.example.local` and was
+#     ALLOWED (r3 to r5; main refused it). Unquoted `\.` is just `.`, so `cat .env.example\.local`
+#     reads the same file (r4). But a `\` is also a Windows separator (`C:\proj\.env`). The gate cannot
+#     tell which, so the check runs on TWO spellings and refuses if EITHER matches (the union only adds
+#     refusals):
+#       written: quotes removed the way bash removes them, every `\` kept as written (the Windows or
+#                literal reading). Pinned by `cat C:\process.env.local`, which only it refuses.
+#       bash:    quotes AND escapes removed, `$'...'` decoded: the name bash passes on. Pinned by
+#                `cat .e\nv`, which only it refuses.
+#     Inside double quotes a `\` is KEPT in both spellings (r6's bash spelling dropped it before `$`,
+#     `` ` ``, `"`, `\` and a newline). None of those can form a secret name, and the written spelling,
+#     which keeps it, is in the union anyway: the drop changed 0 of 14,460 double-quoted verdicts, so
+#     it was removed (N7, r7). A kept `\` never ends a template, so keeping it only adds refusals.
+#     Quote removal only deletes quote characters (and the `$` opening `$'` or `$"`); it never hides
+#     text. A backslash before whitespace, a quote or a shell separator is kept in both, so
+#     `-exec ... \;` still reads as nesting below. r5's other two spellings are gone: the text AS GIVEN
+#     refuses nothing the written spelling misses except names bash never reads (`.env'x'` is `.envx`),
+#     and `\` read as `/` can only END a template sooner (`/` is a boundary, `\` is not), so it refused
+#     nothing on its own (0 of 3,744 fuzzed commands).
+#     COST: a backslash path INSIDE a template directory (`cat C:\proj\.env.example\notes.txt`) is
+#     refused, because bash would read it as `C:proj.env.examplenotes.txt`; quote it or use `/`.
+#     LIMIT: a QUOTED space or separator right after a template (`".env.example .x"`) still ends it.
+#   - CODE, NOT A FILE. `process.env` and `import.meta.env` are how JS/TS code reads its environment, and
+#     `rg process.env src/` reads no file. They are removed only with nothing but a separator on their
+#     left: `app/process.env` or `./process.env` is a path, and stays a name. Cost: a file literally
+#     named `process.env`, given with no directory, is not recognised.
+strip_template_names() {  # <cmd> <written|bash> -> <cmd> in that spelling, code env references and whole .env.<template> names removed
+  # No python3: nothing is removed (every template name stays a match, fail closed), and the bash
+  # spelling deletes every quote and backslash, so `cat .e''nv` and `cat .e\nv` still match.
+  if ! command -v python3 >/dev/null 2>&1; then
+    if [[ "$2" == bash ]]; then printf '%s' "$1" | tr -d "\"'\\\\"; else printf '%s' "$1"; fi
+    return 0
+  fi
+  python3 -c '
+import codecs, re, sys
+s, tmpl, drop = sys.argv[1], sys.argv[2], sys.argv[3] == "bash"
+Q, D, B = "\x27", "\x22", "\\"
+KEEP = set(" \t\r\n\f\v;&|<>()" + Q + D)   # an escape before these stays: nesting, separators, quotes
+def ansi(t):  # what bash makes of the body of $Q...Q
+    try:
+        return codecs.decode(t.encode("latin-1", "backslashreplace"), "unicode_escape")
+    except Exception:
+        return t
+def spell(s):
+    out, i, n = [], 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == B and i + 1 < n:
+            out.append(s[i + 1] if drop and s[i + 1] not in KEEP else s[i:i + 2]); i += 2
+        elif c == Q:
+            j = s.find(Q, i + 1); j = n if j < 0 else j
+            out.append(s[i + 1:j]); i = j + 1
+        elif s.startswith("$" + Q, i):
+            j = i + 2
+            while j < n and s[j] != Q:
+                j += 2 if s[j] == B else 1
+            body = s[i + 2:min(j, n)]
+            out.append(ansi(body) if drop else body); i = j + 1
+        elif c == D or s.startswith("$" + D, i):
+            j, buf = i + (2 if c == "$" else 1), []
+            while j < n and s[j] != D:
+                if s[j] == B and j + 1 < n:
+                    buf.append(s[j:j + 2]); j += 2   # kept in BOTH spellings (N7 above)
+                else:
+                    buf.append(s[j]); j += 1
+            out.append("".join(buf)); i = j + 1
+        else:
+            out.append(c); i += 1
+    return "".join(out)
+# NAME BUILDERS (r10, see SUBSTITUTION above): any one of these anywhere, in the text as given OR in
+# this spelling, and nothing is removed. Words and flags count as a whole word only, so `python/`,
+# `node_modules`, `build.sh`, `ssh` and `--env-file` are not builders; `/usr/bin/env` is.
+WORDS = ("bash", "sh", "zsh", "dash", "ksh", "eval", "source", "exec", "env", "xargs",
+         "python", "python3", "perl", "ruby", "node", "awk", "parallel")
+WORD_RX = re.compile(r"(?<![\w.-])(?:" + "|".join(WORDS) + r")(?=\Z|[\s;&|()<>\x27\x22`])")
+FLAG_RX = re.compile(r"(?<![\w-])-(?:exec|execdir|I)(?![\w-])")
+DOT_RX = re.compile(r"(?:\A|[;&|({\n])\s*\.(?=[ \t])")              # `.` as a command
+FUNC_RX = re.compile(r"(?<![\w.-])[A-Za-z_][\w-]*\s*\(\s*\)|(?<![\w.-])function\s+[A-Za-z_]")
+def code_heredoc(t):  # a `<<` whose owner is not cat/tee: its body is input to a program, never removed data
+    for m in re.finditer(r"(?<!<)<<(?!<)", t):
+        words = re.split(r"&&|\|\||[;|&\n]", t[:m.start()])[-1].split()
+        if not words or words[0] not in ("cat", "tee"):
+            return True
+    return False
+def builds_a_name(t):
+    return ("$" in t or "`" in t or "<<<" in t or code_heredoc(t)
+            or bool(WORD_RX.search(t) or FLAG_RX.search(t) or DOT_RX.search(t) or FUNC_RX.search(t)))
+builder = builds_a_name(s)
+s = spell(s)
+if not (builder or builds_a_name(s)):
+    s = re.sub(r"(?<![\w./\\-])(?:process|import\.meta)\.env(?![\w-])", "", s)
+    s = re.sub(r"\.env\.(" + tmpl + r")(?=\Z|[\s\"\x27/;&|<>]|\)+(?:\Z|[\s;&|<>]))", "", s, flags=re.IGNORECASE)
+print(s, end="")
+' "$1" "$SECRET_TEMPLATES" "$2" 2>/dev/null || printf '%s' "$1"
+}
+
 # FLATTEN before matching. `grep -E` matches line by line, so a newline between the reader and the file
 # name — even one inside quotes, `cat "<newline>" .env`, which reads the file — hid the read from every
 # line and the gate ALLOWED it. Joining the lines closes that; the per-sub-command check above then
 # splits on UNQUOTED newlines, so an ordinary multi-line command keeps today's line-wise behaviour.
 scan=$(strip_data_heredocs "$cmd")
-if printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$scan" "$SECRET_READ"; then
-  deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
-fi
+for spelling in written bash; do
+  secret_scan=$(strip_template_names "$scan" "$spelling")
+  if printf '%s' "$secret_scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$secret_scan" "$SECRET_READ"; then
+    deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
+  fi
+done
 
 # Credential-store reads. Two failures this rule had, both measured against a reference case list: it
 # needed the tool word DIRECTLY before the subcommand, case-sensitively, so a list-form argv inside an
@@ -312,7 +523,7 @@ if printf '%s' "$kc" | grep -qE '(^|[^a-z0-9_])keyring([^a-z0-9_]|$)' \
   deny keyring-read "Keychain access through a keyring library would expose secrets to the AI context. Credential-store reads belong in runtime code only, not in development commands."
 fi
 
-if echo "$cmd" | grep -qE 'docker\s+(exec|inspect).*env|docker\s+(exec|inspect).*\.env|docker\s+(exec|inspect).*secret|docker\s+(exec|inspect).*token|docker\s+(exec|inspect).*password'; then
+if echo "$cmd" | grep -qE 'docker\s+(exec|inspect).*env|docker\s+(exec|inspect).*\.[eE][nN][vV]|docker\s+(exec|inspect).*secret|docker\s+(exec|inspect).*token|docker\s+(exec|inspect).*password'; then
   deny container-secret-read "Extracting secrets from containers would expose them to the AI context. Use Secure Handoff instead."
 fi
 
