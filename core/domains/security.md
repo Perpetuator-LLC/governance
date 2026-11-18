@@ -1052,3 +1052,39 @@ from a source that may omit fields, with or without waivers: a scanner with no w
 on an advisory URL fails open the same way. **Where it is wrong:** a field optional *in the domain*, or a permanent exemption declared as permanent, with a
 reason, and reviewed as such; the defect is absent silently equalling pass, and permanence smuggled
 in through a deadline field.
+
+## Activating a repository's git hook manager on a shared machine is an install
+
+**A repository's hook manager (pre-commit, husky, a committed hooks directory wired through
+`core.hooksPath`) runs code as the machine's user on every commit or push.** On a machine where agents
+work with forge and secret-store access, turning it on is an install and takes an install's gate. It
+is not a setup chore.
+
+Activate it only when every condition holds:
+
+| # | Condition | Why |
+|---|---|---|
+| 1 | Every remote hook's `rev:` is a **full commit SHA** (the version in a comment beside it), at a release past the organisation's soak window | a tag can be moved upstream, and the hook environment is built from whatever the tag points at the first time |
+| 2 | Every hook repository is the tool's **official upstream**, never a fork or a mirror | that repository is the code that runs |
+| 3 | Every extra dependency a hook installs is **exact-pinned** | a hook that builds from source, or installs its own packages, fetches more than its pin covers |
+| 4 | Prefer **local or system hooks** that call tools the machine already pins and verifies: a checksum-pinned binary over building the same tool from its hook repository | one verified copy of each tool, not a second build path. A local hook that runs the repository's own committed tests is fine: that code already passed the repository's review |
+| 5 | The hook manager itself comes from the **official channel, at a pinned version** | it is the first thing that runs |
+| 6 | The **first** time a machine trusts a new upstream hook repository, a **human** decides. Later revision bumps of an approved repository go through the normal dependency review | trusting a new upstream is a trust decision; a bump is a change |
+
+**Activation is a deliberate step, never a side effect.** A session-start check may warn that a
+repository's hooks are not active, naming the install step, but it never runs that step: installing
+runs repository code.
+
+**The mirror case: hooks that are not active are not the safe default either.** With no hook active,
+every push skips the repository's local gate, and nothing says so. Until a repository's hooks pass this
+rule, run its gate by hand, with the command the hook would run, before every push. Never skip it, and
+never bypass an active hook.
+
+**Scope.** This governs activating hooks on shared machines and machines where agents run with
+credentials. It does not govern a single developer's own laptop with no agent access, where the
+developer carries the risk alone. It is about activating a hook manager on a workstation; hooks the
+repository's CI runs inside its own isolated runners are its pipeline's concern.
+
+**Where it is wrong:** a repository whose hooks are all local, running only its own committed
+scripts with tools already on the machine, has no third-party upstream to vet. Conditions 1, 2, 3 and
+6 then have nothing to check, and activation needs only conditions 4 and 5.
