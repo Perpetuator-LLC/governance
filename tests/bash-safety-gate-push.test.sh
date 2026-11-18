@@ -156,6 +156,7 @@ table() {
   row F11  2 "$PUSHCFG" 'GIT_CONFIG_GLOBAL=/tmp/g git push origin x'
   row F12  2 "$PUSHCFG" 'env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.default GIT_CONFIG_VALUE_0=mirror git push'
   row F13  0 ""         'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x git status'
+  row F14  2 "$ALIAS"   'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p origin x'   # an alias, not push config
 
   echo "── controls named in the fix spec"
   row X1 0 "" 'git push origin x'
