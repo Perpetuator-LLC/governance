@@ -1022,6 +1022,23 @@ it.
   container healthcheck) and `/health/ready/` = readiness (DB reachable + no unapplied
   migrations, 503 on fail — what MONITORING probes). A liveness-only monitor watched a
   total functional outage stay green.
+- **A restart WAITS for the stop to finish before it starts again, and ASSERTS the service is running
+  afterward.** A restart block that issues stop-then-start as two commands in sequence assumes the
+  stop is synchronous. Where it is not — an async-capable service manager whose stop command returns
+  before the process has actually exited — the start command can race the still-draining stop, and
+  the service ends up down with no stop or start command reporting an error. The fix is two
+  independent waits, never a fixed sleep: poll until the stopped process is confirmed gone (by PID,
+  socket, or supervisor status) before issuing start, and after start, poll until the service is
+  independently confirmed running (a health check, a port, a supervisor status) — never the start
+  command's own exit code, which only means the manager accepted the request. **Each wait is bounded
+  and fails loudly on timeout, never a poll that runs forever:** a stop that never finishes (a process
+  stuck draining, or a manager that lost track of it) reaches the same silent-down outcome this rule
+  exists to prevent, just by hanging instead of racing. **Scope:** any hand-off
+  block or script that stops and restarts a long-running service through an async-capable manager
+  (launchd, systemd with `--no-block`, a container orchestrator's rolling update). **Where it is
+  wrong:** a manager whose restart command is itself synchronous and atomic (blocks until the new
+  instance is confirmed up, or guarantees ordering) needs no external wait; wrapping it anyway is
+  redundant, not harmful.
 - **Monitoring must not share fate with what it watches**: in-app dead-men (celery/beat)
   are a layer; the authoritative probe is external (blackbox → Alertmanager).
   The same holds for any **detector and the corrector it guards**: on one host, timer, agent or
@@ -1450,6 +1467,23 @@ merges, with no comment. When a change carries only part of a ticket, write *"pa
 stays open"*, and never put a closing keyword (close, fix, resolve, in any form) next to a reference in
 a title, body, comment or commit message. **Where it is wrong:** a pull request that really completes
 the ticket should use the keyword; that is what it is for.
+
+**A fold that lands several feeders' tickets in one pull request lists a closing reference for every
+ticket the fold COMPLETES — never one it only partly carries, and not only the fold's own if it has
+one.** A feeder that is only a slice of its ticket gets `Refs #N` in the fold instead, the same
+distinction the rule above draws for a single change, now applied per feeder inside one fold: closing
+every ticket the fold merely touches, finished or not, closes work that is not actually done — exactly
+the failure this rule's own parent forbids. This holds **when, and only when, that pull request's own
+merge is the event that fires closing.** A reader checking a closing reference and seeing it close
+reasonably assumes the ticket is finished; naming a completed one but omitting another that is also
+done leaves its work shipped but its ticket open. **Where this is wrong, the same way the forge-side
+half of this already is** (`technical.md` → *A forge closes a pull request only on its OWN merge — one
+merged another way stays open*): a fold into an intermediate integration branch, not yet the one a
+closing keyword fires on, is not that event. A keyword written at that step closes nothing on most
+forges, or closes a ticket for work that has not reached the default branch yet on one that tracks
+ancestry more eagerly. Name the folded tickets in prose there instead (*"folds #N1 (done), refs #N2
+(partial)"*), and put the closing keywords, one per COMPLETED ticket, on whichever pull request
+actually lands the work on the branch where closing fires.
 
 ## A green run proves only the steps that EXECUTED in it
 
@@ -3914,6 +3948,55 @@ another process, and a security rule wherever an attacker can write that path be
 re-opening is harmless and holding a handle open across the gap may be the worse design (file-descriptor
 pressure, a lock held longer than it needs to be). State the writability assumption the rule depends on,
 rather than applying it by reflex.
+
+## A gate tests the artifact by its EXACT identifier — the checkout beside it is a different object
+
+**The rule above is the TOCTOU-shaped instance of a wider mistake, and the wider one needs no race at
+all: a gate verifies whatever its own process happens to be sitting on, instead of the commit SHA,
+image digest or build id the action it gates will actually use.** A working tree, a locally checked-out
+branch, an in-memory build are mutable state the gate's process occupies; the artifact about to be
+pushed, deployed or promoted is whatever identifier the action command itself names, and nothing makes
+the two the same object once anything can select them independently. Measured: a pre-push check tested
+the working tree at one commit while the push itself sent a different, already-built release artifact
+at a different commit — the check reported green, and the artifact it never looked at shipped
+unverified.
+
+**So: resolve the exact identifier the action will use FIRST, gate on that value by name, and re-read
+it from wherever the action itself will read it — never from the gate process's own ambient state.**
+
+**The mirror, and the reason this is not "re-verify everything, always": an artifact already proven by
+a passed run keyed to that EXACT identifier needs no re-test.** A later step that acts on the SAME
+SHA or digest is covered by the run that already verified it; re-running the check is not extra safety,
+it is re-deriving a result already on record, and it does nothing about the actual failure above — a
+gate that quietly verified a DIFFERENT, unidentified object (`technical.md` → *A merge-ready claim
+covers EVERY CI run for the head, queried by the full id*).
+
+**A third face, where the SUCCESS CLAIM itself is the proxy: a message keys on a value the action
+CHANGES, never one already true before it ran.** An exit code of zero, a service already up, a lock
+already free: each can hold whether or not the action's own work happened, so a message built from one
+of them cannot tell a completed action from one that took a no-op path and skipped silently. Measured:
+a deploy script that lost a lock and skipped its own recreate step printed the same success line used
+for a real one, because the line was written once, independent of which branch ran. Name the thing the
+action produced that did not exist, or held a different value, before it ran — a new container id, an
+incremented generation, a timestamp that moved.
+
+**Scope:** any gate, hook, or deploy/promotion step whose verdict or message is later read as license
+to trust a named artifact or action. **Where it is wrong:**
+- A gate whose entire job is to inspect local or uncommitted state FOR ITS OWN SAKE (a pre-commit
+  linter over staged changes, a check that refuses on an uncommitted secret) has no separate "real
+  artifact" to diverge from — the working tree IS the subject, by definition, and the first face does
+  not apply.
+- An identifier that changed since the last passed run (a re-cut, a force-push, a rebuild) is not
+  covered by the second face's exemption — that is a different artifact under the same name, which
+  invalidates the prior run rather than needing none (`technical.md` → *The promotion gate is a walked
+  STAGE, and a deploy is fully automated*).
+- A reconciler or desired-state apply whose contract IS "already correct, no change made" reports
+  exactly that as its own honest, distinct outcome — the third face forbids claiming a change
+  happened, not reporting that none was needed.
+
+**Tripwire:** a hook or script that hashes, diffs, or names `HEAD` / `.` / "the current checkout" as
+its subject, while the action it gates takes an explicit ref, SHA or digest argument of its own, is
+this bug, every time the two can diverge.
 
 ## A working copy with no dependency environment of its own silently borrows another's
 

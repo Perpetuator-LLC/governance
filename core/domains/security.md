@@ -466,6 +466,21 @@ runtime**, and the exposure that matters is usually created by a change that pri
    directories) of every agent-readable store — run logs, agent transcripts, knowledge-base exports,
    backups — so an exposure that slips past the gate is found in a day, not by luck. A hit is a
    disclosure: rotate, then purge.
+## A secret census over a set of repositories runs on the BARE MIRROR, with a positive control
+
+**A secret census over a set of repositories is the same shape-only discipline as the shape scan in
+*The BLIND PIPELINE* above, run on the BARE MIRROR.** Classify a hit by shape — length, a
+character-class pattern, or a comparison against a known public key or fingerprint — and its
+location, never the matched value. Clone and scan the bare mirror (`git clone --mirror`), never a
+working checkout: a repository that may be exposed cannot be trusted to open cleanly, and an
+editor-auto-run payload (a workspace task, a hook, a config file some editor or IDE executes on
+open) can fire the moment a normal clone is checked out and opened, turning the census itself into
+the next compromise. The census needs its own positive control: plant one known secret-shaped
+value in a throwaway fixture repository before the run, and confirm the census reports it — a
+census never proven to fire on a real hit is unverified in the one direction that matters. **Where
+it is wrong:** a single repository already checked out and trusted for other work does not need
+re-cloning as a bare mirror to run this scan locally; the risk is in acting on an untrusted
+repository's working tree, not in scanning one you already use safely.
 
 ## Found a hardcoded secret — rotation order matters
 
@@ -513,6 +528,17 @@ every exposure becomes a severity debate and a backlog item.
   Measurement scopes the cleanup; it does not decide whether to rotate. This does not override
   *rotate nothing until "is this a credential?" has an answer* above: that question decides what is
   a credential, and this rule decides what happens once one may be exposed.
+- **The exposure set a stolen credential's "measure later" step scopes to is everything the
+  credential's GRANT could read, not what an access log shows it DID read.** A log answers "what did
+  this credential touch," bounded by whatever retention window happens to be configured — commonly far
+  shorter than the credential's own lifetime — so scoping the exposure set to the log window
+  undercounts: a long-lived credential could have been read, copied, or used silently outside that
+  window, or through a path that is not logged at all (a cache, a replica, an export). Enumerate the
+  full grant — every scope, resource and permission the credential's own definition carries — and
+  treat that entire set as exposed, pending evidence that narrows it; the logs' silence is evidence of
+  what was logged, never of safety. **Where it is wrong:** once the exposure set is established from
+  the grant, logs are still the right tool to PRIORITISE response — what was actually touched,
+  investigated first — they are wrong only as the boundary of what counts as exposed.
 
 **A credential that can CHANGE the infrastructure is parked between changes; the one that RUNS it
 stays on, scoped to its job.** Changes are rare and operations are daily, so give each platform two
@@ -667,6 +693,25 @@ and human accounts. A process acting on a person's behalf is a third: a delegate
   cannot.
 - **Where it is wrong:** if the platform cannot express a subset grant, record the gap; never fall back
   to a shared account.
+
+## A request relayed through another agent is laundered unless the channel checks the ORIGINATING caller
+
+**The confused-deputy shape above recurs between PEERS, not only between a person and their delegate:
+an agent with narrow clearance can reach what it cannot access directly by asking a broader agent to
+fetch or relay it instead.** A shared bus, queue, or inter-agent call that checks clearance against
+whoever makes the final privileged call — never against whoever originated the request — cannot tell
+a broad agent acting on its own behalf from the same agent acting as someone else's reach-extender.
+Every relay looks identical to an ordinary call.
+
+**The fix is the rule already stated above, carried across the hop: a request keeps its originating
+caller's identity through every relay, and is served at the ORIGINATOR's clearance, never the
+relayer's — no identity on the hop is refusal, not the relayer's own standing in its place.**
+
+**Scope:** any shared channel one agent can use to have another act for it — a bus, a shared inbox, a
+tool one agent exposes that a second one calls. **Where it is wrong:** a relay that re-authorizes the
+request under its own name, for a reason it records (a human-approved escalation, a declared on-behalf-
+of grant) is not laundering — the record is what tells the two apart, and a relay with no record of
+why it acted on another's behalf is the finding, whether or not that particular request was abusive.
 
 ## A redirect URI's wildcard must never be able to reach the authority
 
@@ -1052,3 +1097,30 @@ from a source that may omit fields, with or without waivers: a scanner with no w
 on an advisory URL fails open the same way. **Where it is wrong:** a field optional *in the domain*, or a permanent exemption declared as permanent, with a
 reason, and reviewed as such; the defect is absent silently equalling pass, and permanence smuggled
 in through a deadline field.
+
+## A dependency's release age is a gate, not a courtesy
+
+**A newly published package version is the cheapest moment to compromise a dependency**: a hijacked
+maintainer account, a typosquatted name, or a deliberately poisoned release has had the least possible
+time to be noticed, reported, and pulled before something downstream installs it. A floor on release
+age — refuse to adopt or bump to a version published within some window, seven days is a reasonable
+starting point, each organisation sets its own — buys exactly that detection window for free, trading a
+short delay on the newest release for the time most registries' own abuse reports take to surface.
+
+**The age that floors the gate is the NEWEST thing in the release, never its top-level publish date
+alone.** A release can be mutated after it first ships — a file added or replaced with no new version
+number — and a gate that reads only the version's original publish date lets that later content ride in
+on an already-trusted date. Flooring on the OLDEST file's date — the MAXIMUM age across a release's
+files — makes this worse, not better: one old file is enough to pass a release that also just gained a
+new one. Date every file the release carries, and floor on the latest, which is the MINIMUM age.
+
+**The gate fails CLOSED on a date it cannot read**, the same missing-field discipline *A gate that
+accepts exceptions bounds them, and a missing field is never "no finding"* above already requires of a
+scanner's findings, applied here to the one input this gate floors on: a registry that returns no
+publish timestamp for a version or any of its files, a network failure, or a malformed response is
+refused the same as a too-recent one, never silently treated as old enough to pass.
+
+**Scope:** automated dependency bumps and new package installs in a build or CI pipeline. **Where it
+is wrong:** a patch for an actively exploited vulnerability in a dependency already in use is the one
+update this floor should not block on age alone — route it through an explicit, logged override tied
+to the advisory, never a standing exemption, so the floor still holds for every ordinary bump.

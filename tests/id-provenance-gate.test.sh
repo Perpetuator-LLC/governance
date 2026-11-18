@@ -43,6 +43,45 @@ EOF
 
 echo "── id-provenance-gate"
 
+# --- 0. P1 LIVE regression (cisa c138162): a forge URL anchor "#issuecomment-N" starts with a
+#     non-alphanumeric character. Bounding its LEFT side (no digit immediately before "#") refused
+#     every citation of a tool's own returned html_url, because a forge URL always puts a PR/issue
+#     number directly before the anchor ("…/1368#issuecomment-N"). Digits generated at runtime so
+#     "unseen" is never accidentally true by a fixture collision elsewhere in this file.
+FULL_N=$(( RANDOM % 900000 + 100000 ))   # 6-digit id, minted and cited in full
+TRUNC_N="${FULL_N:0:5}"                  # the same id with its last digit dropped: a different id
+UNSEEN_N=$(( RANDOM % 900000 + 100000 )) # minted nowhere in any transcript below
+URL_SEEN="https://forge.example/owner/repo/pulls/1368#issuecomment-${FULL_N}"
+
+T0a="$TMP/t0a.jsonl"
+mktranscript "$T0a" "{\"type\":\"tool_result\",\"content\":\"posted: $URL_SEEN\"}"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see $URL_SEEN for context" "$T0a"); rc=$?
+[[ $rc -eq 0 ]] && pass "(1) a forge URL anchor is cited verbatim after the SAME URL anchor was seen: allowed" \
+  || fail "(1) a seen URL anchor cited verbatim was wrongly refused (rc=$rc): $out"
+
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c${FULL_N} for context" "$T0a"); rc=$?
+[[ $rc -eq 0 ]] && pass "(2) a URL anchor was seen; the short c-form is cited instead: allowed" \
+  || fail "(2) the short c-form of a seen URL anchor was wrongly refused (rc=$rc): $out"
+
+T0c="$TMP/t0c.jsonl"
+mktranscript "$T0c" "{\"type\":\"tool_result\",\"content\":\"posted as c${FULL_N}\"}"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see https://forge.example/owner/repo/pulls/1368#issuecomment-${FULL_N} for context" "$T0c"); rc=$?
+[[ $rc -eq 0 ]] && pass "(3) a short c-form was seen; the forge URL anchor is cited instead: allowed" \
+  || fail "(3) a URL anchor citing a seen short c-form id was wrongly refused (rc=$rc): $out"
+
+T0d="$TMP/t0d.jsonl"
+mktranscript "$T0d" '{"type":"tool_result","content":"unrelated"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see https://forge.example/owner/repo/pulls/1368#issuecomment-${UNSEEN_N} for context" "$T0d"); rc=$?
+[[ $rc -eq 2 ]] && pass "(4) an id minted nowhere, cited as a URL anchor: refused" \
+  || fail "(4) a wholly unseen id (URL-anchor form) was wrongly allowed (rc=$rc): $out"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c${UNSEEN_N} for context" "$T0d"); rc=$?
+[[ $rc -eq 2 ]] && pass "(4b) the same unseen id, cited in short c-form: refused" \
+  || fail "(4b) a wholly unseen id (short c-form) was wrongly allowed (rc=$rc): $out"
+
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see https://forge.example/owner/repo/pulls/1368#issuecomment-${TRUNC_N} for context" "$T0a"); rc=$?
+[[ $rc -eq 2 ]] && pass "(5) a truncated URL anchor (missing the real id's last digit) is refused" \
+  || fail "(5) a truncated URL anchor matched inside the longer real one (rc=$rc): $out"
+
 # --- 1. an id minted in an EARLIER tool result is allowed ---
 T1="$TMP/t1.jsonl"
 mktranscript "$T1" '{"type":"tool_result","content":"comment posted: https://forge/x/issues/9#issuecomment-76292"}'
@@ -98,6 +137,35 @@ mktranscript "$T1e2" "{\"type\":\"tool_result\",\"content\":\"commit $SHA_MIDWOR
 out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see 0bf5a69 for context" "$T1e2"); rc=$?
 [[ $rc -eq 2 ]] && pass "a 7-hex string found only MID-WORD inside a longer SHA (not at its start) is refused" \
   || fail "a mid-word hex substring was wrongly allowed as a SHA prefix (rc=$rc): $out"
+
+# --- 1f. AMBIGUOUS span, kept as two readings (cisa non-blocking note on #373, c138710): "c" + 7
+#     digits is both a valid short-comment id and a valid 8-char hex SHA prefix (coa's own example,
+#     "c4791436", an 8-char prefix of a real SHA). Checking only the first-matched kind refuses the
+#     citation whenever THAT reading's own provenance fails, even if the OTHER reading's provenance
+#     would have passed. Fix: allow if EITHER reading has provenance; block only if NEITHER does.
+#     Digits generated at runtime so no fixture collides with "unseen" by accident.
+SHA_DIGITS=$(( RANDOM % 9000000 + 1000000 ))              # 7 digits: "c$SHA_DIGITS" is 8 chars
+SHA_AMBIG="c${SHA_DIGITS}d9451234567890abcdef1234567890a" # 40 hex total, a real SHA "c$SHA_DIGITS" prefixes
+COMMENT_DIGITS=$(( RANDOM % 9000000 + 1000000 ))          # a SEPARATE 7-digit id, minted as a comment only
+NEITHER_DIGITS=$(( RANDOM % 9000000 + 1000000 ))          # minted nowhere, in either reading
+
+T1f_sha="$TMP/t1f-sha.jsonl"
+mktranscript "$T1f_sha" "{\"type\":\"tool_result\",\"content\":\"commit $SHA_AMBIG\"}"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c${SHA_DIGITS} for context" "$T1f_sha"); rc=$?
+[[ $rc -eq 0 ]] && pass "(A) an ambiguous c+7digit span read as a SHA PREFIX of a seen full SHA: allowed" \
+  || fail "(A) a real SHA prefix in c+digits form was wrongly refused as an absent comment id (rc=$rc): $out"
+
+T1f_comment="$TMP/t1f-comment.jsonl"
+mktranscript "$T1f_comment" "{\"type\":\"tool_result\",\"content\":\"comment posted: https://forge.example/x/issues/9#issuecomment-${COMMENT_DIGITS}\"}"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c${COMMENT_DIGITS} for context" "$T1f_comment"); rc=$?
+[[ $rc -eq 0 ]] && pass "(B) an ambiguous c+7digit span read as a minted COMMENT id: allowed" \
+  || fail "(B) a real comment id in c+digits form was wrongly refused as an absent SHA (rc=$rc): $out"
+
+T1f_neither="$TMP/t1f-neither.jsonl"
+mktranscript "$T1f_neither" '{"type":"tool_result","content":"unrelated"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c${NEITHER_DIGITS} for context" "$T1f_neither"); rc=$?
+[[ $rc -eq 2 ]] && pass "(C) an ambiguous c+7digit span minted as NEITHER reading: refused" \
+  || fail "(C) a span seen as neither a comment id nor a SHA was wrongly allowed (rc=$rc): $out"
 
 # --- 2. the SAME id with no earlier occurrence is refused ---
 T2="$TMP/t2.jsonl"
