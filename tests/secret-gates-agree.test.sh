@@ -81,6 +81,11 @@ for p in 'app/$(echo .env.example ).local' 'app/$(echo .env.example;).local' 'ap
          'app/$( (x) .env.example ).local'; do
   check BLOCK "$p"
 done
+# r10 (governance#301 c168216): ANY `$` keeps every template a match, on both gates: bash 5.3's
+# `${ cmd; }` (coa c116639 finding 1), a default, a plain parameter.
+for p in 'app/${ echo .env.example; }.local' 'app/${u:-.env.example}.local' 'app/$D.env.example'; do
+  check BLOCK "$p"
+done
 check ALLOW "app/'.env.example'"
 check ALLOW 'app/".env.example"'
 for p in app/.env.example app/.env.sample app/.env.template app/.ENV.EXAMPLE \

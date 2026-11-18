@@ -134,7 +134,7 @@ cases = [
     # decoding `$'\x..'` needs python3, so without it this one is read as written (PY: BLOCK only with python3)
     (PY, "cat $'.e\\x6ev'"),
     # ... a quoted template alone is still a template, and a quote INSIDE double quotes stays a character
-    (FP, f"cat '{E}.example'"), (FP, f'cat "{E}.example"'), (FP, f"cat $'{E}.example'"),
+    (FP, f"cat '{E}.example'"), (FP, f'cat "{E}.example"'),
     (FP, f"git commit -m \"docs: mention '{E}.example'\""), (FP, f"git commit -m \"the {E}.example's role\""),
     # LEG PINS: each row is refused by ONE spelling only, so a gate without that spelling fails here.
     #   written (quotes removed, every `\` kept): a Windows path whose last part starts `process.env`;
@@ -180,6 +180,42 @@ cases = [
     # commands keep the allowance, and a `)` followed by `;`, `>`, `<` or `&` ends the template there.
     (FP, f"(cat {E}.example); ls"), (FP, f"diff <(cat {E}.example) <(cat {E}.sample)"),
     (FP, f"(cat {E}.example)>out.txt"), (FP, f"(cat {E}.example)& wait"),
+    # NAME BUILDERS (r10, cisa c168216 on governance#301, option (a) of c117502). A template that is DATA
+    # for a later step reaches the real file. Each row below reads `.env.example.local`: main refused
+    # it, r9 ALLOWED it (coa c116639). A command holding a builder now keeps every template a match.
+    #   finding 1, bash 5.3 function substitution `${ cmd; }`:
+    (BLOCK, f"cat ${{ echo {E}.example; }}.local"), (BLOCK, f"cat ${{ printf %s {E}.example; }}.local"),
+    (BLOCK, f'cat "${{ echo {E}.example; }}".local'),
+    #   finding 2, a name built from the template by a later step:
+    (BLOCK, f"xargs -I% cat %.local <<< {E}.example"), (BLOCK, f"xargs -I% cat %.local <<<{E}.example"),
+    (BLOCK, f"bash -c 'cat $0.local' {E}.example"), (BLOCK, f"sh -c 'cat \"$1\".local' x {E}.example"),
+    (BLOCK, f"printf 'cat %s.local' {E}.example | bash"),
+    (BLOCK, f"printf 'cat %s.local' {E}.example > s.sh; source s.sh"),
+    (BLOCK, f"cat {E}.example > /dev/null; cat $_.local"),
+    (BLOCK, f"f() {{ cat $1.local; }}; f {E}.example"),
+    # COST, fail closed: a builder refuses the plain template reads beside it too. Run the read alone.
+    (BLOCK, f"for f in {E}.example; do cat $f; done"), (BLOCK, f"cat $'{E}.example'"),
+    (BLOCK, f"awk 1 {E}.example"), (BLOCK, f"grep -I KEY {E}.example"),
+    # TRIGGER PINS: each row holds ONE trigger and nothing else, so dropping that trigger from the gate
+    # turns the row red (the mutant check). `$` and the backtick are pinned by rows above.
+    (BLOCK, f"cat <<< {E}.example"),                                # 3: a here-string
+    (BLOCK, f"wc -l <<'X'\n{E}.example\nX"),                         # 3: a heredoc a program reads as input
+    (BLOCK, f"f() {{ cat; }}; f {E}.example"), (BLOCK, f"function g {{ cat; }}; g {E}.example"),   # 5
+    (BLOCK, f". {E}.example"), (BLOCK, f"ls; . ./s {E}.example"),   # 4: `.` as a command
+    (BLOCK, f"find app -name {E}.example -exec cat {{}}.local ';'"),
+    (BLOCK, f"find app -name {E}.example -execdir cat {{}}.local ';'"),
+    (BLOCK, f"xargs cat < {E}.example"), (BLOCK, f"/usr/bin/env cat {E}.example"),
+    (BLOCK, f"b''ash -c x {E}.example"),                            # 4: a word split by quotes still counts
+    # one pin per word, after `true;` so the separate rule refusing a LEADING `eval` cannot mask its pin
+] + [(BLOCK, f"true; {w} -c x {E}.example") for w in (
+    "bash", "sh", "zsh", "dash", "ksh", "eval", "source", "exec", "env",
+    "python", "python3", "perl", "ruby", "node", "awk", "parallel")] + [
+    # ... and a word counts only as a whole word: these hold no builder and keep the allowance
+    (FP, f"ls python/ node_modules/ {E}.example"), (FP, f"cat scripts/build.sh {E}.example"),
+    (FP, f"cp {E}.example ssh-notes.txt"), (FP, f"find app -name {E}.example"),
+    (FP, f"docker compose --env-file {E}.example config"),
+    #   a cat/tee heredoc body is removed data, so its `<<` is not a builder
+    (FP, f"cat > notes.md <<'EOF'\nsee the docs\nEOF\ncat {E}.example"),
     # COST, fail closed: a backslash path INSIDE a template directory is refused, because bash would read
     # it as `C:proj.env.examplenotes.txt` (r4 allowed it). Quote it or use `/`.
     (BLOCK, f"cat C:\\proj\\{E}.example\\notes.txt"),

@@ -154,7 +154,7 @@ SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
 SECRET_TEMPLATES='example|sample|template'
 strip_secret_templates() {
   local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>].*|\\)+(\$|[[:space:];&|<>].*))\$" nocase=0 mark=$'\001'
-  case "$s" in *'$('*|*'`'*) printf '%s' "$s"; return 0 ;; esac   # a substitution: no template is removed
+  case "$s" in *'$'*|*'`'*) printf '%s' "$s"; return 0 ;; esac   # a `$` or a backtick: no template is removed
   shopt -q nocasematch && nocase=1
   shopt -s nocasematch
   while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${mark}${BASH_REMATCH[3]}"; done

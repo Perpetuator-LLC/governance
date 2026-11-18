@@ -203,7 +203,7 @@ SECRET_NAME='\.[eE][nN][vV]([^A-Za-z]|[rR][cC]|$)'
 SECRET_TEMPLATES='example|sample|template'
 strip_secret_templates() {
   local s="$1" re="^(.*)\\.env\\.(${SECRET_TEMPLATES})(\$|[[:space:]\"'/;&|<>].*|\\)+(\$|[[:space:];&|<>].*))\$" nocase=0 mark=$'\001'
-  case "$s" in *'$('*|*'`'*) printf '%s' "$s"; return 0 ;; esac   # a substitution: no template is removed
+  case "$s" in *'$'*|*'`'*) printf '%s' "$s"; return 0 ;; esac   # a `$` or a backtick: no template is removed
   shopt -q nocasematch && nocase=1
   shopt -s nocasematch
   while [[ "$s" =~ $re ]]; do s="${BASH_REMATCH[1]}${mark}${BASH_REMATCH[3]}"; done
@@ -349,8 +349,29 @@ PY
 # Only a WHOLE template name is removed: it must end the text or be followed by whitespace, a quote,
 # `/` or a shell separator. A template prefix followed by more name (`.env.example.local`,
 # `.env.sample2`) is a real file, refused here and by the write gate alike.
-# SUBSTITUTION: a command holding `$(` or a backtick ANYWHERE gets NO template removal (and no code-
-# reference removal below), so any `.env` name in it is refused, as on main. What a substitution
+# NAME BUILDERS (r10, cisa ruling c168216 on governance#301, option (a) of c117502: fail closed). The
+# template allowance is an exemption from the floor, so it holds only where the gate can see the
+# template used as a literal file argument. A command holding ANY of these gets NO template removal
+# and no code-reference removal, so any `.env` name in it is refused, as on main:
+#   1. any `$`: a parameter (`$_`, `$1`), a default (`${u:-…}`), bash 5.3's `${ cmd; }` and `${|…}`,
+#      a substitution `$( )`, and `$'…'` quoting too;
+#   2. a backtick;
+#   3. `<<<`, or a `<<` whose owner is not `cat`/`tee` (a `cat`/`tee` heredoc body is data, removed above);
+#   4. an interpreter or name-builder word: bash sh zsh dash ksh eval source exec env xargs python
+#      python3 perl ruby node awk parallel, the flags -exec -execdir -I, and `.` as a command;
+#   5. a function definition (`name()`, `function name`).
+# Checked on the text after the data-heredoc removal, as given AND in each spelling below (so `b''ash`
+# counts), before any template is removed. Each of these read `.env.example.local` and r9 allowed it
+# (coa c116639): `cat ${ echo .env.example; }.local`, `xargs -I% cat %.local <<< .env.example`,
+# `bash -c 'cat $0.local' .env.example`, `printf 'cat %s.local' .env.example | bash`,
+# `cat .env.example > /dev/null; cat $_.local`, `f() { cat $1.local; }; f .env.example`.
+#   COST: every template read in a command with a builder is refused, including harmless ones:
+#   `for f in .env.example; do cat $f; done`, `cat $'.env.example'`, `awk 1 .env.example`,
+#   `grep -I KEY .env.example`. Run the template read as its own plain command.
+#   LIMIT: item 4 is a list and will be one word behind. Its backstop is items 1 to 3: a name built
+#   by an unlisted program still has to reach it through `$`, a pipe into a listed word, or stdin.
+# SUBSTITUTION (r9, now item 1 and 2 above): a command holding `$(` or a backtick ANYWHERE gets NO
+# template removal. What a substitution
 # prints becomes the name, so a template inside one reaches the real file however it is spelled:
 # `cat $(echo .env.example).local`, `$(echo .env.example ).local`, `$(printf %s.local .env.example)`,
 # `$(case a in a) echo .env.example;; esac).local` all read `.env.example.local`. r1 to r7 patched one
@@ -440,9 +461,27 @@ def spell(s):
         else:
             out.append(c); i += 1
     return "".join(out)
-subst = "$(" in s or "`" in s   # a command substitution anywhere: nothing is removed (see SUBSTITUTION above)
+# NAME BUILDERS (r10, see SUBSTITUTION above): any one of these anywhere, in the text as given OR in
+# this spelling, and nothing is removed. Words and flags count as a whole word only, so `python/`,
+# `node_modules`, `build.sh`, `ssh` and `--env-file` are not builders; `/usr/bin/env` is.
+WORDS = ("bash", "sh", "zsh", "dash", "ksh", "eval", "source", "exec", "env", "xargs",
+         "python", "python3", "perl", "ruby", "node", "awk", "parallel")
+WORD_RX = re.compile(r"(?<![\w.-])(?:" + "|".join(WORDS) + r")(?=\Z|[\s;&|()<>\x27\x22`])")
+FLAG_RX = re.compile(r"(?<![\w-])-(?:exec|execdir|I)(?![\w-])")
+DOT_RX = re.compile(r"(?:\A|[;&|({\n])\s*\.(?=[ \t])")              # `.` as a command
+FUNC_RX = re.compile(r"(?<![\w.-])[A-Za-z_][\w-]*\s*\(\s*\)|(?<![\w.-])function\s+[A-Za-z_]")
+def code_heredoc(t):  # a `<<` whose owner is not cat/tee: its body is input to a program, never removed data
+    for m in re.finditer(r"(?<!<)<<(?!<)", t):
+        words = re.split(r"&&|\|\||[;|&\n]", t[:m.start()])[-1].split()
+        if not words or words[0] not in ("cat", "tee"):
+            return True
+    return False
+def builds_a_name(t):
+    return ("$" in t or "`" in t or "<<<" in t or code_heredoc(t)
+            or bool(WORD_RX.search(t) or FLAG_RX.search(t) or DOT_RX.search(t) or FUNC_RX.search(t)))
+builder = builds_a_name(s)
 s = spell(s)
-if not subst:
+if not (builder or builds_a_name(s)):
     s = re.sub(r"(?<![\w./\\-])(?:process|import\.meta)\.env(?![\w-])", "", s)
     s = re.sub(r"\.env\.(" + tmpl + r")(?=\Z|[\s\"\x27/;&|<>]|\)+(?:\Z|[\s;&|<>]))", "", s, flags=re.IGNORECASE)
 print(s, end="")
