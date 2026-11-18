@@ -1087,4 +1087,6 @@ repository's CI runs inside its own isolated runners are its pipeline's concern.
 
 **Where it is wrong:** a repository whose hooks are all local, running only its own committed
 scripts with tools already on the machine, has no third-party upstream to vet. Conditions 1, 2, 3 and
-6 then have nothing to check, and activation needs only conditions 4 and 5.
+6 then have nothing to check, and activation needs only conditions 4 and 5, **unless a local hook
+fetches anything at run time**: `npx` without a lockfile, a `pip install`, `go run` of a remote module.
+A hook that downloads when it runs is back under condition 3.
