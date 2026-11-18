@@ -117,14 +117,11 @@ fi
 # `--force-with-lease`, `--force-if-includes`, `-f`, or a `+`-prefixed refspec (`push origin +main`).
 GIT_SEG='(^|[^[:alnum:]_-])git([[:space:]]+[^;&|]*)?[[:space:]]'
 
-# Block force pushes
+# Force pushes. This plain pattern runs on every command; the tokeniser below adds what a push does to the
+# remote by other spellings (#268), and both refuse at ONE place, after it.
+force_hit=""
 if echo "$cmd" | grep -qE "${GIT_SEG}push([[:space:]][^;&|]*)?[[:space:]]((--force[a-z-]*|-f)([[:space:]=]|\$)|\+[^[:space:];&|])"; then
-  deny force-push "Force push requires manual confirmation. Run this command yourself if intended."
-fi
-
-# Block hard resets
-if echo "$cmd" | grep -qE "${GIT_SEG}reset([[:space:]][^;&|]*)?[[:space:]]--hard([[:space:]]|\$)"; then
-  deny hard-reset "Hard reset requires manual confirmation. Run this command yourself if intended."
+  force_hit="it forces the update (--force, -f, or a refspec starting with +)."
 fi
 
 # Push to the DEFAULT branch, and a commit or push that SKIPS THE GIT HOOKS (#269, #270).
@@ -252,13 +249,21 @@ if any(isinstance(t, W) and t.text in ("{", "}") and t.unq for t in toks):
 # GIT_CONFIG_COUNT / GIT_CONFIG_KEY_<n> / GIT_CONFIG_VALUE_<n>. An assignment that carries core.hooksPath
 # there is the same bypass as `git -c core.hooksPath=...`, whether it prefixes the call or is exported;
 # one that carries an alias or a push refspec is the same as `git -c alias.*` below.
-RUNS = r"alias\.|remote\.[^\s=]*\.(push|mirror)\b|push\.default\b"
+RUNS = r"alias\.|remote\.[^\s=]*\.(push|mirror)\b|push\.\w+"
 if re.search(r"GIT_CONFIG", cmd) and re.search(r"core\.hookspath", cmd, re.I):
     print("hook-bypass\tsetting core.hooksPath through a GIT_CONFIG_* environment variable points git away from this repository's hooks, so they do not run.")
     sys.exit(0)
-if re.search(r"GIT_CONFIG", cmd) and re.search(RUNS, cmd, re.I):
-    print("git-config\ta GIT_CONFIG_* environment variable defines an alias or a push refspec, so this gate cannot see what git will run or where it pushes.")
-    sys.exit(0)
+if re.search(r"GIT_CONFIG", cmd):
+    m = re.search(RUNS, cmd, re.I)
+    if m and m.group(0).lower().startswith("alias"):
+        print("git-alias\ta GIT_CONFIG_* environment variable defines an alias, so this gate cannot see what git will run.")
+        sys.exit(0)
+    if m:
+        print("push-config\ta GIT_CONFIG_* environment variable sets `%s`, which changes where or how git pushes." % m.group(0))
+        sys.exit(0)
+# The same environment can set ANY key, remote.<name>.mirror among them, or swap the config files read
+# (#268). Its value is not followed through `export`, so a push in a command that sets one is refused.
+env_cfg = re.search(r"\bGIT_CONFIG_(COUNT|KEY_\w*|PARAMETERS|GLOBAL|SYSTEM)\s*=", cmd)
 SEP = {"&&", "||", ";", ";;", "|", "&", "|&", "\n"}
 segs, cur = [], []
 for t in toks:
@@ -268,11 +273,33 @@ for t in toks:
         cur.append(t)
 segs.append(cur)
 
+# `echo git push --mirror` prints text and runs nothing, but text that reaches a shell, `eval`, `xargs`
+# or the like DOES run (#268): an echo naming git is judged only when no such sink is in the command.
+SINKS = {"sh", "bash", "zsh", "dash", "ksh", "mksh", "fish", "eval", "source", ".", "xargs", "exec",
+         "env", "sudo", "command", "nohup", "time", "nice", "timeout", "watch", "parallel"}
+def seg_head(seg):
+    ws = [t.text for t in seg if isinstance(t, W)]
+    ws = [w for w in ws if not re.match(r"[A-Za-z_]\w*=", w)]
+    return re.split(r"[/\\]", ws[0])[-1] if ws else ""
+sink = any(seg_head(s) in SINKS for s in segs)
+
+def is_alias(key):                                # git config keys are case-insensitive
+    key = key.lower()
+    return key == "alias" or key.startswith("alias.")
+
+def is_push_key(key):
+    key = key.lower()
+    return key == "push" or key.startswith("push.") or bool(re.fullmatch(r"remote\..+\.(mirror|push)", key))
+
+ALIAS_WHY = "an alias can stand for any command, `push --mirror` among them, and a later `git <alias>` passes every push check."
+PUSHCFG_WHY = "it changes how a later `git push` behaves (mirror, refspecs, push.*), out of sight of the push checks."
+# A push that rewrites or deletes remote refs (#268), besides --force and a `+` refspec: --mirror (also
+# refused below as pushing the default branch), --delete, --prune, `-f`/`-d` inside a bundle of short
+# flags, and a refspec with an empty source (`:dst`). git accepts any unambiguous prefix of a long option.
+FORCE_LONG = ("--force", "--force-with-lease", "--force-if-includes", "--mirror", "--delete", "--prune")
+
 def no_verify(a):                                 # git accepts any unambiguous prefix of a long option
     return a.startswith("--no-ver") and "--no-verify".startswith(a.split("=")[0])
-
-def runs_key(key):                                # a config key that changes what git runs or pushes
-    return re.match(RUNS, key, re.I) is not None
 
 def dest_protected(spec):
     spec = spec[1:] if spec.startswith("+") else spec
@@ -297,6 +324,11 @@ COMMIT_VAL = {"-m", "-F", "-c", "-C", "-t", "--message", "--file", "--author", "
               "--reuse-message", "--reedit-message", "--fixup", "--squash", "--template", "--trailer",
               "--cleanup", "--pathspec-from-file"}
 PUSH_VAL = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+CONFIG_VAL = {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value", "--url"}
+CONFIG_READ = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool",
+               "--list", "-l"}
+CONFIG_CHANGE = {"--add", "--replace-all", "--unset", "--unset-all", "--rename-section", "--remove-section",
+                 "--edit", "-e"}
 
 RESTORE_VAL = {"-s", "--source", "--conflict"}
 CHECKOUT_VAL = {"-b", "-B", "--orphan", "--conflict"}
@@ -344,6 +376,8 @@ def check(seg):
         else:
             dirs = None
         return None
+    if head.text in ("echo", "printf") and not sink:
+        return None                               # prints text; nothing in the command runs it
     if not re.search(r"(^|/|\\)git(\.exe)?$", head.text, re.I):
         # Not a git invocation. If git is named inside it anyway (`bash -c "git push ..."`,
         # `xargs git ...`, `env git ...`), this tokeniser cannot see what runs: let the patterns decide.
@@ -373,11 +407,13 @@ def check(seg):
             keyend = val.find("=")
             if vw.dyn is not None and (keyend < 0 or vw.dyn - off < keyend):
                 return ("git-unreadable", UNREAD % (val, "in the name of a `%s` setting" % opt))
-            key = val.split("=")[0]
-            if key.lower() == "core.hookspath":
+            key = val.split("=")[0].lower()
+            if key == "core.hookspath":
                 return ("hook-bypass", "`git -c core.hooksPath=...` points git away from this repository's hooks, so they do not run.")
-            if runs_key(key):
-                return ("git-config", "`git %s %s` defines an alias or a push refspec on the command line, so this gate cannot see what git will run or where it pushes." % (opt, val))
+            if is_alias(key):                     # any alias, however harmless it looks (#268)
+                return ("git-alias", "`git %s %s` defines an alias inline: %s" % (opt, val, ALIAS_WHY))
+            if is_push_key(key):
+                return ("push-config", "`git %s %s` overrides push configuration: %s" % (opt, val, PUSHCFG_WHY))
             if "!" in val or "git" in val:
                 doubt()                           # a value that runs a shell command
         j += 1
@@ -389,17 +425,50 @@ def check(seg):
     if sub == "config":
         if any(x.unq for x in args):
             return ("git-unreadable", UNREAD % (next(x.text for x in args if x.unq), "unquoted, in a `git config` call"))
+        # Which ACTION, on which key. A read (`--get*`, `--list`, `get`, `list`, a key with no value) is
+        # never refused. Any change to `alias.*` is (#268: set, --add, --replace-all, --unset*, a section
+        # renamed into or out of `alias`), and so is `--edit`, whose change cannot be inspected. So is a
+        # write to push.*, remote.<name>.mirror or remote.<name>.push.
         t = [x.text for x in args]
-        pos = [x for x in t if not x.startswith("-")]
-        if any(x in ("--get", "--get-all", "--get-regexp", "--unset", "--unset-all", "--list", "-l") for x in t):
+        opts, pos, k = [], [], 0
+        while k < len(t):
+            x = t[k]
+            if x.startswith("-") and len(x) > 1:
+                opts.append(x.split("=")[0])
+                if x in CONFIG_VAL:
+                    k += 1
+            else:
+                pos.append(x)
+            k += 1
+        if pos and pos[0] in ("get", "list"):
             return None
-        if pos and pos[0] in ("get", "unset", "list"):
+        if pos and pos[0] in ("set", "unset", "rename-section", "remove-section", "edit"):
+            action, keys = pos[0], pos[1:]
+        elif any(o in CONFIG_READ for o in opts):
             return None
-        for k, x in enumerate(pos[:-1]):          # a key followed by a value: a SET
-            if x.lower() == "core.hookspath":
-                return ("hook-bypass", "`git config core.hooksPath ...` points git away from this repository's hooks, so they stop running for every later commit and push.")
-            if runs_key(x):
-                return ("git-config", "`git config %s ...` defines an alias or a push refspec, which every later git call obeys out of this gate's sight." % x)
+        elif any(o in CONFIG_CHANGE for o in opts):
+            action, keys = next(o for o in opts if o in CONFIG_CHANGE).lstrip("-"), pos
+        elif len(pos) >= 2:
+            action, keys = "set", pos
+        else:
+            return None                           # `git config <key>` reads it
+        action = "edit" if action == "e" else action
+        keys = [x.lower() for x in keys]
+        if action == "edit":
+            return ("git-alias", "`git config --edit` opens an editor, so what it changes cannot be checked: %s" % ALIAS_WHY)
+        if action in ("rename-section", "remove-section"):
+            if any(is_alias(x) for x in keys):
+                return ("git-alias", "`git config --%s %s` changes the alias section: %s" % (action, " ".join(keys), ALIAS_WHY))
+            if action == "rename-section" and any(x == "push" or x.startswith("remote.") for x in keys):
+                return ("push-config", "`git config --rename-section %s` moves push configuration: %s" % (" ".join(keys), PUSHCFG_WHY))
+            return None
+        key = keys[0] if keys else ""
+        if is_alias(key):
+            return ("git-alias", "`git config %s %s` changes an alias: %s" % (action, key, ALIAS_WHY))
+        if is_push_key(key):
+            return ("push-config", "`git config %s %s` changes push configuration: %s" % (action, key, PUSHCFG_WHY))
+        if key == "core.hookspath" and action in ("set", "add", "replace-all") and len(keys) >= 2:
+            return ("hook-bypass", "`git config core.hooksPath ...` points git away from this repository's hooks, so they stop running for every later commit and push.")
         return None
     if sub == "commit":
         k = 0
@@ -432,6 +501,8 @@ def check(seg):
             k += 1
         return None
     if sub == "push":
+        if env_cfg:
+            return ("push-config", "the command sets %s, which can change how this `git push` behaves: %s" % (env_cfg.group(0).rstrip("= "), PUSHCFG_WHY))
         pos, repo_opt, k = [], False, 0
         while k < len(args):
             w = args[k]; x = w.text
@@ -448,6 +519,10 @@ def check(seg):
                 return ("push-default-branch", "`git push %s` pushes the default branch too." % x)
             if x.startswith("-"):
                 name = x.split("=")[0]
+                if len(name) > 2 and name.startswith("--") and any(name.startswith(d) or d.startswith(name) for d in FORCE_LONG):
+                    return ("force-push", "`git push %s` rewrites or deletes remote refs." % x)
+                if re.fullmatch(r"-[A-Za-z0-9]*[fd][A-Za-z0-9]*", x):
+                    return ("force-push", "`git push %s` carries -f (force) or -d (delete)." % x)
                 repo_opt = repo_opt or name == "--repo"
                 if x in PUSH_VAL:
                     k += 1
@@ -460,6 +535,9 @@ def check(seg):
         for w in specs:
             if w.dyn is not None and not lit_dst(w):
                 return ("push-default-branch", "this gate cannot tell where `%s` pushes: it holds an expansion, which may name a protected default branch." % w.text)
+            if w.text.startswith(("+", ":")):
+                return ("force-push", "the refspec `%s` %s." % (w.text, "forces the update" if w.text[0] == "+" else "deletes the remote ref"))
+        for w in specs:
             p = dest_protected(w.text)
             if p:
                 return ("push-default-branch", "`%s` pushes to `%s`, a protected default branch." % (w.text, p))
@@ -573,7 +651,38 @@ if printf '%s' "$cmd" | grep -qiE '(^|[^[:alnum:]_-])git([^[:alnum:]_-]|$)'; the
       || printf '%s' "$flat" | grep -qiE "(^|[;&|[:space:]])[\"']?[\$\`][^[:space:];&|]*[[:space:]]+([^;&|]*[[:space:]])?push([[:space:]]|\$)"; then
       git_hit=$'push-default-branch\tit pushes to a protected default branch ('"$PROTECTED_BRANCHES"'), or this gate cannot tell where it pushes'
     fi
+    # #268 on a doubt: a push that deletes or rewrites remote refs, an alias defined or changed, push
+    # configuration overridden. Each over-matches, as above (a read such as `config --get alias.x` too).
+    CFGOPT="(^|[^[:alnum:]_-])git[[:space:]]([^;&|]*[[:space:]])?(-c[[:space:]]*|--config-env[=[:space:]])[\"']?"
+    PUSHKEY="(push\.|remote\.[^[:space:]=\"']*\.(mirror|push)([[:space:]=\"']|\$))"
+    if printf '%s' "$flat" | grep -qE "${GIT_SEG}push([[:space:]][^;&|]*)?[[:space:]][\"']?(--(delete|prune)([[:space:]=\"';&|]|\$)|-[A-Za-z0-9]*[fd][A-Za-z0-9]*([[:space:]\"';&|]|\$)|[+:])"; then
+      force_hit="it deletes or rewrites remote refs (--delete, --prune, -d or -f in a flag bundle, or a refspec starting with + or :)."
+    fi
+    if [[ -z "$git_hit" ]]; then
+      if printf '%s' "$flat" | grep -qiE "${CFGOPT}alias\." \
+         || printf '%s' "$flat" | grep -qiE "${GIT_SEG}config([[:space:]][^;&|]*)?[[:space:]][\"']?(alias([.[:space:]\"']|\$)|--edit|-e([[:space:]\"']|\$)|edit([[:space:]]|\$))"; then
+        git_hit=$'git-alias\tit defines or changes a git alias (or edits the config in an editor).'
+      elif printf '%s' "$flat" | grep -qiE "${CFGOPT}${PUSHKEY}" \
+         || printf '%s' "$flat" | grep -qiE "${GIT_SEG}config([[:space:]][^;&|]*)?[[:space:]][\"']?${PUSHKEY}" \
+         || { printf '%s' "$flat" | grep -qE 'GIT_CONFIG_(COUNT|KEY_|PARAMETERS|GLOBAL|SYSTEM)' \
+              && printf '%s' "$flat" | grep -qE "${GIT_SEG}push([[:space:];&|\"']|\$)"; }; then
+        git_hit=$'push-config\tit overrides push configuration (push.*, remote.<name>.mirror or .push, or a GIT_CONFIG_* variable around a push).'
+      fi
+    fi
   fi
+fi
+# A direct write to a repository's config file is the same change as `git config`, unread (#268): a
+# redirect into it, `tee` onto it, `sed -i` on it. Reading it (`cat .git/config`) is not refused.
+if [[ "$git_hit" != *$'\t'* ]] && printf '%s' "$cmd" | tr '\n\r' '  ' | grep -qE \
+  "(>|>>|>\|)[[:space:]]*[\"']?[^[:space:];&|<>\"']*\.git/config([\"'[:space:];&|)]|\$)|(^|[^[:alnum:]_-])tee[[:space:]]([^;&|]*[[:space:]])?[\"']?[^[:space:];&|\"']*\.git/config([\"'[:space:];&|)]|\$)|(^|[^[:alnum:]_-])sed[[:space:]]([^&|]*[[:space:]])?(-[A-Za-z]*i|--in-place)[^&|]*\.git/config([\"'[:space:];&|)]|\$)"; then
+  git_hit=$'push-config\tit writes .git/config directly, which can set an alias, remote.<name>.mirror or push.* unseen.'
+fi
+if [[ -n "$force_hit" || "$git_hit" == force-push* ]]; then
+  [[ "$git_hit" == force-push* ]] && force_hit="${git_hit#*$'\t'}"
+  deny force-push "Force push requires manual confirmation: $force_hit Run this command yourself if intended."
+fi
+if echo "$cmd" | grep -qE "${GIT_SEG}reset([[:space:]][^;&|]*)?[[:space:]]--hard([[:space:]]|\$)"; then
+  deny hard-reset "Hard reset requires manual confirmation. Run this command yourself if intended."
 fi
 case "$git_hit" in
   push-default-branch*)
@@ -588,6 +697,10 @@ case "$git_hit" in
     deny git-config "Changing what git runs: ${git_hit#*$'\t'} Run the git command you mean directly. Run this yourself if intended." ;;
   git-unreadable*)
     deny git-unreadable "Unreadable git command: this gate ${git_hit#*$'\t'} Run this yourself if intended." ;;
+  push-config*)
+    deny push-config "Changing what git runs, and how git push behaves: ${git_hit#*$'\t'} Push options belong on the push itself, where the force-push and default-branch checks can read them. Run this yourself if intended." ;;
+  git-alias*)
+    deny git-alias "Changing what git runs, by defining or changing a git alias: ${git_hit#*$'\t'} An alias hides the command it runs from this gate, so it is refused whatever it holds. Run this yourself if intended." ;;
 esac
 
 # Discarding UNCOMMITTED changes to a path (#256). `git checkout [<rev>] -- <paths>` and `git restore
