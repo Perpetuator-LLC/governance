@@ -29,6 +29,17 @@ jobs:
             fi
           fi
           python3 -c 'import yaml; print("PyYAML", yaml.__version__)'
+          # jq: the gate suites' jq-only (no python3) leg. Without it that leg is NOT RUN, which now
+          # fails the suite (tests/lib/legs.sh) instead of passing it unchecked.
+          if ! command -v jq >/dev/null 2>&1; then
+            if command -v apt-get >/dev/null 2>&1; then
+              SUDO=""; [ "$(id -u)" = 0 ] || SUDO="sudo"
+              $SUDO apt-get update -qq && $SUDO apt-get install -y -qq jq
+            elif command -v apk >/dev/null 2>&1; then
+              apk add --no-cache jq
+            fi
+          fi
+          jq --version
           command -v git >/dev/null || { echo "::error::git missing"; exit 1; }
 
       - name: Parse-check every script
