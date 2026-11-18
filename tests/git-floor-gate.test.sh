@@ -9,7 +9,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GATE="$ROOT/hooks/bash-safety-gate.sh"
+GATE="${GATE:-$ROOT/hooks/bash-safety-gate.sh}"   # GATE= points the suite at a copy (mutants)
 [[ -f "$GATE" ]] || { echo "FAIL: $GATE missing"; exit 1; }
 
 TMP=$(mktemp -d) || exit 1
@@ -22,8 +22,12 @@ fail() { printf '  FAIL  %s\n' "$1"; fails=$((fails + 1)); }
 bash_json() { printf '{"tool_name":"Bash","tool_input":{"command":%s}}' \
   "$(printf '%s' "$1" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"; }
 
+# These rows are about how BASH reads a command, so the gate is told the harness shell is bash. Under
+# zsh (the macOS login default) the separate zsh-trap rule refuses `"$H:r…"` on its own, correctly
+# (coa c120993 on PR 291): that case has its own row below, run with a zsh harness.
+HARNESS_SHELL=/bin/bash
 run() {  # run <command-text> -> exit code; BLOCKED line (if any) in $TMP/err
-  printf '%s' "$(bash_json "$1")" | bash "$GATE" >"$TMP/out" 2>"$TMP/err"
+  printf '%s' "$(bash_json "$1")" | GOVERNANCE_HARNESS_SHELL="$HARNESS_SHELL" bash "$GATE" >"$TMP/out" 2>"$TMP/err"
   echo $?
 }
 
@@ -157,6 +161,9 @@ allowed 'git config --get alias.p'
 allowed 'git log stash@{0}'
 allowed 'git push origin feeder/heads-main'
 allowed 'git push origin "$H:refs/heads/feeder-x"'   # git splits at the LAST colon: a literal destination
+HARNESS_SHELL=/bin/zsh   # the mirror: under zsh, `$H:r` is the `:r` modifier, so the zsh-trap rule refuses it
+blocked_as 'git push origin "$H:refs/heads/feeder-x"' "zsh reads"
+HARNESS_SHELL=/bin/bash
 blocked_as 'git push origin "$H:main"' "$PUSH"
 allowed "git commit -m \"\$(cat <<'MSG'
 subject with \"quotes\"
