@@ -358,7 +358,11 @@ PY
 #   2. a backtick;
 #   3. `<<<`, or a `<<` whose owner is not `cat`/`tee` (a `cat`/`tee` heredoc body is data, removed above);
 #   4. an interpreter or name-builder word: bash sh zsh dash ksh eval source exec env xargs python
-#      python3 perl ruby node awk parallel, the flags -exec -execdir -I, and `.` as a command;
+#      perl ruby node pypy parallel, in ANY CASE and with an optional version suffix (`BASH`, `bash5`,
+#      `python3`, `python3.12`, `perl5.36`, `pypy3`): a case-insensitive file system runs `BASH` as
+#      bash, and r10's exact-case whole-word match let these build a real name main refuses (r11);
+#      any word ending in `awk` (`AWK`, `gawk`, `mawk`, `goawk`) ONLY with a way to build or open a
+#      second name (the AWK list below, cisa c171018); the flags -exec -execdir -I; `.` as a command;
 #   5. a function definition (`name()`, `function name`).
 # Checked on the text after the data-heredoc removal, as given AND in each spelling below (so `b''ash`
 # counts), before any template is removed. Each of these read `.env.example.local` and r9 allowed it
@@ -366,10 +370,12 @@ PY
 # `bash -c 'cat $0.local' .env.example`, `printf 'cat %s.local' .env.example | bash`,
 # `cat .env.example > /dev/null; cat $_.local`, `f() { cat $1.local; }; f .env.example`.
 #   COST: every template read in a command with a builder is refused, including harmless ones:
-#   `for f in .env.example; do cat $f; done`, `cat $'.env.example'`, `awk 1 .env.example`,
+#   `for f in .env.example; do cat $f; done`, `cat $'.env.example'`, `awk 1 .env.example | head`,
 #   `grep -I KEY .env.example`. Run the template read as its own plain command.
-#   LIMIT: item 4 is a list and will be one word behind. Its backstop is items 1 to 3: a name built
-#   by an unlisted program still has to reach it through `$`, a pipe into a listed word, or stdin.
+#   LIMIT: item 4 is a list and will be one word behind. Items 1 to 3 catch a name an unlisted
+#   program builds through `$`, a here-string or a heredoc, but NOT a template name printed into a
+#   pipe to an unlisted program that runs its input: `echo .env.example | sed 's/.*/cat &.local/e'`
+#   (GNU sed's `e`). main allows that too; governance#428.
 # SUBSTITUTION (r9, now item 1 and 2 above): a command holding `$(` or a backtick ANYWHERE gets NO
 # template removal. What a substitution
 # prints becomes the name, so a template inside one reaches the real file however it is spelled:
@@ -463,10 +469,27 @@ def spell(s):
     return "".join(out)
 # NAME BUILDERS (r10, see SUBSTITUTION above): any one of these anywhere, in the text as given OR in
 # this spelling, and nothing is removed. Words and flags count as a whole word only, so `python/`,
-# `node_modules`, `build.sh`, `ssh` and `--env-file` are not builders; `/usr/bin/env` is.
+# `node_modules`, `build.sh`, `ssh`, `shellcheck` and `--env-file` are not builders; `/usr/bin/env` is.
+# Words match in any case and take a version suffix (`BASH`, `bash5`, `python3.12`, `pypy3`); flags
+# stay exact.
 WORDS = ("bash", "sh", "zsh", "dash", "ksh", "eval", "source", "exec", "env", "xargs",
-         "python", "python3", "perl", "ruby", "node", "awk", "parallel")
-WORD_RX = re.compile(r"(?<![\w.-])(?:" + "|".join(WORDS) + r")(?=\Z|[\s;&|()<>\x27\x22`])")
+         "python", "perl", "ruby", "node", "pypy", "parallel")
+VERSION = r"(?:\d+(?:\.\d+)*)?(?=\Z|[\s;&|()<>\x27\x22`])"
+WORD_RX = re.compile(r"(?<![\w.-])(?:" + "|".join(WORDS) + r")" + VERSION, re.IGNORECASE)
+# AWK (r11, cisa ruling c171018 on governance PR 426): any word ending in `awk` (`gawk`, `mawk`,
+# `goawk`, `original-awk`, `AWK`) is a builder only when the command can also build or open a SECOND
+# name. Without one of these, awk reads only its argv operands, and every operand still goes through
+# the name check, so `awk 1 .env.example` and `awk -F= NF .env.example` keep the allowance while
+# `awk 1 .env`, `awk -F x 1 .env` and `awk -- 1 .env` stay refused:
+#   - a function or variable that runs or opens, or names the operands: system getline ENVIRON ARGV FILENAME;
+#   - `|`, `>` (a pipe or a file to print to) and `@` (gawk: `@include`, `@load`, and an INDIRECT call,
+#     `f = "sys" "tem"; @f(...)`, which spells no word above);
+#   - an option that reads program text, a library or a value the gate cannot see: -f -i -l -E -v -W -D,
+#     attached or not, and --file --include --load --exec --assign --debug.
+# Matched like every trigger, on the text as given AND dequoted (`sy\stem`, `sys""tem`, `"sys"tem`).
+AWK_RX = re.compile(r"(?<![\w.-])[\w-]*awk" + VERSION, re.IGNORECASE)
+AWK_OPENS_RX = re.compile(r"(?<![\w-])(?:system|getline|ENVIRON|ARGV|FILENAME)(?![\w-])|[|>@]"
+                          r"|(?<![\w-])-[filEvWD]|(?<![\w-])--(?:file|include|load|exec|assign|debug)(?![\w-])")
 FLAG_RX = re.compile(r"(?<![\w-])-(?:exec|execdir|I)(?![\w-])")
 DOT_RX = re.compile(r"(?:\A|[;&|({\n])\s*\.(?=[ \t])")              # `.` as a command
 FUNC_RX = re.compile(r"(?<![\w.-])[A-Za-z_][\w-]*\s*\(\s*\)|(?<![\w.-])function\s+[A-Za-z_]")
@@ -478,7 +501,8 @@ def code_heredoc(t):  # a `<<` whose owner is not cat/tee: its body is input to 
     return False
 def builds_a_name(t):
     return ("$" in t or "`" in t or "<<<" in t or code_heredoc(t)
-            or bool(WORD_RX.search(t) or FLAG_RX.search(t) or DOT_RX.search(t) or FUNC_RX.search(t)))
+            or bool(WORD_RX.search(t) or FLAG_RX.search(t) or DOT_RX.search(t) or FUNC_RX.search(t))
+            or bool(AWK_RX.search(t) and AWK_OPENS_RX.search(t)))
 builder = builds_a_name(s)
 s = spell(s)
 if not (builder or builds_a_name(s)):

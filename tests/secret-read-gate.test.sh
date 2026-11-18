@@ -195,7 +195,7 @@ cases = [
     (BLOCK, f"f() {{ cat $1.local; }}; f {E}.example"),
     # COST, fail closed: a builder refuses the plain template reads beside it too. Run the read alone.
     (BLOCK, f"for f in {E}.example; do cat $f; done"), (BLOCK, f"cat $'{E}.example'"),
-    (BLOCK, f"awk 1 {E}.example"), (BLOCK, f"grep -I KEY {E}.example"),
+    (BLOCK, f"awk 1 {E}.example | head"), (BLOCK, f"grep -I KEY {E}.example"),
     # TRIGGER PINS: each row holds ONE trigger and nothing else, so dropping that trigger from the gate
     # turns the row red (the mutant check). `$` and the backtick are pinned by rows above.
     (BLOCK, f"cat <<< {E}.example"),                                # 3: a here-string
@@ -209,8 +209,42 @@ cases = [
     # one pin per word, after `true;` so the separate rule refusing a LEADING `eval` cannot mask its pin
 ] + [(BLOCK, f"true; {w} -c x {E}.example") for w in (
     "bash", "sh", "zsh", "dash", "ksh", "eval", "source", "exec", "env",
-    "python", "python3", "perl", "ruby", "node", "awk", "parallel")] + [
-    # ... and a word counts only as a whole word: these hold no builder and keep the allowance
+    "python", "perl", "ruby", "node", "pypy", "parallel")] + [
+    # r11: r10 matched exact-case whole words only, so each of these let a template become a real name
+    # that main refuses (`BASH` runs bash on a case-insensitive file system). One pin per spelling class:
+] + [(BLOCK, f"true; {w} -c x {E}.example") for w in (
+    "BASH", "Bash", "ENV", "Xargs", "Python",                     # any case
+    "bash5", "python3", "python3.12", "perl5.36", "pypy3", "/usr/bin/python3")] + [   # a version suffix
+    (BLOCK, f"bash5 -c 'cat \"{E}.example\".local'"), (BLOCK, f"BASH -c 'cat \"{E}.example\".local'"),
+    # AWK (r11, cisa c171018): any word ending in `awk` is a builder ONLY with a way to build or open a
+    # second name. Every operand still goes through the name check, however -F and -- are parsed:
+    (BLOCK, f"awk 1 {E}"), (BLOCK, f"awk NR==1 {E}"), (BLOCK, f"awk -Fx 1 {E}"), (BLOCK, f"awk -F x 1 {E}"),
+    (BLOCK, f"awk -- 1 {E}"), (BLOCK, f"awk 1 {E}.example {E}"), (BLOCK, f"awk -f {E}"),
+    (FP, f"awk 1 {E}.example"), (FP, f"awk -F= NF {E}.example"), (FP, f"gawk NR==1 {E}.example"),
+    (FP, f"AWK 1 {E}.example"), (FP, f"awk -F, 1 app/{E}.example"),
+    #   the shapes that read <tmpl>.local, one per way to reach a second name:
+    (BLOCK, f"awk 'BEGIN{{system(\"cat \" ARGV[1] \".local\")}}' {E}.example"),
+    (BLOCK, f"awk 'BEGIN{{getline l < (ARGV[1] \".local\")}}' {E}.example"),
+    (BLOCK, f"awk -f p.awk {E}.example"),                         # a program the gate cannot see
+    (BLOCK, f"awk 'END{{f = \"sys\" \"tem\"; @f(\"cat \" x \".local\")}}' x={E}.example /dev/null"),  # indirect
+    #   matched on what awk receives, not the raw text: an escape, and a program split across strings
+    (BLOCK, f"awk BEGIN{{sy\\stem\\(\\\"x\\\"\\)}} {E}.example"),
+    (BLOCK, f"awk 'BEGIN{{sys''tem(\"x\")}}' {E}.example"), (BLOCK, f"awk 'BEGIN{{sys'\"tem\"'(\"x\")}}' {E}.example"),
+] + [(BLOCK, f"awk {o} {E}.example") for o in (   # one pin per opener: dropping it turns its row red
+    "'BEGIN{system(\"x\")}'", "'BEGIN{getline l}'", "'BEGIN{print ENVIRON[\"X\"]}'", "'BEGIN{print ARGV[1]}'",
+    "'END{print FILENAME}'", "'{print | \"cat\"}'", "'{print > \"o\"}'", "'@include \"x\"'", "'@load \"x\"'",
+    "-f p", "-fp", "-i x 1", "-l x 1", "-E p", "-v x=1 1", "-vx=1 1", "-W version 1", "-D p 1",
+    "--file=p", "--include=x 1", "--load=x 1", "--exec=p", "--assign=x=1 1", "--debug 1")] + [
+] + [(BLOCK, f"true; {w} 'BEGIN{{system(\"x\")}}' {E}.example") for w in (   # the awk family, any case
+    "AWK", "Awk", "gawk", "mawk", "nawk", "goawk", "original-awk", "one-true-awk", "/usr/bin/gawk",
+    "busybox awk", "gawk5")] + [
+    (BLOCK, f"gawk 'BEGIN{{system(\"cat \" ARGV[1] \".local\")}}' {E}.example"),
+    (BLOCK, f"AWK 'BEGIN{{system(\"cat \" ARGV[1] \".local\")}}' {E}.example"),
+    (BLOCK, f"python3.12 -c 'import sys;open(sys.argv[1]+\".local\")' {E}.example"),
+    (BLOCK, f"pypy3 -c 'import sys;open(sys.argv[1]+\".local\")' {E}.example"),
+    # ... and a word counts only as a whole word, in any case: these hold no builder and keep the allowance
+    (FP, f"ls Python/ Node_Modules/ {E}.example"), (FP, f"shellcheck scripts/a.sh {E}.example"),
+    (FP, f"cat notes/squawk.md BUILD.SH {E}.example"), (FP, f"ls bash5.d/ {E}.example"),
     (FP, f"ls python/ node_modules/ {E}.example"), (FP, f"cat scripts/build.sh {E}.example"),
     (FP, f"cp {E}.example ssh-notes.txt"), (FP, f"find app -name {E}.example"),
     (FP, f"docker compose --env-file {E}.example config"),
