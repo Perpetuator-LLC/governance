@@ -1365,6 +1365,32 @@ wrong path makes the move more expensive and the misplacement more authoritative
 spec was authored into the knowledge vault instead of the initiative repo, and its path was copied
 into an epic and two hand-off blocks before a human caught it.
 
+## A knowledge base is a tree an agent can WALK: root, area landing pages, procedure
+
+**Every notebook or knowledge vault starts at one root page.** The root links to **one landing page
+per area, and only to landing pages**; each landing page links its own next level and carries an
+**Up** link to its parent, down to the procedure (SOP, runbook) for a task. **Before adding a page,
+decide which landing page it belongs under and link it from there.** A fix to a process is absorbed
+into that procedure, so the walk always ends at the current flow.
+
+**Why:** an agent on another machine, or with another harness, has no memory of where things are and
+cannot search for a file it does not know exists. A path from a known root is the one lookup that
+needs no prior knowledge. A page linked from nowhere is reachable only by someone who already knows
+its name — which is everyone except the reader who needs it.
+
+**Scope — what this rule is NOT:**
+- **Not a listing.** A root that links every file is the mirror failure: a second index, stale on
+  the next write, that buries the areas it was meant to expose. Machine-rendered indexes may exist
+  beside the root; they do not replace the landing pages.
+- **Not storage.** It governs links, not folders. It does not move files, impose a taxonomy, or
+  justify a reorganisation; an existing vault is retrofitted by adding the root's area links and
+  the missing landing pages, going forward.
+- **Not every record.** High-volume append-only records (journal entries, ingest output, run logs)
+  are reached through the current-state page or procedure they feed, not linked one by one from a
+  landing page, which they would flood.
+- **The premise:** a reader that follows links (a graph view, an agent reading files). Where the only
+  reader is a search index, the tree still helps, but discovery is the index's job.
+
 ## An id used as a resolution key is validated like one
 
 **Once documents are cited by id rather than by path, the id must be unique, and it must be the kind
