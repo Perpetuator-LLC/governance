@@ -34,7 +34,9 @@ cite its ticket). A range git refuses exits 2; an empty range is a real, clean a
 
 Usage:  redaction-check [--enforce] [--private-patterns FILE] [--json] [PATHS...]
         redaction-check [--enforce] [--private-patterns FILE] [--json] --commits RANGE
-        default PATHS: README.md core adapter-template agents templates   (Markdown files only)
+        default PATHS: README.md core adapter-template agents templates (Markdown files only),
+        plus every tests/*.test.sh file, for the private-name leg only — the shape legs still skip
+        it, same as when a test file is named explicitly.
         env GOVERNANCE_PRIVATE_PATTERNS is used when --private-patterns is not given, and
         ~/.governance/private-patterns (a file, or a symlink to the note in the private layer) when
         neither is: a leg that runs only when someone remembers a flag is a report, not a gate.
@@ -83,6 +85,7 @@ TEST_FIXTURE_FILE = re.compile(r"(^|/)tests/[^/]+\.test\.sh$")
 MESSAGE_SHAPES = {"home-path", "contact-address", "registration-id"}
 FENCE_TAGS = ("redaction-instances", "household-patterns")
 DEFAULT_PATHS = ["README.md", "core", "adapter-template", "agents", "templates"]
+DEFAULT_TEST_DIR = "tests"  # bare run only: *.test.sh here, private-name leg only — see default_test_files()
 DEFAULT_PRIVATE = os.path.join(os.path.expanduser("~"), ".governance", "private-patterns")
 
 
@@ -180,6 +183,19 @@ def expand(paths):
     return out, bad
 
 
+def default_test_files(root):
+    """Every tests/*.test.sh file, one level deep — matching TEST_FIXTURE_FILE's own shallow pattern.
+    A BARE run (no PATHS given) must include these for the private-name leg: an explicit path already
+    reads a test file in full (the bug this closes — only the explicit form did), and a real instance
+    name is exactly as public in a fixture as in prose. Missing entirely on a fresh checkout is not an
+    error: an empty list is what "no tests/ directory here" looks like, same as DEFAULT_PATHS skipping
+    a missing optional directory silently via expand()'s own isdir/isfile checks."""
+    test_dir = os.path.join(root, DEFAULT_TEST_DIR)
+    if not os.path.isdir(test_dir):
+        return []
+    return sorted(os.path.join(test_dir, f) for f in os.listdir(test_dir) if f.endswith(".test.sh"))
+
+
 def scan_lines(name, lines, shapes, private):
     """SKIP_LINE exempts a line from the SHAPES only. A private name in a comment or a prompt line is
     exactly as public as one in prose, so the name leg reads every line."""
@@ -251,7 +267,7 @@ def main():
         unit, count = "commit message(s)", len(msgs)
     else:
         root = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)
-        paths = a.paths or [os.path.join(root, p) for p in DEFAULT_PATHS]
+        paths = a.paths or [os.path.join(root, p) for p in DEFAULT_PATHS] + default_test_files(root)
         paths, missing = expand(paths)
         if missing:
             print("error: no such file or directory: " + ", ".join(missing), file=sys.stderr)

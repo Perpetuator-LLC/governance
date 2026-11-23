@@ -9,7 +9,12 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHECK="$ROOT/bin/redaction-check"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"
+# governance#378's own fixture lives under the REAL tests/ dir (a bare run's default root is this
+# script's own location, not an isolated scratch tree, so that is the only place a bare run reads it
+# from) — cleaned up here too, so a failure partway through still never leaves it behind.
+FIXTURE378="$ROOT/tests/zzz-redaction-378-fixture.test.sh"
+trap 'rm -rf "$TMP"; rm -f "$FIXTURE378"' EXIT
 pass=0; fail=0
 ok()   { echo "  ✅ $1"; pass=$((pass+1)); }
 bad()  { echo "  ❌ $1"; fail=$((fail+1)); }
@@ -223,6 +228,17 @@ check "the checker embeds no quoted dotted hostname" \
 rc="$(run --enforce)"
 check "THIS TREE: no shape findings (exit 0, or 3 = instance leg not checked here)" "[ '$rc' = '0' ] || [ '$rc' = '3' ]"
 [ "$rc" = '0' ] || [ "$rc" = '3' ] || sed 's/^/      /' "$TMP/out"
+
+# --- governance#378: a BARE run (no PATHS) must read tests/*.test.sh for the private-name leg, the
+#     same as the docstring's own claim ("the private-name leg still reads every line of every test
+#     file") already promised. The fixture is planted in the REAL tests/ dir (the FIXTURE378 trap
+#     above removes it) because a bare run's default root is the checker's OWN location, not $TMP. ---
+printf 'check "acme-zz378-fixture" "true"  # jira_fetch_board_rows, a shape this line is exempt from\n' > "$FIXTURE378"
+printf 'literal:acme-zz378-fixture\n' > "$TMP/p378.txt"
+rc="$(run --json --private-patterns "$TMP/p378.txt")"
+check "governance#378: a bare run's private-name leg reads a tests/*.test.sh fixture" "kind 'instance-name:1'"
+check "governance#378: the shape legs still skip that same test file (no vendor-tool-noun finding)" "! kind vendor-tool-noun"
+rm -f "$FIXTURE378"
 
 echo
 echo "  $pass passed, $fail failed"
