@@ -15,6 +15,12 @@ input=""
 # refused text, never the text. The trail fails OPEN (no helper, no python3, an unwritable log) and never
 # changes the verdict.
 DENY_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/deny-event.py"
+# Shared with write-safety-gate.sh (governance#335): the well-known credential-store PATH shapes, so
+# the two gates can never drift on which ones they refuse. A missing file degrades to "this one new
+# check does not run" — no worse than before this fix existed, never a reason to fail closed on
+# everything else below.
+CREDENTIAL_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/credential-paths.sh"
+[[ -f "$CREDENTIAL_PATHS_LIB" ]] && source "$CREDENTIAL_PATHS_LIB"
 deny() {  # deny <rule-id> <reason>: refuse, record, exit 2
   echo "BLOCKED: $2" >&2
   if [[ -f "$DENY_HELPER" ]] && python3 -c '' >/dev/null 2>&1; then
@@ -182,6 +188,14 @@ fi
 SECRET_NAME='\.env([^A-Za-z]|rc|$)'
 SECRET_READ="cat\s+.*$SECRET_NAME|grep\s+.*$SECRET_NAME|rg\s+.*$SECRET_NAME|head\s+.*$SECRET_NAME|tail\s+.*$SECRET_NAME|less\s+.*$SECRET_NAME|more\s+.*$SECRET_NAME"
 
+# The read gate's own list had a NAME check (.env) but no PATH check: a reader verb next to a
+# well-known credential-store file (~/.aws/credentials, ~/.netrc, ~/.ssh/id_ed25519, ...) passed clean
+# (governance#335). Same reader-verb list, same composition, now against CREDENTIAL_PATH_RX too.
+# Guarded on CREDENTIAL_PATH_RX actually being set: an EMPTY alternative in "cat\s+.*|grep\s+.*|..."
+# would match on the reader verb alone, with no file-name test left at all.
+CREDENTIAL_READ=""
+[[ -n "${CREDENTIAL_PATH_RX:-}" ]] && CREDENTIAL_READ="cat\s+.*$CREDENTIAL_PATH_RX|grep\s+.*$CREDENTIAL_PATH_RX|rg\s+.*$CREDENTIAL_PATH_RX|head\s+.*$CREDENTIAL_PATH_RX|tail\s+.*$CREDENTIAL_PATH_RX|less\s+.*$CREDENTIAL_PATH_RX|more\s+.*$CREDENTIAL_PATH_RX"
+
 # A heredoc BODY given to `cat` or `tee` is DATA: those two only copy their stdin, so prose in the body
 # that names the file reads nothing. Refusing it blocked a seat's hand-off append (`cat >> <file> <<EOF`
 # whose note said the file was absent), and the successor booted from a stale note. Such a body is
@@ -287,6 +301,99 @@ PY
 scan=$(strip_data_heredocs "$cmd")
 if printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$scan" "$SECRET_READ"; then
   deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
+fi
+
+# Credential-store PATH reads (governance#335) — the mirror of the .env NAME check just above, same
+# reader verbs, same flatten-then-cross-subcommand shape, against the shared path list instead.
+if [[ -n "$CREDENTIAL_READ" ]] \
+   && printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$CREDENTIAL_READ" \
+   && ! only_across_subcommands "$scan" "$CREDENTIAL_READ"; then
+  deny credential-file-read "Reading a credential-store file would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
+fi
+
+# A backslash before an ordinary word character, adjacent quoted/unquoted word fragments, and bash's
+# own $'...' ANSI-C quoting all produce the SAME final shell word a reader command receives — `cat .\env`,
+# `cat .e\nv`, `cat '.e'nv`, `cat ".en"v` and `cat $'\x2eenv'` all run as `cat .env` — but the checks
+# above match the RAW command text, which never sees past the escape (governance#335). DECODE_SHELL_WORDS
+# below reconstructs the words a shell would actually execute; the secret-name and credential-path checks
+# then run again against that decoded form. Best effort: a command that doesn't decode cleanly (an
+# unbalanced quote, for instance) leaves this leg silently skipped — the checks above already ran
+# against the raw text either way, so decoding failure can only miss an ADDITIONAL obfuscated case, never
+# undo a block already made. Unconditional once decoded: this leg does not also require
+# only_across_subcommands, since none of the gate's reader verbs are otherwise safe near a credential
+# name, obfuscated or not.
+decode_shell_words() {  # <cmd> -> <cmd> with escapes/quotes resolved into the literal words a shell runs; empty on any doubt
+  command -v python3 >/dev/null 2>&1 || { printf ''; return 0; }
+  python3 - "$1" <<'PY' 2>/dev/null
+import re, shlex, sys
+
+cmd = sys.argv[1]
+
+
+def decode_ansi_c(text):
+    # bash's $'...' quoting: decode \xHH, \n, \t, \r, \\, \', \" and pass any other escaped char
+    # through literally, same as bash does for an escape it does not specifically recognise.
+    out, i = [], 0
+    esc = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", "'": "'", '"': '"'}
+    while i < len(text):
+        if text[i:i + 2] == "$'":
+            j = i + 2
+            buf = []
+            while j < len(text) and text[j] != "'":
+                if text[j] == "\\" and j + 1 < len(text):
+                    nxt = text[j + 1]
+                    if nxt == "x" and j + 3 < len(text):
+                        try:
+                            buf.append(chr(int(text[j + 2:j + 4], 16)))
+                            j += 4
+                            continue
+                        except ValueError:
+                            pass
+                    buf.append(esc.get(nxt, nxt))
+                    j += 2
+                    continue
+                buf.append(text[j])
+                j += 1
+            if j >= len(text):
+                raise ValueError("unterminated $'...'")
+            out.append("".join(buf))
+            i = j + 1
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+try:
+    decoded = decode_ansi_c(cmd)
+    # posix=True: resolves a backslash before an ordinary character AND joins adjacent quoted/unquoted
+    # fragments into one word ('.e'nv -> .env), the same way a POSIX shell builds one argv word from
+    # several syntactic pieces. punctuation_chars keeps command separators as their own tokens, so the
+    # decoded text still composes correctly with the cross-subcommand splitter above.
+    lex = shlex.shlex(decoded, posix=True, punctuation_chars="();<>|&\n")
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    toks = list(lex)
+except ValueError:
+    print("")
+else:
+    print(" ".join(toks))
+PY
+}
+# Decoded from $scan, never raw $cmd: strip_data_heredocs already removed a heredoc BODY's own prose
+# (which may say ".env" without reading it), and that removal must happen before decoding, not after —
+# decoding does not know a heredoc body from a live argument, so decoding the raw command would
+# resurface exactly the false positive strip_data_heredocs exists to prevent.
+decoded=$(decode_shell_words "$scan")
+if [[ -n "$decoded" ]]; then
+  if printf '%s' "$decoded" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_across_subcommands "$decoded" "$SECRET_READ"; then
+    deny secret-file-read-obfuscated "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
+  fi
+  if [[ -n "$CREDENTIAL_READ" ]] \
+     && printf '%s' "$decoded" | tr '\n\r' '  ' | grep -qE "$CREDENTIAL_READ" \
+     && ! only_across_subcommands "$decoded" "$CREDENTIAL_READ"; then
+    deny credential-file-read-obfuscated "Reading a credential-store file would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
+  fi
 fi
 
 # Credential-store reads. Two failures this rule had, both measured against a reference case list: it

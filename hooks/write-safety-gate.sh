@@ -15,6 +15,11 @@ input=""
 # refused text, never the text. The trail fails OPEN (no helper, no python3, an unwritable log) and never
 # changes the verdict.
 DENY_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/deny-event.py"
+# Shared with bash-safety-gate.sh (governance#335): the well-known credential-store PATH shapes, so
+# the two gates can never drift on which ones they refuse. A missing file degrades to "this one
+# additional check does not run" — the existing credential/key-file check below is unaffected.
+CREDENTIAL_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/credential-paths.sh"
+[[ -f "$CREDENTIAL_PATHS_LIB" ]] && source "$CREDENTIAL_PATHS_LIB"
 deny() {  # deny <rule-id> <reason>: refuse, record, exit 2
   echo "BLOCKED: $2" >&2
   if [[ -f "$DENY_HELPER" ]] && python3 -c '' >/dev/null 2>&1; then
@@ -90,6 +95,14 @@ fi
 # Block writes to credential/key files
 if echo "$path" | grep -qiE '(credentials|secrets|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|id_rsa|id_ed25519|\.ssh/|\.aws/|\.gcloud/)'; then
   deny credential-file-write "Cannot write to credential or key files. Edit manually."
+fi
+
+# The shared credential-store PATH list (governance#335): mostly a subset of the broader match just
+# above (".ssh/", ".aws/" already catch id_* and *_key names, and "credentials" already catches
+# .git-credentials), but it adds the paths that match had no fragment for at all — .netrc,
+# .docker/config.json, .kube/config, .config/gh/hosts.yml, .pgpass.
+if [[ -n "${CREDENTIAL_PATH_RX:-}" ]] && echo "$path" | grep -qiE "$CREDENTIAL_PATH_RX"; then
+  deny credential-file-write-shared "Cannot write to credential or key files. Edit manually."
 fi
 
 # Block writes to CI/CD secrets

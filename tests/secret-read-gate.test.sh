@@ -40,6 +40,11 @@ python3 - "$TMP/cases.jsonl" <<'PY'
 import json, sys
 E = "." + "env"
 BLOCK, ALLOW, FP = "BLOCK", "ALLOW", "FP"   # FP: ALLOW with python3, BLOCK (fail closed) without
+# DEC: the MIRROR of FP. decode_shell_words() (governance#335) needs python3 to resolve an escape the
+# raw-text regex never sees past; without it, this leg is silently skipped (the gate's own documented,
+# accepted degradation — it can only MISS an obfuscated case, never undo a block the raw text already
+# made). So: BLOCK with python3, ALLOW (fails OPEN on this one leg only) without it.
+DEC = "DEC"
 cases = [
     # real reads — must stay blocked
     (BLOCK, f"grep KEY {E}"), (BLOCK, f"cat {E} | head"), (BLOCK, f"head {E} && echo ok"),
@@ -93,6 +98,20 @@ cases = [
     (BLOCK, "cat > f <<'EOF'\ncat " + E),                     # unterminated: nothing is removed
     (BLOCK, "cat > f <<'EOF'\nx\nEOF2\ncat " + E),            # the terminator must match exactly
     (BLOCK, "cat <<'A' <<'B'\n" + E + "\nA\ncat " + E + "\nB"),  # two heredocs on a line: nothing removed
+    # governance#335: a shell backslash/quote/ANSI-C escape all produce the same final word a reader
+    # receives (`.\env` / `.e\nv` / `'.e'nv` / `".en"v` / `$'\x2eenv'` all run as `.env`), which a
+    # regex over the RAW text never sees past.
+    (DEC, "cat .\\" + "env"), (DEC, "cat .e\\nv"), (DEC, "cat '.e'nv"), (DEC, 'cat ".en"v'),
+    (DEC, "cat $'\\x2e" + "env'"),
+    (ALLOW, "cat README.md"), (ALLOW, "printf 'a\\nb'"),
+    # governance#335: well-known credential-STORE paths, not just the .env NAME shape, on the SAME
+    # reader verbs. A credential-adjacent path that merely shares a short substring (no reader verb
+    # directly on a real credential path) stays allowed.
+    (BLOCK, "cat ~/.aws/credentials"), (BLOCK, "less ~/.netrc"), (BLOCK, "cat ~/.ssh/id_ed25519"),
+    (BLOCK, "head ~/.ssh/deploy_key"), (BLOCK, "cat ~/.docker/config.json"),
+    (BLOCK, "cat ~/.kube/config"), (BLOCK, "cat ~/.config/gh/hosts.yml"),
+    (BLOCK, "cat ~/.git-credentials"), (BLOCK, "cat ~/.pgpass"),
+    (ALLOW, "cat README.aws.md"), (ALLOW, "cat notes/kube-config-migration.md"),
     # controls
     (ALLOW, "ls -la"), (ALLOW, "git status"),
 ]
@@ -120,6 +139,10 @@ for line in open(cases):
     # Without python3 the sub-command check cannot run: every whole-string match must stay BLOCKED.
     if want == "FP":
         want = "BLOCK" if mode == "failclosed" else "ALLOW"
+    # Without python3 the escape-decode leg cannot run either, but in the OPPOSITE direction: there is
+    # no raw-text match to fall back on, so the leg is simply skipped and the command is allowed.
+    elif want == "DEC":
+        want = "ALLOW" if mode == "failclosed" else "BLOCK"
     r = subprocess.run(["bash", gate], input=json.dumps(c["payload"]), env=env,
                        capture_output=True, text=True)
     got = {2: "BLOCK", 0: "ALLOW"}.get(r.returncode, f"EXIT{r.returncode}")
