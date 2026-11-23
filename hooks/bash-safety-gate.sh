@@ -113,46 +113,213 @@ fi
 # the same account. Checked wherever ssh is invoked, including through git's own wrapper
 # (GIT_SSH_COMMAND, `-c core.sshCommand=`, a committed `core.sshCommand`).
 #
-# Cheap keyword gate first: a command mentioning none of these words is not about multiplexing at all,
-# so a plain `ssh host` or `git push` never reaches the value-parsing check below.
-MUX_KEYWORD='(^|[[:space:]])-M([[:space:]]|$)|(^|[[:space:]])-S[[:space:]]|controlmaster|controlpath|controlpersist|GIT_SSH_COMMAND|core\.sshCommand'
-if printf '%s' "$cmd" | tr '\n\r' '  ' | grep -qiE "$MUX_KEYWORD"; then
+# cisa SEND-BACK on PR #438 (c189241): a PLAIN ssh/git call is only safe if NOTHING already makes it
+# multiplex — a user-level `Host *` block with `ControlMaster auto` turns every allowed plain call into
+# one that opens or rides a master, with no flag on the command line at all. The command line alone can
+# never answer this; only ssh's OWN config resolution can (`ssh -G`, print-only, no connection — this
+# runs for every PLAIN call too, not only a suspicious-looking one). The command line IS still the only
+# source for -M and -O, which are MODE switches, never configuration values `ssh -G` would report.
+#
+# Not closed by this (recorded, not fixed — a regex/subprocess gate is not a shell, and changing the
+# user's own ssh config is a human decision, not this gate's to make):
+#   - `ssh -F <file>` is read and passed to `ssh -G`; `GIT_SSH=<wrapper>` (an external, unreadable
+#     script) and a Write/Edit to the user's own ssh config file are not.
+#   - a bare `git push`/`pull`/`fetch`/`clone` with NO ssh override at all: resolving its real target
+#     needs the repo's OWN remote configuration, which this gate does not read. Only an EXPLICIT ssh
+#     invocation — bare `ssh`, or one embedded in GIT_SSH_COMMAND/core.sshCommand — is evaluated.
+#
+# Cheap gate first: a command naming none of these is not an ssh invocation in any form this check
+# recognises, so an unrelated command never reaches the subprocess call below.
+SSH_INVOKE_HINT='(^|[[:space:];&|])ssh([[:space:]]|$)|GIT_SSH_COMMAND=|core\.sshcommand'
+if printf '%s' "$cmd" | tr '\n\r' '  ' | grep -qiE "$SSH_INVOKE_HINT"; then
   if command -v python3 >/dev/null 2>&1; then
-    # Exit 1 = multiplexing is being turned ON (refuse); exit 0 = safe (plain flags, or explicitly OFF).
-    if ! python3 - "$cmd" <<'PY'
-import re, sys
+    ssh_mux_reason=$(python3 - "$cmd" <<'PY'
+import re, shlex, subprocess, sys
 
 cmd = sys.argv[1]
 
+# ssh's OWN getopt shape (ssh(1)): a boolean flag takes no argument and may be BUNDLED with others in
+# one token (`-fNM` = -f -N -M); an argument-flag's value is either the REST of its own token
+# (`-S/path`, attached) or, if nothing follows it in that token, the NEXT token (`-S /path`). Only ONE
+# argument-flag may end a bundle, matching real getopt: `-fNMS/path` is -f -N -M -S=/path.
+BOOL_FLAGS = set("46AaCfGgKkMNnqsTtVvXxYy")
+ARG_FLAGS = set("BbcDEeFIiJLlmOopQRSWw")
+SEP = {"&&", "||", ";", "|", "&", "|&", "\n"}
 
-def opt_values(name):  # every value assigned to `-o NAME=value` / `-o NAME value`, `=`/space, optional quotes/case
-    # ControlPath's value is a SOCKET PATH (/tmp/%r@%h:%p), not a bare word: the capture must accept
-    # slashes, %-tokens, @ and : too, or a real path silently never matches at all.
-    pat = re.compile(r'-o\s*["\']?' + name + r'["\']?[=\s]+["\']?([^\s"\';&|]+)', re.I)
-    return [m.group(1).lower() for m in pat.finditer(cmd)]
+
+def tokenize(text):
+    lex = shlex.shlex(text, posix=True, punctuation_chars="();<>|&\n")
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    lex.commenters = ""  # a bare "#" is only a comment at the START of a word in a real shell
+    return list(lex)
 
 
-mux = False
-if re.search(r'(^|[\s;&|])-M(\s|$)', cmd):                                  # -M opens a master
-    mux = True
-if any(v in ("yes", "auto", "ask", "autoask") for v in opt_values("ControlMaster")):
-    mux = True
-if any(v != "none" for v in opt_values("ControlPath")):                      # only "none" is off
-    mux = True
-if any(v != "no" for v in opt_values("ControlPersist")):                     # only "no" is off
-    mux = True
-# -S <path> REUSES or targets a master; the one safe pairing is closing it, `-O exit`.
-has_dash_s = re.search(r'(^|[\s])-S(\s|$)', cmd) is not None
-has_o_exit = re.search(r'-O\s*["\']?exit\b', cmd, re.I) is not None
-if has_dash_s and not has_o_exit:
-    mux = True
-sys.exit(1 if mux else 0)
+def segments(toks):
+    segs, cur = [], []
+    for t in toks:
+        if t in SEP:
+            segs.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    segs.append(cur)
+    return segs
+
+
+def parse_ssh_opts(argv):
+    """argv: tokens AFTER the leading 'ssh'. -> (bool flags seen, {arg-flag: [values]}, target|None)."""
+    bools, args, i, target = set(), {}, 0, None
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--":
+            i += 1
+            break
+        if len(tok) > 1 and tok[0] == "-":
+            j = 1
+            while j < len(tok):
+                c = tok[j]
+                if c in BOOL_FLAGS:
+                    bools.add(c)
+                    j += 1
+                    continue
+                if c in ARG_FLAGS:
+                    rest = tok[j + 1:]
+                    if rest:
+                        args.setdefault(c, []).append(rest)
+                    elif i + 1 < len(argv):
+                        i += 1
+                        args.setdefault(c, []).append(argv[i])
+                    break
+                break  # an unrecognised flag char: stop scanning this token, best effort
+            i += 1
+            continue
+        target = tok
+        i += 1
+        break
+    return bools, args, target
+
+
+def opt_text_values(args, name):
+    """Values set for `-o NAME=value` or `-o NAME value` among already-parsed -o entries, matched on
+    the key case-insensitively. These are LITERAL text on this command line — checked even with no
+    target at all, since an embedded GIT_SSH_COMMAND/core.sshCommand wrapper never carries one (git
+    appends the destination itself at invocation time), so `ssh -G` has nothing to resolve against for
+    that text alone, and the override would otherwise never be seen."""
+    out = []
+    for o in args.get("o", []):
+        if "=" in o:
+            k, v = o.split("=", 1)
+        else:
+            parts = o.split(None, 1)
+            k, v = (parts[0], parts[1]) if len(parts) == 2 else (parts[0], "")
+        if k.strip().lower() == name.lower():
+            out.append(v.strip().lower())
+    return out
+
+
+def ssh_invocation_mux(argv, label):
+    """argv includes the leading 'ssh'. -> a refusal reason, or None if safe."""
+    bools, args, target = parse_ssh_opts(argv[1:])
+    if "M" in bools:
+        return f"{label}: -M opens a connection master"
+    # -O is a control command, not configuration; "exit" (closing) exempts the -S check below for
+    # THIS SAME ssh call only — a different ssh call elsewhere in the command line gets its own,
+    # independent check, never exempted by an -O exit that belongs to a different invocation.
+    has_o_exit = "exit" in [v.lower() for v in args.get("O", [])]
+    if "S" in args and not has_o_exit:
+        return f"{label}: -S reuses or targets a connection master (no -O exit on this same call)"
+    if any(v in ("yes", "auto", "ask", "autoask", "true") for v in opt_text_values(args, "ControlMaster")):
+        return f"{label}: -o ControlMaster is set to open a master"
+    if any(v != "none" for v in opt_text_values(args, "ControlPath")):
+        return f"{label}: -o ControlPath is set to keep a master open"
+    if any(v not in ("no", "false") for v in opt_text_values(args, "ControlPersist")):
+        return f"{label}: -o ControlPersist is set to keep a master open"
+    if not target:
+        return None  # no destination at all: ssh itself refuses; nothing further here to evaluate
+    # `ssh -G` prints the EFFECTIVE config (command-line overrides merged with every config file ssh
+    # would read) and makes NO connection. Command-line -F/-o are passed through so the same overrides
+    # this call would actually use are the ones evaluated — never a DIFFERENT, unrelated config. This
+    # is what catches an INHERITED Host * block this command line never mentions at all (cisa SEND-BACK
+    # on PR #438, c189241 item 1) — the direct -o checks above cover only what THIS line spells out.
+    ssh_g = ["ssh", "-G"]
+    for f in args.get("F", []):
+        ssh_g += ["-F", f]
+    for o in args.get("o", []):
+        ssh_g += ["-o", o]
+    ssh_g.append(target)
+    try:
+        out = subprocess.run(ssh_g, capture_output=True, text=True, timeout=5)
+    except Exception as e:
+        return f"{label}: could not evaluate the effective ssh config to verify it is safe ({e})"
+    if out.returncode != 0:
+        return f"{label}: `ssh -G` could not evaluate the effective config for this destination"
+    cfg = {}
+    for line in out.stdout.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2:
+            cfg.setdefault(parts[0].lower(), parts[1].strip().lower())
+    if cfg.get("controlmaster", "no") not in ("no", "false"):
+        return f"{label}: the effective ssh config's ControlMaster is {cfg.get('controlmaster')!r}, not off"
+    if cfg.get("controlpath", "none") != "none":
+        return f"{label}: the effective ssh config's ControlPath is {cfg.get('controlpath')!r}, not none"
+    if cfg.get("controlpersist", "no") not in ("no", "false"):
+        return f"{label}: the effective ssh config's ControlPersist is {cfg.get('controlpersist')!r}, not off"
+    return None
+
+
+def embedded_ssh_argv(value):
+    """value: a shell command STRING (from GIT_SSH_COMMAND, or -c core.sshCommand=). -> argv or None."""
+    try:
+        toks = tokenize(value)
+    except ValueError:
+        return None
+    return toks if toks and toks[0] == "ssh" else None
+
+
+try:
+    cmd_toks = tokenize(cmd)
+except ValueError:
+    print("the command could not be tokenised to verify it is safe")
+    sys.exit(1)
+
+reason = None
+for seg in segments(cmd_toks):
+    if not seg:
+        continue
+    if seg[0] == "ssh":
+        reason = ssh_invocation_mux(seg, "ssh")
+    else:
+        for i, t in enumerate(seg):
+            if t.startswith("GIT_SSH_COMMAND="):
+                argv = embedded_ssh_argv(t[len("GIT_SSH_COMMAND="):])
+                if argv:
+                    reason = ssh_invocation_mux(argv, "GIT_SSH_COMMAND")
+                break
+            if t == "-c" and i + 1 < len(seg) and seg[i + 1].lower().startswith("core.sshcommand="):
+                argv = embedded_ssh_argv(seg[i + 1].split("=", 1)[1])
+                if argv:
+                    reason = ssh_invocation_mux(argv, "core.sshCommand")
+                break
+    if reason:
+        break
+
+if reason:
+    print(reason)
+    sys.exit(1)
+sys.exit(0)
 PY
-    then
-      deny ssh-mux-on "Turning on SSH connection multiplexing (a connection master, a kept-open ControlPath/ControlPersist, or reusing an existing master with -S) bypasses a presence-gated key's per-use touch for every later command that rides the same master. Use a plain ssh/git push, set ControlMaster=no / ControlPath=none / ControlPersist=no, or close a master with -O exit."
+)
+    if [[ $? -ne 0 ]]; then
+      deny ssh-mux-on "Turning on SSH connection multiplexing, or an inherited ssh config that already does ($ssh_mux_reason), bypasses a presence-gated key's per-use touch for every later command that rides the same master. Use a plain ssh/git push under a config with ControlMaster=no / ControlPath=none / ControlPersist=no, or close a master with -O exit on that same call."
     fi
   else
-    deny ssh-mux-unverifiable "this safety gate cannot verify an SSH multiplexing flag is safe without python3; refusing rather than allowing it unchecked. Install python3, or run the command yourself."
+    # Without python3 there is no way to parse ssh's own getopt-bundled flags, decode an embedded
+    # GIT_SSH_COMMAND/core.sshCommand, or run `ssh -G` to see the EFFECTIVE config at all — and per
+    # item 1 above, even a plain, flagless ssh/git call can already be multiplexing via inherited
+    # config. Every ssh invocation this gate recognises is refused outright rather than allowed
+    # unverified: the same "every doubt keeps the block" direction this file takes everywhere else.
+    deny ssh-mux-unverifiable "this safety gate cannot verify an SSH invocation's effective multiplexing config is safe without python3; refusing rather than allowing it unchecked. Install python3, or run the command yourself."
   fi
 fi
 

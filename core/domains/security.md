@@ -477,24 +477,39 @@ same master, including a second push, or a command from a different agent sessio
 account. **Multiplexing turns a presence gate into a time window.**
 
 Covers every shape the same intent takes: starting a master (`ControlMaster` set to `yes`, `auto`,
-`ask` or `autoask`; `ssh -M`), keeping one open (`ControlPath` set to anything but `none`;
-`ControlPersist` set to anything but `no`), and reusing an existing one (`ssh -S <path>`). Checked
-wherever ssh is invoked, not only a bare `ssh` call: `-o` flags, `GIT_SSH_COMMAND`, `git -c
-core.sshCommand=`, and a committed `core.sshCommand` all launch the same binary with the same risk.
+`ask`, `autoask` or `true`; `ssh -M`, in any getopt-bundled or attached-argument form — `-fNM`, `-MS
+<path>` and `-S<path>` all count, not only a standalone `-M`), keeping one open (`ControlPath` set to
+anything but `none`; `ControlPersist` set to anything but `no`/`false`), and reusing an existing one
+(`ssh -S <path>`, unless paired with `-O exit` **on that same ssh call** — a close on one invocation
+never exempts a different one later in the command, or text inside a quoted remote command). Checked
+wherever ssh is invoked, not only a bare `ssh` call: `-o` flags (`-o "Key value"` and `-o
+Key=value` both), `GIT_SSH_COMMAND`, `git -c core.sshCommand=`, and a committed `core.sshCommand` all
+launch the same binary with the same risk.
+
+⚠️ **A plain, flagless `ssh`/`git` call is safe only if NOTHING already makes it multiplex — the
+command line is never the only source of truth.** A user-level `Host *` block setting `ControlMaster
+auto` with a multi-hour `ControlPersist` turns *every* plain call into one that opens or rides a
+master, with no flag on the command line at all. The gate evaluates the command's own EFFECTIVE
+config (`ssh -G`, together with any `-F`/`-o` that command itself supplies) — print-only, no
+connection — not just what the command line happens to spell out, because the command line cannot
+answer whether an inherited config already did the multiplexing for it.
 
 **Scope — the neighbouring cases, so the rule is not applied past where it holds:**
-- **Turning multiplexing OFF** (`ControlMaster=no`, `ControlPath=none`, `ControlPersist=no`) and
-  **closing** a master (`ssh -O exit`) are the safe direction and stay allowed — the rule binds
-  opening and keeping open, never tearing down.
+- **Turning multiplexing OFF** (`ControlMaster=no`, `ControlPath=none`, `ControlPersist=no`/`false`)
+  and **closing** a master (`ssh -O exit`, on that same call) are the safe direction and stay
+  allowed — the rule binds opening and keeping open, never tearing down.
 - **A person's own interactive master is theirs.** An agent reusing it (`-S <path>`) is covered by
   the same rule as opening one: the agent was never the one who touched the key for it.
-- **A key that needs no presence** (a machine's own unattended deploy key) loses nothing to a
-  master — the default "no master" costs it nothing, so the gate does not need to tell presence-gated
-  and unattended keys apart; it refuses multiplexing uniformly and the unattended case simply never
-  needed it.
 - **The read is gated, not only the write.** An `ls-remote` that opens a master and a push that rides
   it later in the same session is exactly the case this rule exists for — gating only the push would
   let the master open on the harmless-looking call.
+- **Not closed by this, and not this gate's to close:** `ssh -F <file>` is read and passed through to
+  the effective-config check; a `GIT_SSH=<wrapper>` (an external, unreadable script) is not, and
+  neither is a Write/Edit to the user's own ssh config file — **changing that file is the human's
+  decision, not an agent floor's.** A bare `git push`/`pull`/`fetch`/`clone` with no ssh override at
+  all is also not evaluated: resolving its real target needs the repo's own remote configuration,
+  which this check does not read. Only an explicit ssh invocation — bare `ssh`, or one embedded in
+  `GIT_SSH_COMMAND`/`core.sshCommand` — is evaluated.
 
 **Enforced by the floor, not prose:** `hooks/bash-safety-gate.sh` refuses the command before it runs,
 on the input channel the harness actually uses, with the refusal reaching the model; every shape
