@@ -147,6 +147,58 @@ out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c999999 for
 [[ $rc -eq 2 ]] && pass "control: an unminted short-comment id is still refused even with other bare numbers present" \
   || fail "control: an unrelated bare number let an unminted id through (rc=$rc): $out"
 
+# --- 1i. coa SEND-BACK on PR #435 (c189239): the bare-digits variant used to be unscoped, so a
+#     made-up comment id passed whenever its digits merely coincided with ANY number leaf anywhere in
+#     the transcript — a port, a run id, a byte count, a token count. None of those name a comment;
+#     only a "comment_id" field, an "id" field inside a comment object, or "comment NNN" prose does. ---
+T1i="$TMP/t1i.jsonl"
+mktranscript "$T1i" '{"type":"tool_result","content":"listening on port 3100, run 23519"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c3100 for context" "$T1i"); rc=$?
+[[ $rc -eq 2 ]] && pass "coa c189239: a port number coinciding with a guessed comment id is refused" \
+  || fail "coa c189239: a port number let a guessed comment id through (rc=$rc): $out"
+
+T1i2="$TMP/t1i2.jsonl"
+mktranscript "$T1i2" '{"type":"tool_result","run_id":165925}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c165925 for context" "$T1i2"); rc=$?
+[[ $rc -eq 2 ]] && pass "coa c189239: a run_id field coinciding with a guessed comment id is refused" \
+  || fail "coa c189239: a run_id field let a guessed comment id through (rc=$rc): $out"
+
+T1i3="$TMP/t1i3.jsonl"
+mktranscript "$T1i3" '{"type":"tool_result","content":"wrote 165925 bytes"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c165925 for context" "$T1i3"); rc=$?
+[[ $rc -eq 2 ]] && pass "coa c189239: a byte count coinciding with a guessed comment id is refused" \
+  || fail "coa c189239: a byte count let a guessed comment id through (rc=$rc): $out"
+
+# control: a REAL comment_id field with the same digits is still allowed — this is the legitimate
+# case the bare-digits mechanism exists for, not something this fix should also close.
+T1i4="$TMP/t1i4.jsonl"
+mktranscript "$T1i4" '{"type":"tool_result","comment_id":165925}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c165925 for context" "$T1i4"); rc=$?
+[[ $rc -eq 0 ]] && pass "control: a real comment_id field with the same digits is still allowed" \
+  || fail "control: a real comment_id field was wrongly refused (rc=$rc): $out"
+
+# control: an "id" field inside a single comment object (gitea_list_issue_comments' own per-comment
+# shape — an "id" alongside a "body") also counts; an "id" field on an unrelated object (no "body"
+# sibling — an issue, a PR) does not.
+T1i5="$TMP/t1i5.jsonl"
+mktranscript "$T1i5" '{"type":"tool_result","comments":[{"id":165925,"body":"text","user":"nik"}]}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c165925 for context" "$T1i5"); rc=$?
+[[ $rc -eq 0 ]] && pass "coa c189239: an id field inside a comment object (with a body sibling) is allowed" \
+  || fail "coa c189239: an id field inside a comment object was wrongly refused (rc=$rc): $out"
+
+T1i6="$TMP/t1i6.jsonl"
+mktranscript "$T1i6" '{"type":"tool_result","issue":{"id":165925,"title":"not a comment"}}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c165925 for context" "$T1i6"); rc=$?
+[[ $rc -eq 2 ]] && pass "coa c189239: an id field on a NON-comment object (no body sibling) is refused" \
+  || fail "coa c189239: an id field on an unrelated object was wrongly allowed (rc=$rc): $out"
+
+# control: the "comment NNN" prose form (cos dispatch's own third id-bearing context)
+T1i7="$TMP/t1i7.jsonl"
+mktranscript "$T1i7" '{"type":"tool_result","content":"see comment 165925 above for the full details"}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c165925 for context" "$T1i7"); rc=$?
+[[ $rc -eq 0 ]] && pass "coa c189239: \"comment NNN\" prose counts as an id-bearing context" \
+  || fail "coa c189239: \"comment NNN\" prose was not recognized (rc=$rc): $out"
+
 # --- 2. the SAME id with no earlier occurrence is refused ---
 T2="$TMP/t2.jsonl"
 mktranscript "$T2" '{"type":"tool_result","content":"unrelated"}'

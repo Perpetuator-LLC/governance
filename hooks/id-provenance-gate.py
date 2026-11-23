@@ -184,16 +184,25 @@ def id_variants(kind, raw_id):
     matches inside the full "#issuecomment-" anchor, it just no longer REQUIRES the "#" to be the
     character right before the match.
 
-    The bare DIGITS alone are also a variant: a tool's own JSON return often mints the id as a plain
-    NUMBER field (a Gitea MCP tool's `"comment_id": 165925`), never inside any "c"/"issuecomment-"
-    text at all — `read_transcript` makes that number its own bounded leaf of searchable text, so
-    matching the bare digits against it is the same kind of weaker-but-bounded evidence this gate
-    already accepts for a commit-SHA prefix."""
+    The bare digits are deliberately NOT a variant here (coa SEND-BACK on PR #435, c189239): they are
+    checked separately, against `id_context` only (see `bare_digits` and `read_transcript` below), not
+    against the whole flattened transcript — a port, a run id, a byte count or a token count sharing
+    the same digits must never count as the comment id being "seen"."""
     digits = re.search(r"\d+", raw_id)
     digits = digits.group(0) if digits else ""
     if kind in ("short-comment", "issuecomment"):
-        return {f"c{digits}", f"issuecomment-{digits}", digits}
+        return {f"c{digits}", f"issuecomment-{digits}"}
     return {raw_id}
+
+
+def bare_digits(kind, raw_id):
+    """The digit string to look up in `id_context`, or None when this kind never accepts a bare
+    number (a commit-sha's "digits" would be its own hex run with no letters removed, which already
+    matches far too broadly on its own; a card-anchor's token is not numeric)."""
+    if kind not in ("short-comment", "issuecomment"):
+        return None
+    m = re.search(r"\d+", raw_id)
+    return m.group(0) if m else None
 
 
 def _contains_bounded(haystack, needle, right_boundary=True):
@@ -223,30 +232,64 @@ def body_text(fields, tool_input):
     return "\n".join(parts)
 
 
-def _walk_leaves(obj):
-    """Yield every string and number leaf in a parsed JSON structure, depth-first. Numbers are
-    yielded as their decimal text (`str(obj)`) so a bare numeric id field (a tool's own
-    `"comment_id": 165925`, not embedded in any string) is still searchable text; `bool` is checked
-    before `(int, float)` because `bool` is a subclass of `int` in Python and `True`/`False` are
-    never an id."""
+# The ONLY JSON keys whose number a bare "c<N>"/"issuecomment-<N>" citation may match (coa SEND-BACK
+# on PR #435, c189239): walking every number leaf as searchable text, as a prior version of this file
+# did, let a made-up comment id pass whenever its digits merely coincided with a port, a run id, a
+# byte count or a token count anywhere in the transcript — none of those name a comment. "comment_id"
+# is the field name the fleet's own forge tools mint this id under (`gitea_comment_on_issue`'s own
+# return). "id" counts only inside a dict that is ITSELF a single forge comment object — recognised by
+# also carrying a "body" key (the shape `gitea_list_issue_comments` returns one of per comment) — so an
+# unrelated object's own "id" field (an issue, a PR, a package) never qualifies.
+ID_CONTEXT_KEYS = {"comment_id"}
+
+# The prose form of the same id-bearing context: a human or an earlier turn writing "comment 165925"
+# out in words, rather than the short "c165925" convention or a JSON field. Bounded on both sides so
+# it cannot start or end mid-word; "comment" itself is case-insensitive the way the rest of a reply
+# would be typed.
+COMMENT_PROSE_RX = re.compile(r"(?<![A-Za-z0-9_])comment\s+(\d{3,7})(?![A-Za-z0-9_])", re.IGNORECASE)
+
+
+def _is_comment_object(obj):
+    return isinstance(obj, dict) and "id" in obj and "body" in obj
+
+
+def _walk_leaves(obj, id_context=None):
+    """Yield every STRING leaf's text, depth-first — used for the textual id forms (c<N>,
+    issuecomment-<N>, a commit sha, a card anchor) and for the prose "comment NNN" context below.
+    Number leaves are never yielded as general searchable text (that was the bug: see ID_CONTEXT_KEYS
+    above) — instead, when `id_context` (a set) is given, a number found as the value of an id-bearing
+    KEY is added to it directly, in its decimal text form. `bool` is checked before `(int, float)`
+    because `bool` is a subclass of `int` in Python and `True`/`False` are never an id."""
     if isinstance(obj, str):
         yield obj
     elif isinstance(obj, bool):
         return
     elif isinstance(obj, (int, float)):
-        yield str(obj)
+        return
     elif isinstance(obj, dict):
-        for v in obj.values():
-            yield from _walk_leaves(v)
+        is_comment = _is_comment_object(obj)
+        for k, v in obj.items():
+            if id_context is not None and isinstance(k, str):
+                key_l = k.lower()
+                if key_l in ID_CONTEXT_KEYS or (key_l == "id" and is_comment):
+                    if isinstance(v, bool):
+                        pass
+                    elif isinstance(v, (int, float)):
+                        id_context.add(str(v))
+                    elif isinstance(v, str) and v.strip().isdigit():
+                        id_context.add(v.strip())
+            yield from _walk_leaves(v, id_context)
     elif isinstance(obj, list):
         for v in obj:
-            yield from _walk_leaves(v)
+            yield from _walk_leaves(v, id_context)
 
 
 def read_transcript(path):
-    """Concatenate every string/number leaf from every JSON line in the transcript, each leaf and
-    each line joined by a REAL newline. Best-effort: a line that doesn't parse is skipped, never
-    fatal — the transcript is a log, not a contract.
+    """-> (text, id_context) — text is every STRING leaf from every JSON line in the transcript, each
+    leaf and each line joined by a REAL newline; id_context is the set of digit strings found either
+    as the value of an id-bearing JSON key (see ID_CONTEXT_KEYS / _walk_leaves) or in a "comment NNN"
+    prose mention within that same text. Returns (None, None) on an unreadable file. Best-effort: a
+    line that doesn't parse is skipped, never fatal — the transcript is a log, not a contract.
 
     Walking the parsed structure, rather than re-serializing the whole object with `json.dumps`,
     matters for one reason: a tool's own multi-line output (`git ls-remote`, one ref per line) holds
@@ -269,8 +312,9 @@ def read_transcript(path):
                 fh.readline()
             raw = fh.read()
     except OSError:
-        return None
+        return None, None
     chunks = []
+    id_context = set()
     for line in raw.decode("utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line:
@@ -279,8 +323,10 @@ def read_transcript(path):
             obj = json.loads(line)
         except ValueError:
             continue
-        chunks.append("\n".join(_walk_leaves(obj)))
-    return "\n".join(chunks)
+        chunks.append("\n".join(_walk_leaves(obj, id_context)))
+    text = "\n".join(chunks)
+    id_context.update(m.group(1) for m in COMMENT_PROSE_RX.finditer(text))
+    return text, id_context
 
 
 def main():
@@ -326,12 +372,14 @@ def main():
     if not transcript_path:
         print("id-provenance-gate: not checking — no transcript_path in the hook payload", file=sys.stderr)
         return 0
-    transcript = read_transcript(transcript_path)
+    transcript, id_context = read_transcript(transcript_path)
     if transcript is None:
         print(f"id-provenance-gate: not checking — transcript unreadable at {transcript_path!r}", file=sys.stderr)
         return 0  # fails open: no transcript to check against is this gate's limitation, not a finding
 
     user_prompt = hook_input.get("prompt", "")  # the current turn's own user message, if the harness provides it
+    if user_prompt:
+        id_context.update(m.group(1) for m in COMMENT_PROSE_RX.finditer(user_prompt))
 
     for kind, raw_id in ids:
         variants = id_variants(kind, raw_id)
@@ -339,6 +387,9 @@ def main():
         if any(_contains_bounded(transcript, v, right_boundary) for v in variants) or (
             user_prompt and any(_contains_bounded(user_prompt, v, right_boundary) for v in variants)
         ):
+            continue
+        digits = bare_digits(kind, raw_id)
+        if digits is not None and digits in id_context:
             continue
         print(
             f"BLOCKED: cites {raw_id!r} ({kind}), which no earlier tool result or user message in "
