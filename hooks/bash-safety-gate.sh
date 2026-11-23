@@ -289,6 +289,45 @@ if printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_acro
   deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
 fi
 
+# Block READING THE OPERATOR'S LIVE SECRET SESSION from an agent process. A measured incident: a
+# dry-run lister, run through an agent's own sandboxed Bash shell, read an admin secret this way -- no
+# value entered a model's context, but the read itself rode a session the agent never authenticated.
+# The token-helper mechanism hands the operator's already-authenticated token to EVERY process running as the same OS
+# user, so once an operator is logged in (bao/vault login -- outside CRED_MINT's own Bash exemption
+# above, which exists for LOGIN specifically, a "legitimate blind pipeline"), any later agent command
+# that reads a secret or reveals the token rides that same live session with no new presence check at
+# all. CRED_MINT refuses MINTING a token; this refuses READING one or what it unlocks, which has no
+# comparable blind-pipeline exception -- so, unlike CRED_MINT, this is NOT scoped to tool != Bash.
+#
+# ALLOW rule "seat-approle-path" (named, per the dispatch): a seat's own credential withdrawal runs
+# through these two scripts, never through a bare bao/vault CLI call -- matching here skips both
+# refusals below entirely. Neither script's name starts with the literal word "bao"/"vault", so this
+# exemption is redundant with the refusals' own scoping today; naming it explicitly means a future
+# widening of either pattern has an obvious, auditable rule to check against, not an accidental
+# non-match to rediscover.
+SEAT_APPROLE_ALLOW='(^|[^A-Za-z0-9_./-])state-withdraw\.py([^;&|\n]*--seat([[:space:]=]|$))|(^|[^A-Za-z0-9_./-])seat-boot\.sh([^A-Za-z0-9_.-]|$)'
+if ! printf '%s' "$cmd" | grep -qE "$SEAT_APPROLE_ALLOW"; then
+  # (bao|vault) secret-read subcommands -- kv get/read/list, the legacy bare read/list -- plus the two
+  # commands that reveal the RESOLVED token itself (print token, token lookup).
+  OPERATOR_SECRET_READ='(^|[^A-Za-z0-9_-])(bao|vault)([[:space:]]+-[^[:space:]]+)*[[:space:]]+(kv[[:space:]]+(get|read|list)|read|list|print[[:space:]]+token|token[[:space:]]+lookup)([^A-Za-z0-9_-]|$)'
+  if printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$OPERATOR_SECRET_READ"; then
+    deny operator-secret-read "this reads a secret or the resolved token through the bao/vault CLI, which would ride the operator's own live session if one is open -- every process running as this user shares it, with no new presence check. Use the seat's own AppRole path (state-withdraw.py --seat, or seat-boot.sh), or ask the human to run this themselves."
+  fi
+
+  # The token-helper's own token file, read directly -- the same class as ~/.aws/credentials above, so
+  # the same reader-verb list and the same cross-subcommand check apply. NOT CLOSED by this: executing
+  # the CONFIGURED token_helper script itself (its path is host-specific, so a public core cannot name
+  # it -- an organisation's own adapter should gate its own path, the same convention CRED_MINT's own
+  # comment states for a private login wrapper); and a VAULT_TOKEN/BAO_TOKEN env var the agent's
+  # process merely INHERITS from an already-authenticated parent shell, which never appears as text in
+  # the command this gate reads at all.
+  VAULT_TOKEN_NAME='\.(vault|bao)-token\b'
+  VAULT_TOKEN_READ="cat\s+.*$VAULT_TOKEN_NAME|grep\s+.*$VAULT_TOKEN_NAME|rg\s+.*$VAULT_TOKEN_NAME|head\s+.*$VAULT_TOKEN_NAME|tail\s+.*$VAULT_TOKEN_NAME|less\s+.*$VAULT_TOKEN_NAME|more\s+.*$VAULT_TOKEN_NAME"
+  if printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$VAULT_TOKEN_READ" && ! only_across_subcommands "$scan" "$VAULT_TOKEN_READ"; then
+    deny operator-token-file-read "this reads the token helper's own token file, which holds the operator's live session token if one is open -- every process running as this user shares it, with no new presence check. Use the seat's own AppRole path (state-withdraw.py --seat, or seat-boot.sh), or ask the human to run this themselves."
+  fi
+fi
+
 # Credential-store reads. Two failures this rule had, both measured against a reference case list: it
 # needed the tool word DIRECTLY before the subcommand, case-sensitively, so a list-form argv inside an
 # interpreter wrapper, padding between the two, or the tool spelled in capitals (the default macOS disk
