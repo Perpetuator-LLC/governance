@@ -227,7 +227,10 @@ def ssh_invocation_mux(argv, label):
     # THIS SAME ssh call only — a different ssh call elsewhere in the command line gets its own,
     # independent check, never exempted by an -O exit that belongs to a different invocation.
     has_o_exit = "exit" in [v.lower() for v in args.get("O", [])]
-    if "S" in args and not has_o_exit:
+    # "-S none" explicitly turns reuse OFF (ssh(1)'s own documented escape hatch, the command-line
+    # mirror of "ControlPath none" below) — coa SEND-BACK on PR #438, c189310 non-blocking note.
+    s_values = [v.strip().lower() for v in args.get("S", [])]
+    if s_values and not has_o_exit and any(v != "none" for v in s_values):
         return f"{label}: -S reuses or targets a connection master (no -O exit on this same call)"
     if any(v in ("yes", "auto", "ask", "autoask", "true") for v in opt_text_values(args, "ControlMaster")):
         return f"{label}: -o ControlMaster is set to open a master"
