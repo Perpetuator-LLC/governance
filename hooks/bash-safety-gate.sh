@@ -106,6 +106,56 @@ if [[ "$tool" != "Bash" ]] \
   deny credential-mint "this runs a credential login or token command outside your own sandboxed shell, where it would create or print a credential in a session the human did not choose to open. Ask the human to run it themselves."
 fi
 
+# Block TURNING ON SSH connection multiplexing (governance#433). While a connection master stays open,
+# every process running as this user reaches the host over the already-authenticated connection, with
+# no new presence check — one touch on a presence-gated key (a hardware or secure-enclave key) then
+# authorizes every later command that rides the same master, including one from a different session on
+# the same account. Checked wherever ssh is invoked, including through git's own wrapper
+# (GIT_SSH_COMMAND, `-c core.sshCommand=`, a committed `core.sshCommand`).
+#
+# Cheap keyword gate first: a command mentioning none of these words is not about multiplexing at all,
+# so a plain `ssh host` or `git push` never reaches the value-parsing check below.
+MUX_KEYWORD='(^|[[:space:]])-M([[:space:]]|$)|(^|[[:space:]])-S[[:space:]]|controlmaster|controlpath|controlpersist|GIT_SSH_COMMAND|core\.sshCommand'
+if printf '%s' "$cmd" | tr '\n\r' '  ' | grep -qiE "$MUX_KEYWORD"; then
+  if command -v python3 >/dev/null 2>&1; then
+    # Exit 1 = multiplexing is being turned ON (refuse); exit 0 = safe (plain flags, or explicitly OFF).
+    if ! python3 - "$cmd" <<'PY'
+import re, sys
+
+cmd = sys.argv[1]
+
+
+def opt_values(name):  # every value assigned to `-o NAME=value` / `-o NAME value`, `=`/space, optional quotes/case
+    # ControlPath's value is a SOCKET PATH (/tmp/%r@%h:%p), not a bare word: the capture must accept
+    # slashes, %-tokens, @ and : too, or a real path silently never matches at all.
+    pat = re.compile(r'-o\s*["\']?' + name + r'["\']?[=\s]+["\']?([^\s"\';&|]+)', re.I)
+    return [m.group(1).lower() for m in pat.finditer(cmd)]
+
+
+mux = False
+if re.search(r'(^|[\s;&|])-M(\s|$)', cmd):                                  # -M opens a master
+    mux = True
+if any(v in ("yes", "auto", "ask", "autoask") for v in opt_values("ControlMaster")):
+    mux = True
+if any(v != "none" for v in opt_values("ControlPath")):                      # only "none" is off
+    mux = True
+if any(v != "no" for v in opt_values("ControlPersist")):                     # only "no" is off
+    mux = True
+# -S <path> REUSES or targets a master; the one safe pairing is closing it, `-O exit`.
+has_dash_s = re.search(r'(^|[\s])-S(\s|$)', cmd) is not None
+has_o_exit = re.search(r'-O\s*["\']?exit\b', cmd, re.I) is not None
+if has_dash_s and not has_o_exit:
+    mux = True
+sys.exit(1 if mux else 0)
+PY
+    then
+      deny ssh-mux-on "Turning on SSH connection multiplexing (a connection master, a kept-open ControlPath/ControlPersist, or reusing an existing master with -S) bypasses a presence-gated key's per-use touch for every later command that rides the same master. Use a plain ssh/git push, set ControlMaster=no / ControlPath=none / ControlPersist=no, or close a master with -O exit."
+    fi
+  else
+    deny ssh-mux-unverifiable "this safety gate cannot verify an SSH multiplexing flag is safe without python3; refusing rather than allowing it unchecked. Install python3, or run the command yourself."
+  fi
+fi
+
 # Block destructive filesystem operations
 if echo "$cmd" | grep -qE '^\s*rm\s+-rf\s+(/|~|\$HOME|\.\.)'; then
   deny rm-rf-root "Destructive rm -rf targeting root, home, or parent directory. Requires manual execution."

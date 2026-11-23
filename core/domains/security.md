@@ -467,6 +467,39 @@ runtime**, and the exposure that matters is usually created by a change that pri
    backups — so an exposure that slips past the gate is found in a day, not by luck. A hit is a
    disclosure: rotate, then purge.
 
+## An agent never turns ON SSH connection multiplexing for a presence-gated key
+
+**When a key asks a person to be present on each use — a hardware or secure-enclave key that needs a
+touch — an agent never opens, keeps open, or reuses an SSH connection master for it.** While a master
+socket stays up, every process running as that user reaches the host over the already-authenticated
+connection, with no new presence check: one touch then authorizes every later command that rides the
+same master, including a second push, or a command from a different agent session on the same
+account. **Multiplexing turns a presence gate into a time window.**
+
+Covers every shape the same intent takes: starting a master (`ControlMaster` set to `yes`, `auto`,
+`ask` or `autoask`; `ssh -M`), keeping one open (`ControlPath` set to anything but `none`;
+`ControlPersist` set to anything but `no`), and reusing an existing one (`ssh -S <path>`). Checked
+wherever ssh is invoked, not only a bare `ssh` call: `-o` flags, `GIT_SSH_COMMAND`, `git -c
+core.sshCommand=`, and a committed `core.sshCommand` all launch the same binary with the same risk.
+
+**Scope — the neighbouring cases, so the rule is not applied past where it holds:**
+- **Turning multiplexing OFF** (`ControlMaster=no`, `ControlPath=none`, `ControlPersist=no`) and
+  **closing** a master (`ssh -O exit`) are the safe direction and stay allowed — the rule binds
+  opening and keeping open, never tearing down.
+- **A person's own interactive master is theirs.** An agent reusing it (`-S <path>`) is covered by
+  the same rule as opening one: the agent was never the one who touched the key for it.
+- **A key that needs no presence** (a machine's own unattended deploy key) loses nothing to a
+  master — the default "no master" costs it nothing, so the gate does not need to tell presence-gated
+  and unattended keys apart; it refuses multiplexing uniformly and the unattended case simply never
+  needed it.
+- **The read is gated, not only the write.** An `ls-remote` that opens a master and a push that rides
+  it later in the same session is exactly the case this rule exists for — gating only the push would
+  let the master open on the harmless-looking call.
+
+**Enforced by the floor, not prose:** `hooks/bash-safety-gate.sh` refuses the command before it runs,
+on the input channel the harness actually uses, with the refusal reaching the model; every shape
+above is proven refused and the safe direction is proven allowed, each backed by a mutant.
+
 ## Found a hardcoded secret — rotation order matters
 
 1. Verify it's **live** (dead = no rotation). 2. Find every runtime consumer. 3. **Mint the
