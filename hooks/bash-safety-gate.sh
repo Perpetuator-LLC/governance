@@ -289,6 +289,113 @@ if printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$SECRET_READ" && ! only_acro
   deny secret-file-read "Reading .env files would expose secrets to the AI context. Use Secure Handoff: write a script with read -rs prompts for the user to run."
 fi
 
+# Block READING THE OPERATOR'S LIVE SECRET SESSION from an agent process. A measured incident: a
+# dry-run lister, run through an agent's own sandboxed Bash shell, read an admin secret this way -- no
+# value entered a model's context, but the read itself rode a session the agent never authenticated.
+# The token-helper mechanism hands the operator's already-authenticated token to EVERY process running as the same OS
+# user, so once an operator is logged in (bao/vault login -- outside CRED_MINT's own Bash exemption
+# above, which exists for LOGIN specifically, a "legitimate blind pipeline"), any later agent command
+# that reads a secret or reveals the token rides that same live session with no new presence check at
+# all. CRED_MINT refuses MINTING a token; this refuses READING one or what it unlocks, which has no
+# comparable blind-pipeline exception -- so, unlike CRED_MINT, this is NOT scoped to tool != Bash.
+#
+# ALLOW rule: a seat's own machine-identity credential path (coa SEND-BACK, B3) -- an ADAPTER
+# PARAMETER, never a literal script name in core: $GOVERNANCE_SEAT_ALLOW_SCRIPTS (comma- or
+# newline-separated, each entry a literal basename matched as a whole word), or a file at
+# $GOVERNANCE_SEAT_ALLOW_SCRIPTS_FILE (default ~/.governance/seat-allow-scripts, one per line, `#`
+# comments allowed) when that is unset -- the same env-var-then-dotfile convention
+# $GOVERNANCE_OWN_FORGES already uses below. No entries configured means no exemption anywhere: the
+# safe direction when nothing is set is to refuse by the rules alone, never to silently exempt.
+#
+# Scoped PER SEGMENT, not to the whole command (coa SEND-BACK, B1): matching the allow anywhere in the
+# WHOLE command previously let an unrelated segment ride along -- `echo <allowed-name>; bao kv get ...`
+# and a trailing `# <allowed-name>` shell COMMENT (never executed at all) both exempted a bao/vault
+# read that was never part of the allowed call. segment_refused() below tokenises with the same
+# shlex-based splitter as only_across_subcommands, applies the allow check to EACH segment's own text,
+# and falls back to a whole-command check only when it cannot tokenise at all (nesting, nothing this
+# gate can see into) -- the safe direction there is to keep evaluating, never to silently exempt.
+seat_allow_scripts_list() {
+  if [[ -n "${GOVERNANCE_SEAT_ALLOW_SCRIPTS:-}" ]]; then
+    printf '%s' "$GOVERNANCE_SEAT_ALLOW_SCRIPTS" | tr ',\n' '  '
+  else
+    local f="${GOVERNANCE_SEAT_ALLOW_SCRIPTS_FILE:-$HOME/.governance/seat-allow-scripts}"
+    [[ -f "$f" ]] && grep -v '^[[:space:]]*#' "$f" | tr '\n' ' '
+  fi
+}
+SEAT_ALLOW_SCRIPTS="$(seat_allow_scripts_list)"
+SEAT_APPROLE_ALLOW=""
+if [[ -n "$SEAT_ALLOW_SCRIPTS" ]]; then
+  SEAT_ALLOW_RX=$(printf '%s\n' $SEAT_ALLOW_SCRIPTS | sed 's/[.[\*^$()+?{}|\\]/\\&/g' | paste -sd'|' -)
+  [[ -n "$SEAT_ALLOW_RX" ]] && SEAT_APPROLE_ALLOW="(^|[^A-Za-z0-9_./-])($SEAT_ALLOW_RX)([^A-Za-z0-9_.-]|\$)"
+fi
+
+# segment_refused <text> <rule: secret-read|token-file-read> -> 0 if some SEGMENT matches that rule's
+# refusal shape and is not exempted by $SEAT_APPROLE_ALLOW (matched against that SAME segment's own
+# text only); 1 otherwise. "secret-read" is case-insensitive (coa SEND-BACK, B2: a capitalised BAO on
+# a case-insensitive filesystem runs bao) and tolerates a LIST-FORM argv's own punctuation as a word
+# separator (B2: subprocess.run(["bao","kv","get",...]) has no whitespace between elements at all --
+# only a closing quote, a comma, and an opening quote).
+segment_refused() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 - "$1" "$2" "$SEAT_APPROLE_ALLOW" <<'PY' 2>/dev/null
+import re, shlex, sys
+cmd, rule, allow_pat = sys.argv[1], sys.argv[2], sys.argv[3]
+
+SEP = r'(?:\s+|\\?["\']\s*,\s*\\?["\'])'
+RULES = {
+    "secret-read": re.compile(
+        r'(?i)(?<![A-Za-z0-9_])(bao|vault)(?:' + SEP + r'-[^\s,"\']+)*' + SEP +
+        r'(kv' + SEP + r'(get|read|list)|read|list|print' + SEP + r'token|token' + SEP + r'lookup)'
+        r'(?![A-Za-z0-9_])'
+    ),
+    "token-file-read": re.compile(
+        r'(?:cat|grep|rg|head|tail|less|more)\s+.*\.(vault|bao)-token\b', re.DOTALL
+    ),
+}
+refuse_rx = RULES[rule]
+allow_rx = re.compile(allow_pat) if allow_pat else None
+
+def is_refused(text):
+    return bool(refuse_rx.search(text)) and not (allow_rx and allow_rx.search(text))
+
+if re.search(r"[`()]|\\[;&|\n]", cmd):
+    sys.exit(0 if is_refused(cmd) else 1)
+try:
+    lex = shlex.shlex(cmd, posix=False, punctuation_chars="();<>|&\n")
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    toks = list(lex)
+except ValueError:
+    sys.exit(0 if is_refused(cmd) else 1)
+if any(t in ("{", "}") for t in toks):
+    sys.exit(0 if is_refused(cmd) else 1)
+SEPTOK = {"&&", "||", ";", "|", "&", "|&", "\n"}
+segs, cur = [], []
+for t in toks:
+    if t in SEPTOK:
+        segs.append(cur); cur = []
+    else:
+        cur.append(t)
+segs.append(cur)
+sys.exit(0 if any(is_refused(" ".join(s)) for s in segs) else 1)
+PY
+}
+
+if segment_refused "$scan" secret-read; then
+  deny operator-secret-read "this reads a secret or the resolved token through the bao/vault CLI, which would ride the operator's own live session if one is open -- every process running as this user shares it, with no new presence check. Use the seat's own machine-identity credential path, or ask the human to run this themselves."
+fi
+
+# The token-helper's own token file, read directly -- the same class as ~/.aws/credentials above, so
+# the same reader-verb list applies, now per segment via segment_refused() too. NOT CLOSED by this:
+# executing the CONFIGURED token_helper script itself (its path is host-specific, so a public core
+# cannot name it -- an organisation's own adapter should gate its own path, the same convention
+# CRED_MINT's own comment states for a private login wrapper); and a VAULT_TOKEN/BAO_TOKEN env var the
+# agent's process merely INHERITS from an already-authenticated parent shell, which never appears as
+# text in the command this gate reads at all.
+if segment_refused "$scan" token-file-read; then
+  deny operator-token-file-read "this reads the token helper's own token file, which holds the operator's live session token if one is open -- every process running as this user shares it, with no new presence check. Use the seat's own machine-identity credential path, or ask the human to run this themselves."
+fi
+
 # Credential-store reads. Two failures this rule had, both measured against a reference case list: it
 # needed the tool word DIRECTLY before the subcommand, case-sensitively, so a list-form argv inside an
 # interpreter wrapper, padding between the two, or the tool spelled in capitals (the default macOS disk
