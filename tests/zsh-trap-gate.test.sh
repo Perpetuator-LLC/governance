@@ -73,6 +73,14 @@ allows $Z 'R="a b"; ls $RX'
 # A body fed to bash runs under bash, where the unquoted form is the correct idiom.
 allows $Z "bash <<'SH'${NL}R=\"a b\"; ls \$R${NL}SH"
 
+# governance#380: a QUOTED "$f" inside a quoted command substitution "$(...)" was wrongly refused. The
+# flat scan had no stack: the inner quote that OPENS "$f" read as the one that CLOSES the OUTER
+# "$(...)", so $f looked unquoted even though it plainly is not.
+allows $Z 'f="a b.md"; printf "x\ny\n" > "$f"; printf "%s" "$(sed -n 1,2p "$f")" | shasum -a 256'
+# control: the SAME variable, genuinely UNQUOTED inside the substitution, still DENYs — the fix
+# narrows what counts as quoted; it does not stop recognising what is actually unquoted.
+refuses $Z 'zsh does not word-split an unquoted `\$f`' 'f="a b.md"; printf "%s" "$(sed -n 1,2p $f)"'
+
 echo " ── 3. scope: only a zsh harness shell"
 allows $B 'git push origin "$H:refs/heads/x"'
 allows $B 'R=".governance Engagements/Internal/Strategy"; grep -ril KPI-014 $R'

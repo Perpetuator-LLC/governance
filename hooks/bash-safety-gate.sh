@@ -364,31 +364,56 @@ def blank_heredocs(text, quoted_only):
 
 def states(text):
     """Per character: N unquoted, D inside double quotes, S never expanded (single-quoted, escaped, or
-    a comment)."""
-    st, q, i, word_start = [], None, 0, True
-    while i < len(text):
-        c = text[i]
-        if q is None:
-            if c == "\\":
-                st += ["S", "S"]; i += 2; word_start = False; continue
-            if c == "#" and word_start:
-                while i < len(text) and text[i] != "\n":
-                    st.append("S"); i += 1
-                continue
-            if c == "'" or (c == "$" and text[i + 1:i + 2] == "'"):
-                n = 2 if c == "$" else 1
-                j = text.find("'", i + n)
-                j = len(text) - 1 if j < 0 else j
-                st += ["S"] * (j - i + 1); i = j + 1; word_start = False; continue
+    a comment).
+
+    `$(...)` is scanned with its OWN, FRESH quote state — the shell parses a command
+    substitution's content as an independent nested command line, in EITHER outer context (command
+    substitution works inside double quotes too, `"$(cmd)"` is the ordinary idiom for capturing output
+    quoted). A flat, non-recursive scan has no way to know an inner `"` OPENS a quote belonging to the
+    substitution rather than CLOSING the outer one, so `"$(sed -n 1,2p "$f")"` read the inner quote as
+    closing the outer string, leaving `$f` looking unquoted and the already-quoted `"$f"` wrongly denied
+    for the thing quoting it exists to prevent."""
+    def scan(i, outer_q, in_subst):
+        # outer_q: '"' or None, the quote this call was entered under — used only to label the two
+        # characters of "$(" / ")" themselves, which never participate in a later match anyway.
+        # in_subst: True once recursed into a substitution's content, so its OWN closing ")" (seen at
+        # this scan's unquoted level, never inside a quote it opens itself) ends the recursion.
+        st, q, word_start = [], None, True
+        outer_label = "D" if outer_q == '"' else "N"
+        while i < len(text):
+            c = text[i]
+            if q is None:
+                if c == "\\":
+                    st += ["S", "S"]; i += 2; word_start = False; continue
+                if c == "#" and word_start:
+                    while i < len(text) and text[i] != "\n":
+                        st.append("S"); i += 1
+                    continue
+                if c == "'" or (c == "$" and text[i + 1:i + 2] == "'"):
+                    n = 2 if c == "$" else 1
+                    j = text.find("'", i + n)
+                    j = len(text) - 1 if j < 0 else j
+                    st += ["S"] * (j - i + 1); i = j + 1; word_start = False; continue
+                if c == "$" and text[i + 1:i + 2] == "(":
+                    inner_st, i = scan(i + 2, None, True)
+                    st += [outer_label, outer_label] + inner_st; word_start = False; continue
+                if in_subst and c == ")":
+                    return st, i + 1
+                if c == '"':
+                    q = '"'; st.append("D"); i += 1; word_start = False; continue
+                st.append("N"); word_start = c in " \t\n;&|()"; i += 1; continue
+            # q == '"': the SAME nesting applies inside an open double quote.
+            if c == "\\" and text[i + 1:i + 2] in ('$', '"', "\\", "`"):
+                st += ["S", "S"]; i += 2; continue
+            if c == "$" and text[i + 1:i + 2] == "(":
+                inner_st, i = scan(i + 2, '"', True)
+                st += ["D", "D"] + inner_st; continue
             if c == '"':
-                q = '"'; st.append("D"); i += 1; word_start = False; continue
-            st.append("N"); word_start = c in " \t\n;&|()"; i += 1; continue
-        if c == "\\" and text[i + 1:i + 2] in ('$', '"', "\\", "`"):
-            st += ["S", "S"]; i += 2; continue
-        if c == '"':
-            q = None
-        st.append("D"); i += 1
-    return st[:len(text)]
+                q = None
+            st.append("D"); i += 1
+        return st, i
+    result, _ = scan(0, None, False)
+    return result[:len(text)]
 
 # 1. `$name:<modifier>`, unbraced, wherever this shell expands it.
 a = blank_heredocs(cmd, quoted_only=True)
