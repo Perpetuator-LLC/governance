@@ -99,6 +99,54 @@ out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see 0bf5a69 for
 [[ $rc -eq 2 ]] && pass "a 7-hex string found only MID-WORD inside a longer SHA (not at its start) is refused" \
   || fail "a mid-word hex substring was wrongly allowed as a SHA prefix (rc=$rc): $out"
 
+# --- 1f. governance#402: a forge comment URL anchor a tool just returned now matches itself. The
+#     issue number always sits right before the "#" (".../issues/787#issuecomment-165925"), so a
+#     bound tested on "#" always sees a digit there and never matches; bounded on "issuecomment-"
+#     instead, the left neighbour is "#", which is never alphanumeric. ---
+T1f="$TMP/t1f.jsonl"
+mktranscript "$T1f" '{"type":"tool_result","content":"{\"html_url\": \"https://forge/x/issues/787#issuecomment-165925\"}"}'
+out=$(run_gate SendMessage message "see https://forge/x/issues/787#issuecomment-165925" "$T1f"); rc=$?
+[[ $rc -eq 0 ]] && pass "governance#402: the full forge URL anchor a tool just returned, cited verbatim: allowed" \
+  || fail "governance#402: the forge URL anchor a tool just returned was refused (rc=$rc): $out"
+# control: a different comment id in the same URL shape is still refused
+out=$(run_gate SendMessage message "see https://forge/x/issues/787#issuecomment-165926" "$T1f"); rc=$?
+[[ $rc -eq 2 ]] && pass "control: an unminted comment id in the same URL shape is still refused" \
+  || fail "control: an unminted comment id in a URL anchor was allowed (rc=$rc): $out"
+# control: a truncated id in the full URL form is still refused (right bound kept)
+out=$(run_gate SendMessage message "see https://forge/x/issues/787#issuecomment-16592" "$T1f"); rc=$?
+[[ $rc -eq 2 ]] && pass "control: a truncated id in the full URL form is still refused (right bound kept)" \
+  || fail "control: a truncated full-form id matched inside the real one (rc=$rc): $out"
+
+# --- 1g. governance#402 (c153733): a commit SHA at the START of a tool-output LINE is allowed. A
+#     multi-line tool result (git ls-remote: one "<sha>\trefs/heads/<branch>" row per line) has a REAL
+#     newline right before the second SHA; re-serializing the parsed JSON with json.dumps turns that
+#     real newline into the two PRINTABLE characters "\" and "n", so the character the old code
+#     actually searched before the SHA was the letter "n" — alphanumeric, and the left-boundary check
+#     silently refused an id that was plainly present. ---
+T1g="$TMP/t1g.jsonl"
+SHA_LINE2="2bdf7a11c91234567890abcdef1234567890abcd"
+mktranscript "$T1g" "{\"type\":\"tool_result\",\"content\":\"11538e2dabc1234567890abcdef1234567890ab\\trefs/heads/main\\n${SHA_LINE2}\\trefs/heads/dev\"}"
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see $SHA_LINE2 for context" "$T1g"); rc=$?
+[[ $rc -eq 0 ]] && pass "governance#402: a commit SHA at the START of a tool-output line (after a real newline) is allowed" \
+  || fail "governance#402: a SHA at the start of a tool-output line was wrongly refused (rc=$rc): $out"
+# control: the SHA on the FIRST line (no preceding newline at all) still matches, as it always did
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see 11538e2d for context" "$T1g"); rc=$?
+[[ $rc -eq 0 ]] && pass "control: a SHA prefix on the transcript's very first line still matches" \
+  || fail "control: a SHA prefix on the first line was wrongly refused (rc=$rc): $out"
+
+# --- 1h. governance#402: a tool's own BARE NUMERIC id field (not embedded in any string — a JSON
+#     number, e.g. a Gitea MCP tool's own `"comment_id": 165925`) is now searchable text too, so a
+#     short "c<N>" citation of it is allowed. ---
+T1h="$TMP/t1h.jsonl"
+mktranscript "$T1h" '{"type":"tool_result","comment_id":165925,"issue_number":9,"success":true}'
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c165925 for context" "$T1h"); rc=$?
+[[ $rc -eq 0 ]] && pass "governance#402: a bare numeric comment_id field, cited as c<N>: allowed" \
+  || fail "governance#402: a bare numeric comment_id field was not recognized (rc=$rc): $out"
+# control: a DIFFERENT number in the same shape (e.g. issue_number) must not satisfy a different id
+out=$(run_gate mcp__perpetuator__gitea_comment_on_issue comment "see c999999 for context" "$T1h"); rc=$?
+[[ $rc -eq 2 ]] && pass "control: an unminted short-comment id is still refused even with other bare numbers present" \
+  || fail "control: an unrelated bare number let an unminted id through (rc=$rc): $out"
+
 # --- 2. the SAME id with no earlier occurrence is refused ---
 T2="$TMP/t2.jsonl"
 mktranscript "$T2" '{"type":"tool_result","content":"unrelated"}'

@@ -175,13 +175,24 @@ def id_variants(kind, raw_id):
     convention (c76292) and a forge's own anchor (#issuecomment-76292) can name the same comment; a
     literal string match on raw_id alone misses that every time one form was minted and the other is
     what got cited, which is the common case (a tool result returns the forge's full anchor, a human
-    or an earlier turn writes the short form back)."""
+    or an earlier turn writes the short form back).
+
+    The anchor is searched WITHOUT its "#": a forge URL always puts the issue number right before it
+    (".../issues/787#issuecomment-165925"), so a left bound tested on "#" always sees a digit there
+    and a URL a tool just returned could never match itself. Bounded on "issuecomment-" instead, the
+    left neighbour is the "#" (or a line start), which is never alphanumeric — so the bare form still
+    matches inside the full "#issuecomment-" anchor, it just no longer REQUIRES the "#" to be the
+    character right before the match.
+
+    The bare DIGITS alone are also a variant: a tool's own JSON return often mints the id as a plain
+    NUMBER field (a Gitea MCP tool's `"comment_id": 165925`), never inside any "c"/"issuecomment-"
+    text at all — `read_transcript` makes that number its own bounded leaf of searchable text, so
+    matching the bare digits against it is the same kind of weaker-but-bounded evidence this gate
+    already accepts for a commit-SHA prefix."""
     digits = re.search(r"\d+", raw_id)
     digits = digits.group(0) if digits else ""
-    if kind == "short-comment":
-        return {raw_id, f"issuecomment-{digits}", f"#issuecomment-{digits}"}
-    if kind == "issuecomment":
-        return {raw_id, f"c{digits}"}
+    if kind in ("short-comment", "issuecomment"):
+        return {f"c{digits}", f"issuecomment-{digits}", digits}
     return {raw_id}
 
 
@@ -212,9 +223,40 @@ def body_text(fields, tool_input):
     return "\n".join(parts)
 
 
+def _walk_leaves(obj):
+    """Yield every string and number leaf in a parsed JSON structure, depth-first. Numbers are
+    yielded as their decimal text (`str(obj)`) so a bare numeric id field (a tool's own
+    `"comment_id": 165925`, not embedded in any string) is still searchable text; `bool` is checked
+    before `(int, float)` because `bool` is a subclass of `int` in Python and `True`/`False` are
+    never an id."""
+    if isinstance(obj, str):
+        yield obj
+    elif isinstance(obj, bool):
+        return
+    elif isinstance(obj, (int, float)):
+        yield str(obj)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            yield from _walk_leaves(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _walk_leaves(v)
+
+
 def read_transcript(path):
-    """Concatenate every string value from every JSON line in the transcript. Best-effort: a line
-    that doesn't parse is skipped, never fatal — the transcript is a log, not a contract.
+    """Concatenate every string/number leaf from every JSON line in the transcript, each leaf and
+    each line joined by a REAL newline. Best-effort: a line that doesn't parse is skipped, never
+    fatal — the transcript is a log, not a contract.
+
+    Walking the parsed structure, rather than re-serializing the whole object with `json.dumps`,
+    matters for one reason: a tool's own multi-line output (`git ls-remote`, one ref per line) holds
+    a REAL newline before an id that starts a line. `json.dumps` re-encodes
+    that real newline as the two PRINTABLE characters `\\` and `n` — so the character immediately
+    before the id, in the text actually searched, is the letter "n", which IS alphanumeric, and the
+    left-boundary check in `_contains_bounded` silently refuses an id that plainly was present. Each
+    leaf's own text already has its real newlines restored by `json.loads` before this function ever
+    sees it; joining leaves (and lines) with an actual "\\n" character — never the two-character
+    escape — keeps that boundary genuine everywhere a tool's own output used one.
 
     Bounded to the last MAX_TRANSCRIPT_READ_BYTES of the file (a tail read, binary-seek so the byte
     offset is unambiguous): the first line after the seek is dropped unconditionally, since the seek
@@ -237,7 +279,7 @@ def read_transcript(path):
             obj = json.loads(line)
         except ValueError:
             continue
-        chunks.append(json.dumps(obj))  # keep it simple: search the raw re-serialized line
+        chunks.append("\n".join(_walk_leaves(obj)))
     return "\n".join(chunks)
 
 
