@@ -26,4 +26,11 @@
 # NOT closed by this pattern — those need the shell's own path and variable resolution to see through,
 # which a regex over un-executed text cannot do; recorded here as an accepted limit of a best-effort
 # gate, not a parser.
-CREDENTIAL_PATH_RX='(\.aws/+credentials\b|\.aws/+config\b|\.netrc\b|\.ssh/+id_[a-z0-9_]*\b|\.ssh/+[a-z0-9_]*_key\b|\.docker/+config\.json\b|\.kube/+config\b|\.config/+gh/+hosts\.yml\b|\.git-credentials\b|\.pgpass\b)'
+# `id_*` EXCLUDES `.pub` (coa SEND-BACK on PR #436, c189240): a public key is not a credential, and
+# main allows reading or installing one (`cat ~/.ssh/id_ed25519.pub`, `ssh-keygen -lf
+# ~/.ssh/id_rsa.pub`). The `\b` bound this used to end on doesn't stop there — `id_ed25519.pub` still
+# has a `\b` right after `id_ed25519`, so the fragment matched the private-key prefix of a `.pub` name
+# too. `($|[^a-z0-9_.])` requires the id to be followed by end-of-string or a character that is not
+# itself part of an extended id OR a dot, so a `.pub` (or any other extension) suffix no longer matches
+# while a bare `id_ed25519`, a trailing `_backup`, or a following `/`, space, or quote still does.
+CREDENTIAL_PATH_RX='(\.aws/+credentials\b|\.aws/+config\b|\.netrc\b|\.ssh/+id_[a-z0-9_]+($|[^a-z0-9_.])|\.ssh/+[a-z0-9_]*_key\b|\.docker/+config\.json\b|\.kube/+config\b|\.config/+gh/+hosts\.yml\b|\.git-credentials\b|\.pgpass\b)'

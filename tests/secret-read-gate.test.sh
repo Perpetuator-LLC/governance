@@ -137,6 +137,16 @@ cases = [
     # non-reading uses that merely mention one. Grouping fixes both directions at once.
     (ALLOW, "ssh -i ~/.ssh/id_ed25519 host"), (ALLOW, "ssh-keygen -lf ~/.ssh/id_ed25519.pub"),
     (ALLOW, "kubectl --kubeconfig ~/.kube/config get pods"),
+    # coa SEND-BACK on PR #436 (c189240 item 1): a public key is not a credential, and main allows
+    # reading or installing one. The id_* fragment's \b bound still sat right after the id, so it
+    # matched the private-key prefix of a .pub name too — THIS time with the reader verb (cat) that
+    # the ssh-keygen/ssh -i rows above never exercised, since neither is on the verb list.
+    (ALLOW, "cat ~/.ssh/id_ed25519.pub"), (ALLOW, "cat ~/.ssh/id_rsa.pub >> authorized_keys"),
+    (BLOCK, "cat ~/.ssh/id_ed25519_backup"),
+    # coa item 2: the case-insensitivity fix (item 2 above) was verified only on the simpler
+    # alternatives; these two rows pin it on the id_* fragment specifically, since that's the one
+    # whose pattern just changed again for the .pub exclusion.
+    (BLOCK, "cat ~/.AWS/credentials"), (BLOCK, "cat ~/.SSH/ID_ED25519"),
     # item 4: a doubled path separator is the same file to the shell (it collapses repeated slashes).
     (BLOCK, "cat ~/.aws//credentials"),
     # item 5: sed/awk/base64 all dump a file's content given its path, same as cat; added to the verb
