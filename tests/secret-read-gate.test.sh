@@ -40,11 +40,6 @@ python3 - "$TMP/cases.jsonl" <<'PY'
 import json, sys
 E = "." + "env"
 BLOCK, ALLOW, FP = "BLOCK", "ALLOW", "FP"   # FP: ALLOW with python3, BLOCK (fail closed) without
-# DEC: the MIRROR of FP. decode_shell_words() (governance#335) needs python3 to resolve an escape the
-# raw-text regex never sees past; without it, this leg is silently skipped (the gate's own documented,
-# accepted degradation — it can only MISS an obfuscated case, never undo a block the raw text already
-# made). So: BLOCK with python3, ALLOW (fails OPEN on this one leg only) without it.
-DEC = "DEC"
 cases = [
     # real reads — must stay blocked
     (BLOCK, f"grep KEY {E}"), (BLOCK, f"cat {E} | head"), (BLOCK, f"head {E} && echo ok"),
@@ -100,10 +95,31 @@ cases = [
     (BLOCK, "cat <<'A' <<'B'\n" + E + "\nA\ncat " + E + "\nB"),  # two heredocs on a line: nothing removed
     # governance#335: a shell backslash/quote/ANSI-C escape all produce the same final word a reader
     # receives (`.\env` / `.e\nv` / `'.e'nv` / `".en"v` / `$'\x2eenv'` all run as `.env`), which a
-    # regex over the RAW text never sees past.
-    (DEC, "cat .\\" + "env"), (DEC, "cat .e\\nv"), (DEC, "cat '.e'nv"), (DEC, 'cat ".en"v'),
-    (DEC, "cat $'\\x2e" + "env'"),
+    # regex over the RAW text never sees past. Plain BLOCK now, not mode-dependent: cisa's SEND-BACK on
+    # PR #436 (c189146 item 6) closed the "allowed without python3" gap a first version of this fix
+    # had — the no-python3 fallback below now refuses a reader verb next to any of these markers too,
+    # so these five BLOCK on every leg this suite can actually exercise (host and nojq both HAVE
+    # python3; only "nopy" lacks it, and that leg is skipped outright on a host with no jq either, same
+    # as every other nopy-only assertion in this file).
+    (BLOCK, "cat .\\" + "env"), (BLOCK, "cat .e\\nv"), (BLOCK, "cat '.e'nv"), (BLOCK, 'cat ".en"v'),
+    (BLOCK, "cat $'\\x2e" + "env'"),
     (ALLOW, "cat README.md"), (ALLOW, "printf 'a\\nb'"),
+    # cisa SEND-BACK on PR #436 (c189146 item 1): octal and \u/\U ANSI-C escapes were not decoded.
+    (BLOCK, "cat $'\\056" + "env'"), (BLOCK, "cat $'\\u002e" + "env'"),
+    # item 1: shlex treated a bare, mid-word "#" as a comment and dropped the rest of the LINE — not
+    # just the rest of the word. A "#" sitting earlier in the SAME command silently deleted a later,
+    # genuinely escaped .env reference from the decoded text entirely.
+    (BLOCK, "echo re#view: cat .\\" + "env"),
+    # item 1: a heredoc body that is EXECUTED (not data — strip_data_heredocs leaves it alone), holding
+    # an unbalanced-looking apostrophe, used to make decode_shell_words raise and the leg then silently
+    # ALLOW. It now fails CLOSED on an undecodable command instead.
+    (BLOCK, "bash <<'EOF'\necho it's broken; cat .\\" + "env\nEOF"),
+    # item 1: a quoted separator (";", "&&") decoded to a BARE one, so only_across_subcommands's own
+    # re-tokenising of the decoded text split there and allowed. Fixed by re-quoting with shlex.join.
+    (BLOCK, 'grep ";" .\\' + "env"), (BLOCK, 'grep "&&" .\\' + "env"),
+    # control: the cross-subcommand false positive this decode leg must NOT reintroduce — a command
+    # with no backslash/quote at all never reaches decode_shell_words in the first place.
+    (ALLOW, "head -5 README.md && ls -la " + E + ".example"),
     # governance#335: well-known credential-STORE paths, not just the .env NAME shape, on the SAME
     # reader verbs. A credential-adjacent path that merely shares a short substring (no reader verb
     # directly on a real credential path) stays allowed.
@@ -112,8 +128,28 @@ cases = [
     (BLOCK, "cat ~/.kube/config"), (BLOCK, "cat ~/.config/gh/hosts.yml"),
     (BLOCK, "cat ~/.git-credentials"), (BLOCK, "cat ~/.pgpass"),
     (ALLOW, "cat README.aws.md"), (ALLOW, "cat notes/kube-config-migration.md"),
+    # cisa SEND-BACK on PR #436 (c189146 item 2): credential-paths.sh's own docstring already promised
+    # case-insensitive matching; the read gate's grep had no -i, so an upper-cased spelling read clean
+    # on a case-insensitive filesystem.
+    (BLOCK, "cat ~/.AWS/CREDENTIALS"), (BLOCK, "cat ~/.Netrc"),
+    # item 3: CREDENTIAL_PATH_RX's un-grouped alternation bound a reader verb to only its FIRST
+    # alternative; every OTHER path fragment was an ungated top-level match, refusing ordinary,
+    # non-reading uses that merely mention one. Grouping fixes both directions at once.
+    (ALLOW, "ssh -i ~/.ssh/id_ed25519 host"), (ALLOW, "ssh-keygen -lf ~/.ssh/id_ed25519.pub"),
+    (ALLOW, "kubectl --kubeconfig ~/.kube/config get pods"),
+    # item 4: a doubled path separator is the same file to the shell (it collapses repeated slashes).
+    (BLOCK, "cat ~/.aws//credentials"),
+    # item 5: sed/awk/base64 all dump a file's content given its path, same as cat; added to the verb
+    # list. python3 -c "open(...)" and an arbitrary interpreter reading its own argv are NOT closed by
+    # this — recorded as an accepted limit (c189146 item 5): a regex over reader VERBS cannot see into
+    # arbitrary code.
+    (BLOCK, f"sed -n p {E}"), (BLOCK, f"awk 1 {E}"), (BLOCK, f"base64 {E}"),
     # controls
     (ALLOW, "ls -la"), (ALLOW, "git status"),
+    # item 3's own mirror control: "ls" was never on the reader-verb list (listing a file's metadata is
+    # not reading its content) — this is the ONE case from cisa's own report that is NOT a bug to close,
+    # named here so the grouping fix above is never mistaken for "ls should now refuse too".
+    (ALLOW, "ls ~/.aws/credentials"),
 ]
 with open(sys.argv[1], "w") as fh:
     for expect, cmd in cases:
@@ -139,10 +175,6 @@ for line in open(cases):
     # Without python3 the sub-command check cannot run: every whole-string match must stay BLOCKED.
     if want == "FP":
         want = "BLOCK" if mode == "failclosed" else "ALLOW"
-    # Without python3 the escape-decode leg cannot run either, but in the OPPOSITE direction: there is
-    # no raw-text match to fall back on, so the leg is simply skipped and the command is allowed.
-    elif want == "DEC":
-        want = "ALLOW" if mode == "failclosed" else "BLOCK"
     r = subprocess.run(["bash", gate], input=json.dumps(c["payload"]), env=env,
                        capture_output=True, text=True)
     got = {2: "BLOCK", 0: "ALLOW"}.get(r.returncode, f"EXIT{r.returncode}")
