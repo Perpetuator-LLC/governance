@@ -3766,6 +3766,32 @@ helper calls.
   that needs a credential must not depend on a presence-gated store at all (*A test of an UNATTENDED
   job, run from an interactive session, borrows that session's credentials*).
 
+## The same credential-free default, for git itself
+
+**Git loads a system-wide config too, and on a desktop OS that config may already name a credential
+store.** Where the rule above points a container CLI at an empty config file, git has no empty-config
+flag of its own — but its OWN config resolution can be overridden the same way: start every agent
+session with `credential.helper` reset to empty (`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/
+`GIT_CONFIG_VALUE_0`, read before any config file) and `GIT_TERMINAL_PROMPT=0` (so a prompt that still
+somehow fires fails the call instead of hanging on an answer nobody sees arrive). Measured: an agent's
+own `git ls-remote https://<a forge>` — a read, needing no credential the call itself supplies —
+resolved the OS's system gitconfig, which named the desktop keychain helper, and raised a password
+prompt on the human's own screen for an unrelated, already-saved login.
+
+- **A floor gate is the backstop, not the fix, for the same reason as the Docker case above:** an
+  agent command that explicitly RE-ENABLES the helper (`-c credential.helper=<value>`, `git config
+  credential.helper <value>`), invokes the credential subsystem directly (`git credential
+  fill/approve/reject`, a helper binary by its own name), or STRIPS the session's own override before
+  running git (`env -i`, or `env -u` on one of the four names above) is refused outright. **The safe
+  direction stays open:** unsetting the key, or setting it to empty, is exactly what the override
+  itself does.
+- **Mirror of "point the tool at an empty config, pin the endpoint first":** here the override is
+  session-wide, not per-invocation, because there is no single wrapper every git call already goes
+  through the way a container run goes through one committed script.
+- **Scope:** an interactive desktop host where a system or user gitconfig can name a credential
+  store. A server or container with no such config is unaffected, though the override remains
+  harmless there.
+
 ## A fleet audit measures against the FORGE, never against `refs/remotes/*` as found
 
 **`origin/<default>` is a local file.** It is a pointer cached by the last fetch, and its *spelling*

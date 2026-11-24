@@ -467,6 +467,48 @@ runtime**, and the exposure that matters is usually created by a change that pri
    backups — so an exposure that slips past the gate is found in a day, not by luck. A hit is a
    disclosure: rotate, then purge.
 
+## A human operator's live session is not an agent's to ride
+
+⚠️ **A credential-store token helper (`bao`/`vault` and equivalents) hands the operator's
+already-authenticated token to EVERY process running as the same OS user — not only the one the
+operator typed into.** Once an operator logs in interactively, any agent process sharing that user
+account can use the CLI to read a secret, or reveal the token itself, with **no new presence check
+at all**: the operator's one login becomes a standing, silent capability for every agent on the host
+until the session ends. This is the same class as inheriting an SSH connection multiplexer's already
+-open master, or a browser's already-logged-in cookie jar — the thing worth gating is never the
+*login*, which already has its own control; it is everything a live login then lets a DIFFERENT
+process ride for free.
+
+- **Scope:** this rule is about an agent process using a human operator's OWN interactively-minted
+  session. It does not restrict a seat's own machine-identity credential (an AppRole, a service
+  account, a scoped API key minted FOR that agent): that path never touches the operator's token
+  helper at all, and must keep working — naming it is part of the fix, not an afterthought.
+- **The floor refuses the READ, not only the mint.** A login prompt can be a legitimate blind
+  pipeline for a human at an interactive terminal (see *The BLIND PIPELINE*, above); reading a secret
+  or the resolved token through the CLI has no comparable case for an agent, piped or not — a value
+  piped straight into another tool's stdin still rides the live session, even though the value never
+  enters the agent's own context.
+- **A token-helper's own token file (`~/.vault-token` and equivalents) holds the live token in one
+  line**, so the floor refuses the common ways to read or copy it (a reader or filter verb, a copy,
+  an input redirect). That list is best effort: a reader it does not name is not seen. Listing the
+  file, testing for it and removing it stay allowed.
+- **A names-only listing is not a secret read.** Listing the paths under a mount, or reading a
+  path's metadata, shows that a secret exists and never its value, so the floor leaves it open: an
+  agent checks a path is present before it asks for it to be seeded. Unwrapping, and minting a child
+  token from the operator's session, are refused with the reads.
+- **No allow rule by name.** An exemption matched against the whole command ("this command names the
+  seat's own credential script") switches the refusal off for everything else on the line. An
+  installation that needs one scopes it to a single sub-command, in its own adapter.
+- **Not closed by a floor gate, and said so rather than assumed:** running the operator's
+  specifically-configured helper SCRIPT (its path is host-specific, so a shared rule cannot name it —
+  an organisation's own adapter gates its own path); and a token the agent's process merely
+  *inherits* as an already-exported environment variable from its parent shell, which carries no
+  command text for a gate to read at all. The same holds for a `write` to a path that hands back
+  secret material (a decrypt, a fresh secret-id, a token-create endpoint): a write is not a read by
+  shape, and the paths are an installation's own. An operator session that is short-lived and explicitly
+  ended (`… revoke -self` closing every runbook that opens one) narrows the exposure window these
+  gaps leave; it does not replace the floor above.
+
 ## Found a hardcoded secret — rotation order matters
 
 1. Verify it's **live** (dead = no rotation). 2. Find every runtime consumer. 3. **Mint the
