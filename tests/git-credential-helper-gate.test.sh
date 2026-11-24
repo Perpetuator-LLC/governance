@@ -347,6 +347,82 @@ mutant "reads are told from the command after its quotes are removed" \
   'cmd_names=$cmd' 'cmd_names=$cmd_bare' \
   "$H_ANSI" "$H_EMPTY" "$H_LOCALE" "$H_VAL"
 
+echo " · a read followed by an ampersand: the gate answers, and in time"
+run_timed() {  # run_timed <seconds> <command> -> the gate's exit code, or 124 when it did not finish
+  payload "$2" > "$TMP/timed-payload.json"
+  python3 - "$1" "$GATE" "$TMP/timed-payload.json" "$TMP/err" <<'PY'
+import subprocess, sys
+secs, gate, payload, err = sys.argv[1:5]
+try:
+    p = subprocess.run(["bash", gate], stdin=open(payload), stdout=subprocess.DEVNULL,
+                       stderr=open(err, "w"), timeout=float(secs))
+    sys.exit(p.returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+PY
+}
+timed_blocked() {  # timed_blocked <command> <label>
+  run_timed 60 "$1"; local rc=$?
+  [[ "$rc" == "2" ]] && grep -q '^BLOCKED' "$TMP/err" \
+    && pass "$2: blocked, and the gate finished" || fail "$2: NOT blocked (rc=$rc; 124 = the gate did not finish)"
+}
+timed_allowed() {  # timed_allowed <command> <label>
+  run_timed 60 "$1"; local rc=$?
+  [[ "$rc" == "0" ]] && pass "$2: allowed, and the gate finished" || fail "$2: rc=$rc (124 = the gate did not finish) — $(cat "$TMP/err")"
+}
+T_AMP='echo $GIT_CONFIG_COUNT&GIT_CONFIG_COUNT=0 git fetch origin'
+T_AND='echo $GIT_CONFIG_VALUE_0&& GIT_CONFIG_COUNT=0 git fetch origin'
+T_BG='echo $GIT_TERMINAL_PROMPT& unset GIT_CONFIG_COUNT; git fetch origin'
+timed_blocked "$T_AMP" 'echo $NAME&NAME=0 git ... (a read, then a background ampersand)'
+timed_blocked "$T_AND" 'echo $NAME&& NAME=0 git ...'
+timed_blocked "$T_BG" 'echo $NAME& unset NAME; git ...'
+timed_allowed 'echo $GIT_CONFIG_COUNT& wait' 'a read sent to the background, nothing else'
+timed_allowed 'echo $GIT_CONFIG_COUNT&& echo $GIT_TERMINAL_PROMPT& wait' 'two reads, each followed by an ampersand'
+# The two mutants below only bite where an unquoted `&` in a replacement means "the matched text":
+# bash 5.2 and later with patsub_replacement on (the default). An older bash has no such reading.
+if bash -c 'shopt -q patsub_replacement' 2>/dev/null; then
+  if python3 - "$GATE" "$TMP/unquote-gate.sh" "$TMP/unquote-noguard-gate.sh" <<'PY'
+import sys
+src, a, b = sys.argv[1:4]
+s = open(src).read()
+old_q, new_q = '/"$read_tail"}', '/$read_tail}'
+old_g, new_g = 'if (( ${#cmd_next} >= ${#cmd_names} )); then', 'if false; then'
+if s.count(old_q) != 1 or s.count(old_g) != 1:
+    sys.exit(1)
+open(a, "w").write(s.replace(old_q, new_q))
+open(b, "w").write(s.replace(old_q, new_q).replace(old_g, new_g))
+PY
+  then
+    REAL_GATE="$GATE"
+    GATE="$TMP/unquote-gate.sh"; bad=0
+    for c in "$T_AMP" "$T_AND" "$T_BG"; do
+      run_timed 60 "$c"; rc=$?
+      { [[ "$rc" == "2" ]] && grep -q 'could not finish reading' "$TMP/err"; } || { bad=$((bad + 1)); printf '        rc=%s under the mutant: %s\n' "$rc" "$c"; }
+    done
+    [[ $bad == 0 ]] && pass "mutant caught by the no-progress refusal: the replacement left unquoted (3 rows refused for that reason, none timed out)" \
+      || fail "mutant NOT caught by the no-progress refusal: the replacement left unquoted ($bad of 3 rows)"
+    GATE="$TMP/unquote-noguard-gate.sh"; bad=0
+    for c in "$T_AMP" "$T_AND" "$T_BG"; do
+      run_timed 5 "$c"; rc=$?
+      [[ "$rc" == "124" ]] || { bad=$((bad + 1)); printf '        rc=%s under the mutant (expected 124, no answer): %s\n' "$rc" "$c"; }
+    done
+    [[ $bad == 0 ]] && pass "mutant killed: the replacement left unquoted and the no-progress refusal removed (3 rows get no answer in time)" \
+      || fail "mutant survived: the replacement left unquoted and the no-progress refusal removed ($bad of 3 rows)"
+    GATE="$REAL_GATE"
+  else
+    fail "mutant not built: the unquoted replacement (the gate text it edits is gone; re-aim it)"
+  fi
+else
+  echo "  (skipped: the two unquoted-replacement mutants need bash 5.2 or later; this bash reads & literally)"
+fi
+
+echo " · the character after a read is put back, so the next word still starts where it did"
+B_TAIL='echo x$GIT_CONFIG_PARAMETERS;GIT_CONFIG_COUNT=0 git fetch origin'
+check_blocked "$B_TAIL" 'echo x$NAME;NAME=0 git ... (without the put-back the name would read as xNAME)'
+mutant "the character after a read is dropped" \
+  '/"$read_tail"}' '/}' \
+  "$B_TAIL"
+
 echo " · a parameter that is empty in an agent's shell, glued in front of the name"
 P_POS='env $1GIT_CONFIG_COUNT=0 git fetch origin'
 check_blocked "$P_POS" 'env $1NAME=0 (no arguments: $1 is empty)'

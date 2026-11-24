@@ -238,8 +238,17 @@ cmd_names=$cmd
 GIT_ENV_READ_RX="[\$](${GIT_ENV_OVERRIDE_NAMES})([^A-Za-z0-9_]|\$)|[\$][{](${GIT_ENV_OVERRIDE_NAMES})([}#%/^,@?+-]|:[-+?])"
 while [[ "$cmd_names" =~ $GIT_ENV_READ_RX ]]; do
   # Group 2 is the character after a `$NAME` read: it is not part of the read, so it is put back.
+  # The replacement is QUOTED. bash 5.2 and later read an unquoted `&` in a replacement as "the text
+  # that matched", so a read followed by `&` (`echo $NAME&`) was put back whole and this loop never
+  # ended. A hook that times out refuses nothing, and every check after this one is lost with it.
   read_tail=${BASH_REMATCH[2]}
-  cmd_names=${cmd_names/"${BASH_REMATCH[0]}"/$read_tail}
+  cmd_next=${cmd_names/"${BASH_REMATCH[0]}"/"$read_tail"}
+  # Every pass must make the text shorter. One that does not can only repeat for ever, so it is
+  # refused here rather than left to a timeout.
+  if (( ${#cmd_next} >= ${#cmd_names} )); then
+    deny git-env-read-scan-stuck "this hook could not finish reading the command for the session's own git credential-helper override variables, so it refuses rather than time out. Run the read of the variable as its own command, or run this yourself."
+  fi
+  cmd_names=$cmd_next
 done
 # Then the quotes and backslashes go, as for every other check in this block.
 for q in '"' "'" '\'; do cmd_names=${cmd_names//"$q"/}; done
