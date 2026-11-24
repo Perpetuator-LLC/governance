@@ -283,7 +283,7 @@ check_blocked "$E_EXP" 'export GIT_CONFIG_PARAMETER\S (a backslash inside the na
 check_blocked "$E_CNT" "GIT_CONFIG_COU''NT=2 with a second key"
 check_blocked "$E_UNS" "unset GIT_CONFIG_COU''NT"
 mutant "the name rule reads the command with its quotes left in" \
-  'cmd_names=$cmd_bare' 'cmd_names=$cmd' \
+  'cmd_names=${cmd_names//"$q"/}' ':' \
   "$E_KEY" "$E_VAL" "$E_PAR" "$E_EXP" "$E_CNT" "$E_UNS"
 
 echo " · a guarded name is refused as a whole word, however the shell is asked to change it"
@@ -312,6 +312,51 @@ check_allowed 'echo MY_GIT_CONFIG_COUNT_X=1' "a longer name that only contains a
 mutant "the name rule is removed" \
   'if printf '"'"'%s'"'"' "$cmd_names" | grep -qE "$GIT_ENV_NAME_RX"; then' 'if false; then' \
   "$D_APPEND" "$D_EXPN" "$D_DECL" "$D_TYPE" "$D_PRINTF" "$D_READ" "$D_FOR" "$D_LOCAL" "$D_KEY1"
+
+echo " · an expansion that ASSIGNS is not a read"
+G_CEQ=': ${GIT_CONFIG_VALUE_0:=osxkeychain}; git fetch origin'
+G_EQ=': ${GIT_CONFIG_VALUE_0=osxkeychain}; git fetch origin'
+G_ECHO='echo "${GIT_CONFIG_COUNT:=0}"; git fetch origin'
+G_NEST='echo "${GIT_TERMINAL_PROMPT:-${GIT_CONFIG_VALUE_0:=osxkeychain}}"; git fetch origin'
+check_blocked "$G_CEQ" ': ${NAME:=<value>} (assigns the null value the override left)'
+check_blocked "$G_EQ" ': ${NAME=<value>}'
+check_blocked "$G_ECHO" 'echo "${NAME:=0}" (an assignment inside a quoted echo)'
+check_blocked "$G_NEST" 'an assigning expansion nested in the default of a read'
+check_blocked 'echo "${#GIT_CONFIG_COUNT}"' 'a form that is not on the read list (${#NAME}) is refused with the rest'
+check_allowed 'echo "${GIT_CONFIG_COUNT}"' 'read: ${NAME}'
+check_allowed 'echo "${GIT_CONFIG_VALUE_0:-none} ${GIT_CONFIG_VALUE_0-none}"' 'read: ${NAME:-x} and ${NAME-x}'
+check_allowed 'echo "${GIT_TERMINAL_PROMPT:+set} ${GIT_TERMINAL_PROMPT+set}"' 'read: ${NAME:+x} and ${NAME+x}'
+check_allowed 'echo "${GIT_CONFIG_COUNT:?missing} ${GIT_CONFIG_COUNT?missing}"' 'read: ${NAME:?x} and ${NAME?x}'
+check_allowed 'echo "${GIT_CONFIG_KEY_0#cred} ${GIT_CONFIG_KEY_0%helper} ${GIT_CONFIG_KEY_0/a/b}"' 'read: ${NAME#x}, ${NAME%x}, ${NAME/a/b}'
+check_allowed 'echo "${GIT_CONFIG_PARAMETERS^} ${GIT_CONFIG_PARAMETERS,} ${GIT_CONFIG_PARAMETERS@Q}"' 'read: ${NAME^}, ${NAME,}, ${NAME@Q}'
+check_allowed 'echo $GIT_CONFIG_COUNT' 'read: $NAME at the end of the command'
+mutant "an assigning expansion counts as a read" \
+  '([}#%/^,@?+-]|:[-+?])' '([}#%/^,@?+=-]|:[-+?=])' \
+  "$G_CEQ" "$G_EQ" "$G_ECHO" "$G_NEST"
+
+echo " · a quoted string that starts with a dollar sign is the plain name, not a read"
+H_ANSI="env \$'GIT_CONFIG_COUNT'=0 git fetch origin"
+H_EMPTY="export \$''GIT_CONFIG_COUNT=; git fetch origin"
+H_LOCALE='env $"GIT_CONFIG_COUNT"=0 git fetch origin'
+H_VAL="env \$'GIT_CONFIG_VALUE_0'=osxkeychain git fetch origin"
+check_blocked "$H_ANSI" "env \$'NAME'=0"
+check_blocked "$H_EMPTY" "export \$''NAME="
+check_blocked "$H_LOCALE" 'env $"NAME"=0'
+check_blocked "$H_VAL" "env \$'GIT_CONFIG_VALUE_0'=<helper>"
+mutant "reads are told from the command after its quotes are removed" \
+  'cmd_names=$cmd' 'cmd_names=$cmd_bare' \
+  "$H_ANSI" "$H_EMPTY" "$H_LOCALE" "$H_VAL"
+
+echo " · a parameter that is empty in an agent's shell, glued in front of the name"
+P_POS='env $1GIT_CONFIG_COUNT=0 git fetch origin'
+check_blocked "$P_POS" 'env $1NAME=0 (no arguments: $1 is empty)'
+check_blocked 'env $*GIT_CONFIG_COUNT=0 git fetch origin' 'env $*NAME=0'
+check_blocked 'env $@GIT_CONFIG_COUNT=0 git fetch origin' 'env $@NAME=0'
+check_blocked 'env ${1}GIT_CONFIG_COUNT=0 git fetch origin' 'env ${1}NAME=0'
+mutant "a name glued after a positional parameter is not seen" \
+  '(^|[^A-Za-z0-9_]|[\$][0-9])(${GIT_ENV_OVERRIDE_NAMES})' '(^|[^A-Za-z0-9_])(${GIT_ENV_OVERRIDE_NAMES})' \
+  "$P_POS"
+
 S_U="env -'u' FOO git fetch origin"
 S_I="env -'i' git status"
 check_blocked "$S_U" "env -'u' <name> (a quoted flag)"

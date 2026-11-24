@@ -214,7 +214,7 @@ fi
 #   printf -v GIT_CONFIG_VALUE_0 <h>      read GIT_CONFIG_VALUE_0 <<< <h>  for GIT_CONFIG_VALUE_0 in <h>
 #   local GIT_CONFIG_COUNT (in a function)                                 env GIT_CONFIG_COUNT=0 git ...
 # So the rule is structural: one of the names as a WHOLE WORD anywhere in the command is refused,
-# unless it is only being read, as `$NAME` or `${NAME...}`. Numbered names count with any number: a
+# unless it is only being read (defined just below). Numbered names count with any number: a
 # raised count makes KEY_1 and VALUE_1 live. GIT_CONFIG_PARAMETERS is the fifth name: it is what
 # `git -c` itself exports, so setting it injects any key with no `-c` on the line at all.
 # Refused on the VALUE too, not only the override-removing one: a legitimate tool's own
@@ -224,13 +224,28 @@ fi
 # Cost, accepted: a SEARCH for one of the names (`rg GIT_CONFIG_COUNT hooks/`), or a message that
 # quotes one, is refused too. Search for a shorter stem (`GIT_CONFIG_`), and pass a message by file.
 GIT_ENV_OVERRIDE_NAMES='GIT_CONFIG_COUNT|GIT_CONFIG_KEY_[0-9]+|GIT_CONFIG_VALUE_[0-9]+|GIT_TERMINAL_PROMPT|GIT_CONFIG_PARAMETERS'
-# Reads are taken out first, in pure bash (no helper program whose absence would change the verdict).
-cmd_names=$cmd_bare
-GIT_ENV_READ_RX="[\$][{]?(${GIT_ENV_OVERRIDE_NAMES})"
+# WHAT COUNTS AS A READ, and only this:
+#   $NAME            followed by a character a name does not hold, or by the end of the command
+#   ${NAME}          and ${NAME followed by one of  :-  -  :+  +  :?  ?  #  %  /  ^  ,  @
+# `${NAME:=<value>}` and `${NAME=<value>}` are NOT reads: they ASSIGN (`: ${GIT_CONFIG_VALUE_0:=<h>}`
+# sets the null value the override left there). Any other form (`${#NAME}`, `${!NAME}`, a substring)
+# is not on the list and is refused with the rest.
+# Reads are told from the RAW command, BEFORE its quotes are removed. Removing quotes first turns
+# `$'NAME'=0`, `$"NAME"=0` and `$''NAME=` into `$NAME=0`, which looks like a read and is in fact the
+# plain name: the shell reads `$'...'` as a quoted string, not as an expansion.
+# Pure bash throughout (no helper program whose absence would change the verdict).
+cmd_names=$cmd
+GIT_ENV_READ_RX="[\$](${GIT_ENV_OVERRIDE_NAMES})([^A-Za-z0-9_]|\$)|[\$][{](${GIT_ENV_OVERRIDE_NAMES})([}#%/^,@?+-]|:[-+?])"
 while [[ "$cmd_names" =~ $GIT_ENV_READ_RX ]]; do
-  cmd_names=${cmd_names/"${BASH_REMATCH[0]}"/}
+  # Group 2 is the character after a `$NAME` read: it is not part of the read, so it is put back.
+  read_tail=${BASH_REMATCH[2]}
+  cmd_names=${cmd_names/"${BASH_REMATCH[0]}"/$read_tail}
 done
-GIT_ENV_NAME_RX="(^|[^A-Za-z0-9_])(${GIT_ENV_OVERRIDE_NAMES})([^A-Za-z0-9_]|\$)"
+# Then the quotes and backslashes go, as for every other check in this block.
+for q in '"' "'" '\'; do cmd_names=${cmd_names//"$q"/}; done
+# The word may also start right after a positional parameter: `$1NAME=0` is `NAME=0` in a shell that
+# was given no arguments, which is every command an agent types.
+GIT_ENV_NAME_RX="(^|[^A-Za-z0-9_]|[\$][0-9])(${GIT_ENV_OVERRIDE_NAMES})([^A-Za-z0-9_]|\$)"
 if printf '%s' "$cmd_names" | grep -qE "$GIT_ENV_NAME_RX"; then
   deny git-env-override-reassigned "this names one of the session's own git credential-helper override variables (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n>, GIT_CONFIG_VALUE_<n>, GIT_TERMINAL_PROMPT, GIT_CONFIG_PARAMETERS) other than to read it. Any assignment, export, unset, read, printf -v, declare or loop over one of them lifts or replaces the override for later commands. Use \`git -c <key>=<value>\` for a one-off setting instead."
 fi
