@@ -146,16 +146,39 @@ fi
 # (`credential.<url>.helper`, `credential.<host>.helper`), which re-enables it for exactly the host
 # the session override was protecting.
 GIT_CRED_HELPER_SET='credential(\.[^=[:space:];&|]+)?\.helper(=|[[:space:]]+)[^[:space:];&|]*[A-Za-z0-9][^[:space:];&|]*'
+# A shell removes quotes and backslashes before git ever reads a word, so `-c 'credential.helper'=x`,
+# `-c "credential".helper=x` and `-c credential.help\er=x` all set the same key. Every check in this
+# block reads a copy of the command with those three characters removed, without regard to case (a
+# case-insensitive disk runs `Git-Credential-<Name>` too).
+cmd_bare=$(printf '%s' "$cmd" | tr -d "\"'\\\\")
 # 2. The credential subsystem invoked DIRECTLY: `git credential fill/approve/reject/-C`, or a helper
 # binary called by its own name (`git-credential-osxkeychain`, `git credential-manager`) -- there is no
 # legitimate agent use for any of these; a seat that needs a credential uses its own AppRole path, not
 # git's.
 GIT_CRED_SUBCOMMAND="${GIT_SEG}credential([[:space:]]+(fill|approve|reject|-C)\\b|-[a-z0-9_-]+)"
-GIT_CRED_HELPER_BINARY='(^|[^A-Za-z0-9_/-])git-credential-[a-z0-9_-]+\b'
-if echo "$cmd" | grep -qiE "$GIT_CRED_HELPER_SET" \
-   || echo "$cmd" | grep -qE "$GIT_CRED_SUBCOMMAND" \
-   || echo "$cmd" | grep -qE "$GIT_CRED_HELPER_BINARY"; then
+# The helper binary is refused at ANY path: by bare name, `./<name>`, a full path into git-core, or
+# `"$(git --exec-path)/<name>"`. A real helper prints the saved login on stdout. The name must END the
+# word (a space, a separator or the end), so a file that merely starts with the same letters and
+# carries an extension (a test named git-credential-<x>.test.sh, a doc) is not a helper call.
+GIT_CRED_HELPER_BINARY='(^|[^A-Za-z0-9_-])git-credential-[a-z0-9_-]+(\.exe)?([[:space:];&|)]|$)'
+# An alias reaches the same subsystem under another name: `-c alias.k=credential-<name>`, then `git k`.
+# Any alias whose value holds the word is refused, set on the command line or written to a config file.
+GIT_CRED_ALIAS='alias\.[^=[:space:]]+(=|[[:space:]]+)[^;&|]*credential'
+if printf '%s' "$cmd_bare" | grep -qiE "$GIT_CRED_HELPER_SET" \
+   || printf '%s' "$cmd_bare" | grep -qiE "$GIT_CRED_SUBCOMMAND" \
+   || printf '%s' "$cmd_bare" | grep -qiE "$GIT_CRED_HELPER_BINARY" \
+   || printf '%s' "$cmd_bare" | grep -qiE "$GIT_CRED_ALIAS"; then
   deny git-credential-helper-use "this sets, unsets-to-a-value, or directly invokes a git credential helper, which would read or re-enable the operator's own saved login -- never an agent's to reach. Run this yourself if a helper genuinely needs changing."
+fi
+
+# 2b. PULLING ANOTHER CONFIG FILE IN at command scope: `-c include.path=<file>`,
+# `-c includeIf.<condition>.path=<file>` and the `--config-env=` form of either. Command-scope config
+# is read AFTER the session's own reset, so a helper named in the included file is live again, and the
+# file can be the system gitconfig itself (no file is written at all). A bare read
+# (`git config --get include.path`) is not this.
+GIT_INCLUDE_KEY='(^|[[:space:]])(-c[[:space:]]*|--config-env[=[:space:]]+)(include\.path|includeif\..*\.path)([=[:space:]]|$)'
+if printf '%s' "$cmd_bare" | grep -qiE "$GIT_INCLUDE_KEY"; then
+  deny git-config-include "this pulls another config file in at command scope (include.path / includeIf), which is read after the session's own credential-helper reset and can re-enable a helper. Pass the one setting you need as its own \`git -c <key>=<value>\`."
 fi
 
 # 3. `env -i` strips EVERY environment variable from the command it wraps, including the GIT_CONFIG_*/
@@ -184,11 +207,13 @@ fi
 # one-off form that does not touch the session-wide override at all.
 # Cost, accepted: the name followed by `=` is refused wherever it sits in the command, so a SEARCH for
 # that text (`rg -n 'GIT_CONFIG_COUNT=' hooks/`) is refused too. Search for the name without the `=`.
-GIT_ENV_OVERRIDE_NAMES='GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_TERMINAL_PROMPT'
+# GIT_CONFIG_PARAMETERS is the fifth name: it is what `git -c` itself exports, so assigning it injects
+# any key (a helper, an include) at the same command scope without a `-c` on the line at all.
+GIT_ENV_OVERRIDE_NAMES='GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_TERMINAL_PROMPT|GIT_CONFIG_PARAMETERS'
 GIT_ENV_ASSIGN_RX="(^|[^A-Za-z0-9_])(${GIT_ENV_OVERRIDE_NAMES})="
 GIT_ENV_UNSET_RX="(^|[^A-Za-z0-9_-])unset([[:space:]]+-[a-zA-Z]+)*[[:space:]]+[^;&|]*\\b(${GIT_ENV_OVERRIDE_NAMES})\\b"
 if echo "$cmd" | grep -qE "$GIT_ENV_ASSIGN_RX" || echo "$cmd" | grep -qE "$GIT_ENV_UNSET_RX"; then
-  deny git-env-override-reassigned "this assigns, exports, or unsets one of the session's own git credential-helper override variables (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0, GIT_TERMINAL_PROMPT), which lifts or replaces it for every later command in this session. Use \`git -c <key>=<value>\` for a one-off setting instead."
+  deny git-env-override-reassigned "this assigns, exports, or unsets one of the session's own git credential-helper override variables (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0, GIT_TERMINAL_PROMPT) or GIT_CONFIG_PARAMETERS, which lifts or replaces it for every later command in this session. Use \`git -c <key>=<value>\` for a one-off setting instead."
 fi
 
 # 4. A RAW https:// URL to one of the installation's OWN forges, inside a git invocation: this is the
@@ -408,14 +433,20 @@ fi
 # read. Only the tool's own options may sit between the tool word and the subcommand:
 # `vault policy read` is a policy definition, not a secret. Best effort, not a parser: a tool word or
 # subcommand assembled at run time is not seen.
-#   kv get/read/list, the legacy bare read/list, and the two commands that reveal the RESOLVED token
-#   itself (print token, token lookup).
+#   kv get/read and the legacy bare read (a secret's VALUE); unwrap (it reads a wrapped secret); the
+#   two commands that reveal the RESOLVED token (print token, token lookup); and token create, which
+#   prints a child of the operator's own token (CRED_MINT above exempts the Bash tool for a
+#   stdin-fed LOGIN; there is no such case for minting from a session the agent never opened).
+# NOT refused: a names-only listing (`kv list`, `list`, `kv metadata get|list`). It shows which paths
+# exist, never a value, and an agent checks a path is present before asking for it to be seeded.
+# NOT CLOSED: a `write <path>` that returns secret material (a transit decrypt, an AppRole secret-id,
+# auth/token/create): a write is not a read by shape, and the paths are installation-specific.
 osr_flat=$(printf '%s' "$scan" | tr '\n\r' '  ' | tr '[:upper:]' '[:lower:]')
 OSR_SEP="[[:space:]\"',\\]"
 OSR_WORD="[^[:space:]\"',\;&|]"
-OPERATOR_SECRET_READ="(^|[^a-z0-9_-])(bao|vault)(${OSR_SEP}+-${OSR_WORD}+)*${OSR_SEP}+(kv${OSR_SEP}+(get|read|list)|read|list|print${OSR_SEP}+token|token${OSR_SEP}+lookup)([^a-z0-9_-]|\$)"
+OPERATOR_SECRET_READ="(^|[^a-z0-9_-])(bao|vault)(${OSR_SEP}+-${OSR_WORD}+)*${OSR_SEP}+(kv${OSR_SEP}+(get|read)|read|unwrap|print${OSR_SEP}+token|token${OSR_SEP}+(lookup|create))([^a-z0-9_-]|\$)"
 if printf '%s' "$osr_flat" | grep -qE "$OPERATOR_SECRET_READ"; then
-  deny operator-secret-read "this reads a secret or the resolved token through the bao/vault CLI, which would ride the operator's own live session if one is open -- every process running as this user shares it, with no new presence check. Use the seat's own machine-identity credential path, or ask the human to run this themselves."
+  deny operator-secret-read "this reads a secret, or reveals or mints from the resolved token, through the bao/vault CLI, which would ride the operator's own live session if one is open -- every process running as this user shares it, with no new presence check. Use the seat's own machine-identity credential path, or ask the human to run this themselves."
 fi
 
 # The token-helper's own token file, read directly: the same shape as the secret-file rule above (a

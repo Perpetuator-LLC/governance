@@ -74,16 +74,40 @@ echo "── operator-token-reuse: refuse reading a secret or the resolved token
 check_blocked 'bao kv get secret/foo' "bao kv get"
 check_blocked 'vault kv get secret/foo' "vault kv get"
 check_blocked 'bao kv read secret/foo' "bao kv read"
-check_blocked 'vault kv list secret/' "vault kv list"
 check_blocked 'bao read secret/foo' "bao read (legacy form)"
 check_blocked 'vault read secret/foo' "vault read (legacy form)"
-check_blocked 'vault list secret/' "vault list (legacy form)"
 check_blocked 'bao print token' "bao print token (reveals the resolved token)"
 check_blocked 'vault token lookup' "vault token lookup (reveals token metadata)"
 check_blocked 'bao -address=https://v.example kv get secret/foo' "a global flag between the binary and kv get"
 check_blocked 'sudo bao kv get secret/foo' "sudo bao kv get"
 check_blocked 'bao kv get -field=t secret/x | docker login --password-stdin r.example' \
   "a blind pipe into another login's stdin still rides the live session"
+
+echo "── operator-token-reuse: unwrap, and minting a child of the operator's own token"
+
+W_UNWRAP='bao unwrap s.wrappingtoken'
+W_VAULT='vault unwrap'
+W_LIST="python3 -c \"import subprocess; subprocess.run(['bao', 'unwrap', 'x'])\""
+K_CREATE='bao token create -policy=x'
+K_VAULT='vault token create -ttl=1h'
+check_blocked "$W_UNWRAP" "bao unwrap (reads a wrapped secret)"
+check_blocked "$W_VAULT" "vault unwrap"
+check_blocked "$W_LIST" "unwrap as a list-form argv"
+check_blocked "$K_CREATE" "bao token create from the Bash tool (a child of the operator's token)"
+check_blocked "$K_VAULT" "vault token create"
+mutant "unwrap is not in the refused subcommands" \
+  '|read|unwrap|print${OSR_SEP}+token' '|read|print${OSR_SEP}+token' \
+  "$W_UNWRAP" "$W_VAULT" "$W_LIST"
+mutant "token create is not in the refused subcommands" \
+  'token${OSR_SEP}+(lookup|create)' 'token${OSR_SEP}+(lookup)' \
+  "$K_CREATE" "$K_VAULT"
+
+echo "── operator-token-reuse: a names-only listing shows no value and stays allowed"
+
+check_allowed 'vault kv list secret/' "vault kv list (path names only)"
+check_allowed 'vault list secret/' "vault list (legacy form, names only)"
+check_allowed 'bao kv metadata get secret/foo' "bao kv metadata get (presence and versions, no value)"
+check_blocked 'bao kv list secret/ && bao kv get secret/foo' "a listing, then a value read"
 
 echo "── operator-token-reuse: refuse reading the token-helper's own token file"
 

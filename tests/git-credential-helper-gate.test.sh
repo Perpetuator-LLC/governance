@@ -106,6 +106,75 @@ mutant "only the unscoped key credential.helper is matched" \
   'credential(\.[^=[:space:];&|]+)?\.helper(' 'credential\.helper(' \
   "$U_C" "$U_CFG"
 
+echo " · a key written with quotes or a backslash is the same key once the shell has read it"
+Q_SQ="git -c 'credential.helper'=osxkeychain fetch origin"
+Q_DQ='git -c "credential".helper=osxkeychain fetch origin'
+Q_BS='git -c credential.help\er=osxkeychain fetch origin'
+check_blocked "$Q_SQ" "-c 'credential.helper'=<value> (single-quoted key)"
+check_blocked "$Q_DQ" "-c \"credential\".helper=<value> (half the key double-quoted)"
+check_blocked "$Q_BS" "-c credential.help\\er=<value> (a backslash inside the key)"
+check_allowed "git -c 'credential.helper'= fetch origin" "a quoted key set to empty stays the safe direction"
+mutant "the key checks read the command with its quotes and backslashes left in" \
+  'cmd_bare=$(printf '"'"'%s'"'"' "$cmd" | tr -d "\"'"'"'\\\\")' 'cmd_bare=$cmd' \
+  "$Q_SQ" "$Q_DQ" "$Q_BS"
+
+echo " · another config file pulled in at command scope (read after the session's own reset)"
+I_PATH='git -c include.path=/tmp/x.cfg ls-remote origin'
+I_IF='git -c includeIf.gitdir:/.path=/tmp/x.cfg ls-remote origin'
+I_CAPS='git -c Include.Path=/tmp/x.cfg fetch origin'
+I_ENV='git --config-env=include.path=CFG fetch origin'
+I_GLUED='git -cinclude.path=/tmp/x.cfg fetch origin'
+check_blocked "$I_PATH" "-c include.path=<file>"
+check_blocked "$I_IF" "-c includeIf.<condition>.path=<file>"
+check_blocked "$I_CAPS" "-c Include.Path=<file> (keys ignore case)"
+check_blocked "$I_ENV" "--config-env=include.path=<VAR>"
+check_blocked "$I_GLUED" "-cinclude.path=<file> (glued)"
+check_allowed 'git config --get include.path' "a bare read of include.path"
+check_allowed 'git -c core.autocrlf=false status' "an unrelated one-off -c setting"
+mutant "the include check is removed" \
+  'if printf '"'"'%s'"'"' "$cmd_bare" | grep -qiE "$GIT_INCLUDE_KEY"; then' 'if false; then' \
+  "$I_PATH" "$I_IF" "$I_CAPS" "$I_ENV" "$I_GLUED"
+
+echo " · GIT_CONFIG_PARAMETERS injects any key at the same scope, with no -c on the line"
+P_INC="GIT_CONFIG_PARAMETERS=\"'include.path'='/tmp/x.cfg'\" git fetch origin"
+P_EXP='export GIT_CONFIG_PARAMETERS=x; git fetch origin'
+P_ENV='env GIT_CONFIG_PARAMETERS=x git fetch origin'
+check_blocked "GIT_CONFIG_PARAMETERS=\"'credential.helper'='osxkeychain'\" git ls-remote origin" "GIT_CONFIG_PARAMETERS naming the helper key"
+check_blocked "$P_INC" "GIT_CONFIG_PARAMETERS naming an include"
+check_blocked "$P_EXP" "export GIT_CONFIG_PARAMETERS"
+check_blocked "$P_ENV" "env GIT_CONFIG_PARAMETERS=<value>"
+mutant "GIT_CONFIG_PARAMETERS is not one of the guarded names" \
+  'GIT_TERMINAL_PROMPT|GIT_CONFIG_PARAMETERS'"'"'' 'GIT_TERMINAL_PROMPT'"'"'' \
+  "$P_INC" "$P_EXP" "$P_ENV"
+
+echo " · the helper binary at any path, in any case, and through an alias"
+B_FULL='/usr/libexec/git-core/git-credential-osxkeychain get'
+B_EXEC='"$(git --exec-path)/git-credential-osxkeychain" get'
+B_DOT='./git-credential-store get'
+B_CAPS='Git-Credential-Osxkeychain get'
+A_BIN='git -c alias.k=credential-osxkeychain k get'
+A_SUB="git -c alias.k='credential fill' k"
+A_CFG='git config --global alias.k "credential fill"'
+check_blocked "$B_FULL" "a helper binary by full path"
+check_blocked "$B_EXEC" "a helper binary under \$(git --exec-path)"
+check_blocked "$B_DOT" "a helper binary as ./<name>"
+check_blocked "$B_CAPS" "a helper binary spelled in capitals"
+check_blocked "$A_BIN" "an alias to credential-<name>"
+check_blocked "$A_SUB" "an alias to 'credential fill'"
+check_blocked "$A_CFG" "an alias written to a config file"
+check_allowed 'bash tests/git-credential-helper-gate.test.sh' "running this suite by path (a file name with an extension)"
+check_allowed 'git -c alias.st=status st' "an ordinary alias"
+check_allowed 'ls docs/git-credential-notes.md' "a document whose name starts alike"
+mutant "the helper binary is matched only as a bare word" \
+  "GIT_CRED_HELPER_BINARY='(^|[^A-Za-z0-9_-])git-credential-" "GIT_CRED_HELPER_BINARY='(^|[^A-Za-z0-9_/.-])git-credential-" \
+  "$B_FULL" "$B_EXEC" "$B_DOT"
+mutant "the helper binary is matched case-sensitively" \
+  'grep -qiE "$GIT_CRED_HELPER_BINARY"' 'grep -qE "$GIT_CRED_HELPER_BINARY"' \
+  "$B_CAPS"
+mutant "the alias check is removed" \
+  '|| printf '"'"'%s'"'"' "$cmd_bare" | grep -qiE "$GIT_CRED_ALIAS"; then' '; then' \
+  "$A_BIN" "$A_SUB"   # $A_CFG is also caught by the subcommand check, so it cannot go red here
+
 echo "── git-credential-helper-gate: refuse STRIPPING the session's own override before running git"
 
 check_blocked 'env -i git ls-remote https://example.com/x' "env -i git"
@@ -122,7 +191,7 @@ check_allowed 'env -u SOME_OTHER_VAR git push origin main' "env -u on an unrelat
 check_allowed 'git push origin main' "a plain git push, no env wrapper at all"
 
 echo "── git-credential-helper-gate: refuse ANY assignment, export or unset of one of the four override"
-echo "   names, not only via env -i/-u (cisa SEND-BACK on PR #443, c191198 item 2)"
+echo "   names, not only via env -i/-u"
 
 check_blocked 'GIT_CONFIG_COUNT=0 git ls-remote https://host.example/x' "bare prefix assignment: GIT_CONFIG_COUNT=0"
 check_blocked 'GIT_CONFIG_VALUE_0=osxkeychain git status' "bare prefix assignment: GIT_CONFIG_VALUE_0=<value> (never names credential.helper)"
@@ -149,7 +218,7 @@ check_blocked 'git clone https://mcp.example.com/git/org/repo.git' "git clone ht
 check_blocked 'git fetch https://git.example.com/org/repo main' "git fetch https://<own forge>" "$OWN"
 check_blocked 'git push https://GIT.EXAMPLE.COM/org/repo main' "case: an upper-cased own-forge host" "$OWN"
 
-echo " · cisa J1 (PR #443, c191198): widened to http:// (the helper fires for plain http too) and to a"
+echo " · widened to http:// (the helper fires for plain http too) and to a"
 echo "   URL carrying userinfo (the host no longer sits immediately after ://)"
 check_blocked 'git ls-remote http://git.example.com/org/repo' "git ls-remote http:// (no s) to an own forge" "$OWN"
 check_blocked 'git clone https://user@git.example.com/org/repo.git' "https://user@<own forge>/..." "$OWN"
@@ -165,7 +234,7 @@ check_allowed 'git clone http://github.com/someorg/somerepo' "http:// to a DIFFE
 check_allowed 'git ls-remote https://git.example.com/org/repo' "control: with NO own-forges list configured at all, the same URL is not checked"
 
 echo "── git-credential-helper-gate: LAYER 1 ITSELF — settings/claude.json's own env block stops a"
-echo "   real credential-helper call (cisa SEND-BACK on PR #443, c191198 item 3). Portable: no real"
+echo "   real credential-helper call. Portable: no real"
 echo "   network, no real keychain, no real credential — a fake helper script records only that it"
 echo "   was INVOKED (never what it was asked, never a value), and a local HTTP server on 127.0.0.1"
 echo "   answers 401 (the shape that makes git's http transport consult a helper at all)."
@@ -217,10 +286,16 @@ layer1_probe() {
   local label="$1" scope="$2" with_override="$3"
   local home="$TMP/home-$RANDOM-$RANDOM" repo="$TMP/repo-$RANDOM-$RANDOM"
   mkdir -p "$home"
-  rm -f "$L1/marker"
+  rm -f "$L1/marker" "$L1/unsafe"
   (
     export HOME="$home"
-    unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
+    # NEVER A REAL HELPER. A desktop OS's system gitconfig can name the operator's own credential store
+    # first, and a "no override" control would then query it for real. The system file is excluded,
+    # inherited config injection is cleared, and the probe runs only when the fake helper is the ONE
+    # helper git lists.
+    export GIT_CONFIG_NOSYSTEM=1
+    unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT GIT_CONFIG_PARAMETERS \
+          GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_ASKPASS SSH_ASKPASS
     local target_dir="$home"
     if [[ "$scope" == global ]]; then
       git config --global credential.helper "$HELPER" >/dev/null 2>&1
@@ -229,6 +304,11 @@ layer1_probe() {
       git -C "$repo" config credential.helper "$HELPER" >/dev/null 2>&1
       target_dir="$repo"
     fi
+    listed=$(git -C "$target_dir" config --get-all credential.helper 2>/dev/null)
+    if [[ "$listed" != "$HELPER" ]]; then
+      printf '%s\n' "$listed" > "$L1/unsafe"   # another helper is configured: do not probe at all
+      exit 0
+    fi
     if [[ "$with_override" == 1 ]]; then
       while IFS='=' read -r k v; do [[ -n "$k" ]] && export "$k=$v"; done < <(read_override_env)
     else
@@ -236,6 +316,11 @@ layer1_probe() {
     fi
     timeout 5 git -C "$target_dir" ls-remote "http://127.0.0.1:$SERVER_PORT/x.git" >/dev/null 2>&1
   )
+  if [[ -f "$L1/unsafe" ]]; then
+    fail "$label: NOT PROBED. git lists a helper other than this suite's fake one, so the probe was skipped rather than query it"
+    return
+  fi
+  pass "$label: the fake helper is the only helper git lists (the system config is excluded)"
   if [[ "$with_override" == 1 ]]; then
     [[ ! -f "$L1/marker" ]] && pass "$label: the override in place — no marker, the helper was never invoked" \
       || fail "$label: the override in place, but the helper WAS invoked — $(cat "$L1/marker")"

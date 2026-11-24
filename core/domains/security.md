@@ -492,6 +492,10 @@ process ride for free.
   line**, so the floor refuses the common ways to read or copy it (a reader or filter verb, a copy,
   an input redirect). That list is best effort: a reader it does not name is not seen. Listing the
   file, testing for it and removing it stay allowed.
+- **A names-only listing is not a secret read.** Listing the paths under a mount, or reading a
+  path's metadata, shows that a secret exists and never its value, so the floor leaves it open: an
+  agent checks a path is present before it asks for it to be seeded. Unwrapping, and minting a child
+  token from the operator's session, are refused with the reads.
 - **No allow rule by name.** An exemption matched against the whole command ("this command names the
   seat's own credential script") switches the refusal off for everything else on the line. An
   installation that needs one scopes it to a single sub-command, in its own adapter.
@@ -499,7 +503,9 @@ process ride for free.
   specifically-configured helper SCRIPT (its path is host-specific, so a shared rule cannot name it —
   an organisation's own adapter gates its own path); and a token the agent's process merely
   *inherits* as an already-exported environment variable from its parent shell, which carries no
-  command text for a gate to read at all. An operator session that is short-lived and explicitly
+  command text for a gate to read at all. The same holds for a `write` to a path that hands back
+  secret material (a decrypt, a fresh secret-id, a token-create endpoint): a write is not a read by
+  shape, and the paths are an installation's own. An operator session that is short-lived and explicitly
   ended (`… revoke -self` closing every runbook that opens one) narrows the exposure window these
   gaps leave; it does not replace the floor above.
 
