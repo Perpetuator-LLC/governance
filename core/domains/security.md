@@ -488,9 +488,13 @@ process ride for free.
   or the resolved token through the CLI has no comparable case for an agent, piped or not — a value
   piped straight into another tool's stdin still rides the live session, even though the value never
   enters the agent's own context.
-- **A token-helper's own token file (`~/.vault-token` and equivalents) is a credential-store path
-  like any other** (`~/.aws/credentials`, `~/.netrc`): a reader verb against it is refused the same
-  way.
+- **A token-helper's own token file (`~/.vault-token` and equivalents) holds the live token in one
+  line**, so the floor refuses the common ways to read or copy it (a reader or filter verb, a copy,
+  an input redirect). That list is best effort: a reader it does not name is not seen. Listing the
+  file, testing for it and removing it stay allowed.
+- **No allow rule by name.** An exemption matched against the whole command ("this command names the
+  seat's own credential script") switches the refusal off for everything else on the line. An
+  installation that needs one scopes it to a single sub-command, in its own adapter.
 - **Not closed by a floor gate, and said so rather than assumed:** running the operator's
   specifically-configured helper SCRIPT (its path is host-specific, so a shared rule cannot name it —
   an organisation's own adapter gates its own path); and a token the agent's process merely

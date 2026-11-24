@@ -43,6 +43,29 @@ check_allowed() {  # check_allowed <command> <label> [<env k=v>...]
   [[ "$rc" == "0" ]] && pass "$label: allowed" || fail "$label: blocked (should be allowed) — $(cat "$TMP/err")"
 }
 
+
+mutant() {  # mutant <label> <old> <new> <command>...
+  # With <old> replaced by <new> in a copy of the gate, every <command> (each one refused by the real
+  # gate in a row above) must be ALLOWED. That proves those rows are what catches the loss. A mutation
+  # whose <old> text is gone fails loudly: the gate changed, so re-aim the mutant, never drop it.
+  local label="$1" old="$2" new="$3" real="$GATE" c bad=0; shift 3
+  if ! python3 - "$GATE" "$TMP/mutant-gate.sh" "$old" "$new" <<'PY'
+import sys
+src, dst, old, new = sys.argv[1:5]
+s = open(src).read()
+if old not in s:
+    sys.exit(1)
+open(dst, "w").write(s.replace(old, new))
+PY
+  then fail "mutant not built: $label (the gate text it edits is gone; re-aim it)"; return; fi
+  GATE="$TMP/mutant-gate.sh"
+  for c in "$@"; do
+    run "$c"; [[ $? == 0 ]] || { bad=$((bad + 1)); printf '        still refused under the mutant: %s\n' "$c"; }
+  done
+  GATE="$real"
+  [[ $bad == 0 ]] && pass "mutant killed: $label ($# rows go red)" || fail "mutant survived: $label ($bad of $# rows)"
+}
+
 echo "── git-credential-helper-gate: refuse RE-ENABLING the helper, or invoking it directly"
 
 check_blocked 'git config credential.helper osxkeychain' "git config credential.helper <value>"
@@ -59,6 +82,29 @@ check_allowed 'git config --unset credential.helper' "git config --unset credent
 check_allowed 'git config --global --unset-all credential.helper' "git config --global --unset-all credential.helper"
 check_allowed 'git -c credential.helper= clone https://example.com/x' "-c credential.helper=<empty>"
 check_allowed 'git config credential.helper' "a bare read (git config credential.helper, no value)"
+
+echo " · a helper scoped to one URL or host, and a key spelled in capitals (git config keys ignore case)"
+U_C='git -c credential.https://forge.example.helper=osxkeychain ls-remote origin'
+U_CFG='git config --global credential.forge.example.helper store'
+K_H='git -c credential.Helper=osxkeychain ls-remote origin'
+K_ALL='git -c CREDENTIAL.HELPER=osxkeychain ls-remote origin'
+K_CFG='git config --global Credential.Helper store'
+check_blocked "$U_C" "-c credential.<url>.helper=<value>"
+check_blocked "$U_CFG" "git config credential.<host>.helper <value>"
+check_blocked "$K_H" "-c credential.Helper=<value> (capital H)"
+check_blocked "$K_ALL" "-c CREDENTIAL.HELPER=<value>"
+check_blocked "$K_CFG" "git config Credential.Helper <value>"
+check_blocked 'git config --global Credential.https://forge.example.Helper store' "URL-scoped AND capitalised"
+check_allowed 'git config --unset credential.https://forge.example.helper' "unsetting a URL-scoped helper"
+check_allowed 'git -c credential.https://forge.example.helper= fetch origin' "a URL-scoped helper set to empty"
+check_allowed 'git config credential.Helper' "a bare read of the capitalised key"
+check_allowed 'git config credential.https://forge.example.username bot' "another key under the same URL scope"
+mutant "the key is matched case-sensitively again" \
+  'grep -qiE "$GIT_CRED_HELPER_SET"' 'grep -qE "$GIT_CRED_HELPER_SET"' \
+  "$K_H" "$K_ALL" "$K_CFG"
+mutant "only the unscoped key credential.helper is matched" \
+  'credential(\.[^=[:space:];&|]+)?\.helper(' 'credential\.helper(' \
+  "$U_C" "$U_CFG"
 
 echo "── git-credential-helper-gate: refuse STRIPPING the session's own override before running git"
 

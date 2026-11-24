@@ -141,14 +141,18 @@ fi
 # direction (it is exactly what the env override itself sets, and `--unset` removes the key outright),
 # so neither is refused, the same "empty/no-op is off" shape as ControlPath=none and
 # ControlPersist=false in the ssh-mux check above.
-GIT_CRED_HELPER_SET='credential\.helper(=|[[:space:]]+)[^[:space:];&|]*[A-Za-z0-9][^[:space:];&|]*'
+# Matched WITHOUT regard to case, and with an optional middle part: git config keys are
+# case-insensitive (`credential.Helper`, `CREDENTIAL.HELPER`), and a helper can be scoped to one URL
+# (`credential.<url>.helper`, `credential.<host>.helper`), which re-enables it for exactly the host
+# the session override was protecting.
+GIT_CRED_HELPER_SET='credential(\.[^=[:space:];&|]+)?\.helper(=|[[:space:]]+)[^[:space:];&|]*[A-Za-z0-9][^[:space:];&|]*'
 # 2. The credential subsystem invoked DIRECTLY: `git credential fill/approve/reject/-C`, or a helper
 # binary called by its own name (`git-credential-osxkeychain`, `git credential-manager`) -- there is no
 # legitimate agent use for any of these; a seat that needs a credential uses its own AppRole path, not
 # git's.
 GIT_CRED_SUBCOMMAND="${GIT_SEG}credential([[:space:]]+(fill|approve|reject|-C)\\b|-[a-z0-9_-]+)"
 GIT_CRED_HELPER_BINARY='(^|[^A-Za-z0-9_/-])git-credential-[a-z0-9_-]+\b'
-if echo "$cmd" | grep -qE "$GIT_CRED_HELPER_SET" \
+if echo "$cmd" | grep -qiE "$GIT_CRED_HELPER_SET" \
    || echo "$cmd" | grep -qE "$GIT_CRED_SUBCOMMAND" \
    || echo "$cmd" | grep -qE "$GIT_CRED_HELPER_BINARY"; then
   deny git-credential-helper-use "this sets, unsets-to-a-value, or directly invokes a git credential helper, which would read or re-enable the operator's own saved login -- never an agent's to reach. Run this yourself if a helper genuinely needs changing."
@@ -178,6 +182,8 @@ fi
 # `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory ...` silently drops the reset the same way a
 # malicious one would, and this gate cannot tell intent from shape -- `git -c <key>=<value>` is the
 # one-off form that does not touch the session-wide override at all.
+# Cost, accepted: the name followed by `=` is refused wherever it sits in the command, so a SEARCH for
+# that text (`rg -n 'GIT_CONFIG_COUNT=' hooks/`) is refused too. Search for the name without the `=`.
 GIT_ENV_OVERRIDE_NAMES='GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_TERMINAL_PROMPT'
 GIT_ENV_ASSIGN_RX="(^|[^A-Za-z0-9_])(${GIT_ENV_OVERRIDE_NAMES})="
 GIT_ENV_UNSET_RX="(^|[^A-Za-z0-9_-])unset([[:space:]]+-[a-zA-Z]+)*[[:space:]]+[^;&|]*\\b(${GIT_ENV_OVERRIDE_NAMES})\\b"
@@ -206,7 +212,7 @@ own_forges_list() {
 OWN_FORGES="$(own_forges_list)"
 if [[ -n "$OWN_FORGES" ]]; then
   OWN_FORGES_RX=$(printf '%s\n' $OWN_FORGES | sed 's/[.[\*^$()+?{}|\\]/\\&/g' | paste -sd'|' -)
-  # cisa J1 (PR #443, c191198): widened on two axes. `https?://` -- the credential helper resolves
+  # Wide on two axes. `https?://` -- the credential helper resolves
   # for a PLAIN http:// remote too, not only https. And userinfo -- `https://user@<host>/...` or
   # `https://user:pass@<host>/...` -- which previously slipped past because the host no longer sat
   # immediately after `://`; matched generically (anything but a slash, `@`, or whitespace, then `@`),
@@ -389,33 +395,45 @@ fi
 # all. CRED_MINT refuses MINTING a token; this refuses READING one or what it unlocks, which has no
 # comparable blind-pipeline exception -- so, unlike CRED_MINT, this is NOT scoped to tool != Bash.
 #
-# ALLOW rule "seat-approle-path" (named, per the dispatch): a seat's own credential withdrawal runs
-# through these two scripts, never through a bare bao/vault CLI call -- matching here skips both
-# refusals below entirely. Neither script's name starts with the literal word "bao"/"vault", so this
-# exemption is redundant with the refusals' own scoping today; naming it explicitly means a future
-# widening of either pattern has an obvious, auditable rule to check against, not an accidental
-# non-match to rediscover.
-SEAT_APPROLE_ALLOW='(^|[^A-Za-z0-9_./-])state-withdraw\.py([^;&|\n]*--seat([[:space:]=]|$))|(^|[^A-Za-z0-9_./-])seat-boot\.sh([^A-Za-z0-9_.-]|$)'
-if ! printf '%s' "$cmd" | grep -qE "$SEAT_APPROLE_ALLOW"; then
-  # (bao|vault) secret-read subcommands -- kv get/read/list, the legacy bare read/list -- plus the two
-  # commands that reveal the RESOLVED token itself (print token, token lookup).
-  OPERATOR_SECRET_READ='(^|[^A-Za-z0-9_-])(bao|vault)([[:space:]]+-[^[:space:]]+)*[[:space:]]+(kv[[:space:]]+(get|read|list)|read|list|print[[:space:]]+token|token[[:space:]]+lookup)([^A-Za-z0-9_-]|$)'
-  if printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$OPERATOR_SECRET_READ"; then
-    deny operator-secret-read "this reads a secret or the resolved token through the bao/vault CLI, which would ride the operator's own live session if one is open -- every process running as this user shares it, with no new presence check. Use the seat's own AppRole path (state-withdraw.py --seat, or seat-boot.sh), or ask the human to run this themselves."
-  fi
+# NO ALLOW RULE, on purpose. A draft of this check skipped both refusals whenever the command named a
+# seat's own credential script. It was matched against the WHOLE command, so a mention anywhere (after
+# a `;`, inside a comment) switched the refusals off for everything else on the line. A seat's own
+# machine-identity path needs no exemption: it never runs these subcommands as text this gate reads.
+# An installation whose own wrapper does spells its exemption in its adapter, for that one
+# sub-command, never by a name that may sit anywhere in the command.
+#
+# Matched on the flattened, LOWER-CASED text: the default macOS disk is case-insensitive, so `BAO` runs
+# `bao`. The words may be joined by what a list-form argv puts between them (quotes, commas,
+# backslashes) as well as by spaces, so `["bao","kv","get",...]` inside an interpreter is the same
+# read. Only the tool's own options may sit between the tool word and the subcommand:
+# `vault policy read` is a policy definition, not a secret. Best effort, not a parser: a tool word or
+# subcommand assembled at run time is not seen.
+#   kv get/read/list, the legacy bare read/list, and the two commands that reveal the RESOLVED token
+#   itself (print token, token lookup).
+osr_flat=$(printf '%s' "$scan" | tr '\n\r' '  ' | tr '[:upper:]' '[:lower:]')
+OSR_SEP="[[:space:]\"',\\]"
+OSR_WORD="[^[:space:]\"',\;&|]"
+OPERATOR_SECRET_READ="(^|[^a-z0-9_-])(bao|vault)(${OSR_SEP}+-${OSR_WORD}+)*${OSR_SEP}+(kv${OSR_SEP}+(get|read|list)|read|list|print${OSR_SEP}+token|token${OSR_SEP}+lookup)([^a-z0-9_-]|\$)"
+if printf '%s' "$osr_flat" | grep -qE "$OPERATOR_SECRET_READ"; then
+  deny operator-secret-read "this reads a secret or the resolved token through the bao/vault CLI, which would ride the operator's own live session if one is open -- every process running as this user shares it, with no new presence check. Use the seat's own machine-identity credential path, or ask the human to run this themselves."
+fi
 
-  # The token-helper's own token file, read directly -- the same class as ~/.aws/credentials above, so
-  # the same reader-verb list and the same cross-subcommand check apply. NOT CLOSED by this: executing
-  # the CONFIGURED token_helper script itself (its path is host-specific, so a public core cannot name
-  # it -- an organisation's own adapter should gate its own path, the same convention CRED_MINT's own
-  # comment states for a private login wrapper); and a VAULT_TOKEN/BAO_TOKEN env var the agent's
-  # process merely INHERITS from an already-authenticated parent shell, which never appears as text in
-  # the command this gate reads at all.
-  VAULT_TOKEN_NAME='\.(vault|bao)-token\b'
-  VAULT_TOKEN_READ="cat\s+.*$VAULT_TOKEN_NAME|grep\s+.*$VAULT_TOKEN_NAME|rg\s+.*$VAULT_TOKEN_NAME|head\s+.*$VAULT_TOKEN_NAME|tail\s+.*$VAULT_TOKEN_NAME|less\s+.*$VAULT_TOKEN_NAME|more\s+.*$VAULT_TOKEN_NAME"
-  if printf '%s' "$scan" | tr '\n\r' '  ' | grep -qE "$VAULT_TOKEN_READ" && ! only_across_subcommands "$scan" "$VAULT_TOKEN_READ"; then
-    deny operator-token-file-read "this reads the token helper's own token file, which holds the operator's live session token if one is open -- every process running as this user shares it, with no new presence check. Use the seat's own AppRole path (state-withdraw.py --seat, or seat-boot.sh), or ask the human to run this themselves."
-  fi
+# The token-helper's own token file, read directly: the same shape as the secret-file rule above (a
+# reader verb and the file name in ONE sub-command), with a wider verb list, because a token file is a
+# single line that any filter prints whole (sed, awk, base64, xxd, od, strings, cut), a copy moves out
+# of reach of this rule (cp, dd), and an input redirect hands it to any program at all. Lower-cased for
+# the same reason as above. Best effort: a reader this list does not name is not seen. NOT CLOSED by
+# this: executing the CONFIGURED token_helper script itself (its path is host-specific, so a public
+# core cannot name it -- an organisation's own adapter should gate its own path, the same convention
+# CRED_MINT's own comment states for a private login wrapper); and a VAULT_TOKEN/BAO_TOKEN env var the
+# agent's process merely INHERITS from an already-authenticated parent shell, which never appears as
+# text in the command this gate reads at all.
+osr_lines=$(printf '%s' "$scan" | tr '[:upper:]' '[:lower:]')
+VAULT_TOKEN_NAME='\.(vault|bao)-token\b'
+VAULT_TOKEN_VERBS='cat|grep|rg|head|tail|less|more|sed|awk|base64|xxd|od|strings|cut|cp|dd'
+VAULT_TOKEN_READ="(^|[^a-z0-9_-])(${VAULT_TOKEN_VERBS})\s+.*${VAULT_TOKEN_NAME}|<\s*[^ ;&|<>]*${VAULT_TOKEN_NAME}"
+if printf '%s' "$osr_flat" | grep -qE "$VAULT_TOKEN_READ" && ! only_across_subcommands "$osr_lines" "$VAULT_TOKEN_READ"; then
+  deny operator-token-file-read "this reads the token helper's own token file, which holds the operator's live session token if one is open -- every process running as this user shares it, with no new presence check. Use the seat's own machine-identity credential path, or ask the human to run this themselves."
 fi
 
 # Credential-store reads. Two failures this rule had, both measured against a reference case list: it
