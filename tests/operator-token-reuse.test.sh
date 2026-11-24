@@ -161,8 +161,8 @@ check_blocked "$A_SEMI" "a script name in an earlier sub-command"
 check_blocked "$A_COMMENT" "a script name in a trailing comment"
 check_blocked "$A_AND" "the script run first, then the read"
 mutant "a whole-command allow for a script name is back" \
-  'if printf '"'"'%s'"'"' "$osr_flat" | grep -qE "$OPERATOR_SECRET_READ"; then' \
-  'if ! printf '"'"'%s'"'"' "$cmd" | grep -qE "seat-login\.sh|seat-credential\.py" && printf '"'"'%s'"'"' "$osr_flat" | grep -qE "$OPERATOR_SECRET_READ"; then' \
+  'if printf '"'"'%s'"'"' "$osr_bare" | grep -qE "$OPERATOR_SECRET_READ"; then' \
+  'if ! printf '"'"'%s'"'"' "$cmd" | grep -qE "seat-login\.sh|seat-credential\.py" && printf '"'"'%s'"'"' "$osr_bare" | grep -qE "$OPERATOR_SECRET_READ"; then' \
   "$A_SEMI" "$A_COMMENT" "$A_AND"
 
 echo "── operator-token-reuse: the tool word in capitals"
@@ -176,6 +176,18 @@ mutant "the text is no longer lower-cased before matching" \
   'osr_flat=$(printf '"'"'%s'"'"' "$scan" | tr '"'"'\n\r'"'"' '"'"'  '"'"' | tr '"'"'[:upper:]'"'"' '"'"'[:lower:]'"'"')' \
   'osr_flat=$(printf '"'"'%s'"'"' "$scan" | tr '"'"'\n\r'"'"' '"'"'  '"'"')' \
   "$C_UP" "$C_MIX" "$T_CAPS"
+
+echo "── operator-token-reuse: the tool word split by quotes or a backslash"
+
+Z_QQ="b''ao kv get secret/x"
+Z_BS='b\ao kv get secret/x'
+Z_DQ='va""ult kv get secret/x'
+check_blocked "$Z_QQ" "b''ao (an empty quote pair inside the word)"
+check_blocked "$Z_BS" 'b\ao (a backslash inside the word)'
+check_blocked "$Z_DQ" 'va""ult (an empty double-quote pair)'
+mutant "the tool word is matched with quotes and backslashes left in" \
+  'osr_bare=$(printf '"'"'%s'"'"' "$osr_flat" | tr -d "\"'"'"'\\\\")' 'osr_bare=$osr_flat' \
+  "$Z_QQ" "$Z_BS" "$Z_DQ"
 
 echo "── operator-token-reuse: a list-form argv inside an interpreter"
 

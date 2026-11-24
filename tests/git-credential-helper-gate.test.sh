@@ -175,6 +175,22 @@ mutant "the alias check is removed" \
   '|| printf '"'"'%s'"'"' "$cmd_bare" | grep -qiE "$GIT_CRED_ALIAS"; then' '; then' \
   "$A_BIN" "$A_SUB"   # $A_CFG is also caught by the subcommand check, so it cannot go red here
 
+echo " · the helper binary's name followed by a redirect, a brace list, a backtick or a glob"
+R_REDIR='git-credential-osxkeychain<req get'
+R_BRACE='{git-credential-store,} get'
+R_TICK='`printf git-credential-store` get'
+R_GLOB='/usr/libexec/git-core/git-credential-osxkeychai? get'
+R_STAR='git-credential-* get'
+check_blocked "$R_REDIR" "the name followed by an input redirect"
+check_blocked "$R_BRACE" "the name inside a brace list"
+check_blocked "$R_TICK" "the name inside backticks"
+check_blocked "$R_GLOB" "a ? standing in for the name's last letter"
+check_blocked "$R_STAR" "git-credential-* (a glob for the whole name)"
+check_allowed 'bash tests/git-credential-helper-gate.test.sh' "running this suite by path still passes"
+mutant "the name must be followed by a space or a separator" \
+  'git-credential-[a-z0-9_-]*([^A-Za-z0-9_.-]|$)' 'git-credential-[a-z0-9_-]+([[:space:];&|)]|$)' \
+  "$R_REDIR" "$R_BRACE" "$R_TICK" "$R_GLOB" "$R_STAR"
+
 echo "── git-credential-helper-gate: refuse STRIPPING the session's own override before running git"
 
 check_blocked 'env -i git ls-remote https://example.com/x' "env -i git"
@@ -209,6 +225,32 @@ check_allowed 'git status' "a plain git status"
 check_allowed 'MY_GIT_CONFIG_COUNT=5 git status' "a DIFFERENT variable that merely shares a suffix"
 check_allowed 'unset SOME_OTHER_VAR; git status' "unset on an unrelated variable"
 
+echo " · a guarded variable NAME written with quotes or a backslash is the same variable"
+E_KEY="env GIT_CONFIG_KEY_''0=include.path GIT_CONFIG_VALUE_''0=/tmp/x.cfg git fetch origin"
+E_VAL="env GIT_CONFIG_VALUE_''0=osxkeychain git fetch origin"
+E_PAR="env GIT_CONFIG_PARA''METERS=x git fetch origin"
+E_EXP='export GIT_CONFIG_PARAMETER\S=x; git fetch origin'
+E_CNT="env GIT_CONFIG_COU''NT=2 GIT_CONFIG_KEY_1=include.path GIT_CONFIG_VALUE_1=/tmp/x.cfg git fetch origin"
+E_UNS="unset GIT_CONFIG_COU''NT; git fetch origin"
+check_blocked "$E_KEY" "GIT_CONFIG_KEY_''0 and GIT_CONFIG_VALUE_''0 (quoted inside the name)"
+check_blocked "$E_VAL" "GIT_CONFIG_VALUE_''0=<helper>"
+check_blocked "$E_PAR" "GIT_CONFIG_PARA''METERS"
+check_blocked "$E_EXP" 'export GIT_CONFIG_PARAMETER\S (a backslash inside the name)'
+check_blocked "$E_CNT" "GIT_CONFIG_COU''NT=2 with a second key"
+check_blocked "$E_UNS" "unset GIT_CONFIG_COU''NT"
+mutant "the assign and unset checks read the command with its quotes left in" \
+  'if printf '"'"'%s'"'"' "$cmd_bare" | grep -qE "$GIT_ENV_ASSIGN_RX" || printf '"'"'%s'"'"' "$cmd_bare" | grep -qE "$GIT_ENV_UNSET_RX"; then' \
+  'if echo "$cmd" | grep -qE "$GIT_ENV_ASSIGN_RX" || echo "$cmd" | grep -qE "$GIT_ENV_UNSET_RX"; then' \
+  "$E_KEY" "$E_VAL" "$E_PAR" "$E_EXP" "$E_CNT" "$E_UNS"
+S_U="env -u GIT_TERMINAL_PRO''MPT git fetch origin"
+S_I="env -'i' git status"
+check_blocked "$S_U" "env -u GIT_TERMINAL_PRO''MPT"
+check_blocked "$S_I" "env -'i' git (a quoted flag)"
+mutant "the env-strip check reads the command with its quotes left in" \
+  'if printf '"'"'%s'"'"' "$cmd_bare" | grep -qE "$ENV_STRIP_ALL" || printf '"'"'%s'"'"' "$cmd_bare" | grep -qE "$ENV_STRIP_OVERRIDE"; then' \
+  'if echo "$cmd" | grep -qE "$ENV_STRIP_ALL" || echo "$cmd" | grep -qE "$ENV_STRIP_OVERRIDE"; then' \
+  "$S_U" "$S_I"
+
 echo "── git-credential-helper-gate: refuse an explicit https:// URL to one of the installation's OWN"
 echo "   forges (GOVERNANCE_OWN_FORGES, an adapter parameter — set here only for this suite's own use)"
 
@@ -232,6 +274,27 @@ check_allowed 'git ls-remote origin' "a bare git ls-remote (configured remote)" 
 check_allowed 'git clone https://github.com/someorg/somerepo' "https:// to a DIFFERENT host, not in the own-forges list" "$OWN"
 check_allowed 'git clone http://github.com/someorg/somerepo' "http:// to a DIFFERENT host, not in the own-forges list" "$OWN"
 check_allowed 'git ls-remote https://git.example.com/org/repo' "control: with NO own-forges list configured at all, the same URL is not checked"
+
+echo " · the own-forge check on a restricted PATH (no paste, as on a minimal host): still on, still exact"
+. "$ROOT/tests/lib/shim-path.sh"
+BARE_PATH="PATH=$(shim_path bare)"
+check_blocked 'git ls-remote https://git.example.com/org/repo' "an own-forge URL on the restricted PATH" "$OWN" "$BARE_PATH"
+check_blocked 'git clone https://mcp.example.com/org/repo' "the SECOND host of the list on the restricted PATH" "$OWN" "$BARE_PATH"
+check_allowed 'git clone https://github.com/someorg/somerepo' "another host on the restricted PATH (the pattern was built, not failed closed)" "$OWN" "$BARE_PATH"
+check_allowed 'git push origin main' "a bare git push on the restricted PATH" "$OWN" "$BARE_PATH"
+
+echo " · the list is SET but holds no readable host: an explicit URL is refused, not waved through"
+BAD='GOVERNANCE_OWN_FORGES=!!! ???'   # two entries, neither a host name
+F_URL='git ls-remote https://anything.example/org/repo'
+check_blocked "$F_URL" "an explicit URL when the list did not load" "$BAD"
+check_allowed 'git push origin main' "a bare git push when the list did not load" "$BAD"
+check_allowed 'git ls-remote https://anything.example/org/repo' "control: the same URL with NO list set at all"
+GATE_SAVED_RUN=$(declare -f run)
+run() { local cmd="$1"; shift; payload "$cmd" | env "$BAD" bash "$GATE" >/dev/null 2>"$TMP/err"; }
+mutant "an unreadable list switches the check off" \
+  '    if echo "$cmd" | grep -qiE "$GIT_HTTP_URL"; then' '    if false; then' \
+  "$F_URL"
+eval "$GATE_SAVED_RUN"
 
 echo "── git-credential-helper-gate: LAYER 1 ITSELF — settings/claude.json's own env block stops a"
 echo "   real credential-helper call. Portable: no real"
@@ -266,7 +329,18 @@ http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 SERVEREOF
 SERVER_PID=$!
 trap 'kill '"$SERVER_PID"' 2>/dev/null; rm -rf "$TMP"' EXIT
-sleep 0.3
+# Wait until the server ACCEPTS a connection (up to ~5 s), never a fixed pause: on a loaded host a
+# fixed 0.3 s was sometimes too short, git got "connection refused", consulted no helper at all, and a
+# "no override" control then failed for a reason that had nothing to do with the override.
+python3 - "$SERVER_PORT" <<'WAITEOF'
+import socket, sys, time
+for _ in range(50):
+    try:
+        socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=0.2).close()
+        break
+    except OSError:
+        time.sleep(0.1)
+WAITEOF
 
 # The ACTUAL override values, read from settings/claude.json ITSELF — never a copy of the same four
 # numbers hardcoded here — so that removing the json's own env block (this suite's own mutant target)

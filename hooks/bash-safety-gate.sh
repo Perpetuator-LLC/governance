@@ -157,10 +157,12 @@ cmd_bare=$(printf '%s' "$cmd" | tr -d "\"'\\\\")
 # git's.
 GIT_CRED_SUBCOMMAND="${GIT_SEG}credential([[:space:]]+(fill|approve|reject|-C)\\b|-[a-z0-9_-]+)"
 # The helper binary is refused at ANY path: by bare name, `./<name>`, a full path into git-core, or
-# `"$(git --exec-path)/<name>"`. A real helper prints the saved login on stdout. The name must END the
-# word (a space, a separator or the end), so a file that merely starts with the same letters and
-# carries an extension (a test named git-credential-<x>.test.sh, a doc) is not a helper call.
-GIT_CRED_HELPER_BINARY='(^|[^A-Za-z0-9_-])git-credential-[a-z0-9_-]+(\.exe)?([[:space:];&|)]|$)'
+# `"$(git --exec-path)/<name>"`. A real helper prints the saved login on stdout. The name ends at the
+# first character a file name does not hold, whatever it is: a space, a redirect (`<req`), a brace
+# list, a backtick, or a glob standing in for the rest of the name (`git-credential-*`, `...chai?`).
+# A dot is not such an end, so a file that merely starts with the same letters and carries an
+# extension (a test named git-credential-<x>.test.sh, a doc) is not a helper call.
+GIT_CRED_HELPER_BINARY='(^|[^A-Za-z0-9_-])git-credential-[a-z0-9_-]*([^A-Za-z0-9_.-]|$)'
 # An alias reaches the same subsystem under another name: `-c alias.k=credential-<name>`, then `git k`.
 # Any alias whose value holds the word is refused, set on the command line or written to a config file.
 GIT_CRED_ALIAS='alias\.[^=[:space:]]+(=|[[:space:]]+)[^;&|]*credential'
@@ -188,7 +190,9 @@ fi
 # other env assignments and flags first.
 ENV_STRIP_ALL="(^|[^A-Za-z0-9_-])env\\b[^;&|]*-i\\b[^;&|]*\\bgit\\b"
 ENV_STRIP_OVERRIDE="(^|[^A-Za-z0-9_-])env\\b[^;&|]*-u[[:space:]]+(GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_TERMINAL_PROMPT)\\b"
-if echo "$cmd" | grep -qE "$ENV_STRIP_ALL" || echo "$cmd" | grep -qE "$ENV_STRIP_OVERRIDE"; then
+# Read on the quote-stripped copy, like the key checks: `env`, `export` and `unset` receive a name
+# after the shell has removed its quotes, so `GIT_CONFIG_COU''NT` is the same variable.
+if printf '%s' "$cmd_bare" | grep -qE "$ENV_STRIP_ALL" || printf '%s' "$cmd_bare" | grep -qE "$ENV_STRIP_OVERRIDE"; then
   deny env-strips-credential-override "this strips the session's own git credential-helper override (env -i, or env -u on one of its names) before running git, re-exposing the operator's saved login to a prompt the session starts closed. Run this yourself if the override genuinely needs lifting."
 fi
 
@@ -212,7 +216,7 @@ fi
 GIT_ENV_OVERRIDE_NAMES='GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_TERMINAL_PROMPT|GIT_CONFIG_PARAMETERS'
 GIT_ENV_ASSIGN_RX="(^|[^A-Za-z0-9_])(${GIT_ENV_OVERRIDE_NAMES})="
 GIT_ENV_UNSET_RX="(^|[^A-Za-z0-9_-])unset([[:space:]]+-[a-zA-Z]+)*[[:space:]]+[^;&|]*\\b(${GIT_ENV_OVERRIDE_NAMES})\\b"
-if echo "$cmd" | grep -qE "$GIT_ENV_ASSIGN_RX" || echo "$cmd" | grep -qE "$GIT_ENV_UNSET_RX"; then
+if printf '%s' "$cmd_bare" | grep -qE "$GIT_ENV_ASSIGN_RX" || printf '%s' "$cmd_bare" | grep -qE "$GIT_ENV_UNSET_RX"; then
   deny git-env-override-reassigned "this assigns, exports, or unsets one of the session's own git credential-helper override variables (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0, GIT_TERMINAL_PROMPT) or GIT_CONFIG_PARAMETERS, which lifts or replaces it for every later command in this session. Use \`git -c <key>=<value>\` for a one-off setting instead."
 fi
 
@@ -226,24 +230,46 @@ fi
 # every fleet, so it can never be core's own.  NOT a bare `git push`/`fetch`/`pull`/`clone` with no URL
 # argument at all: that uses the remote already configured for the repo, which this check does not
 # read and is unaffected (the measured incident's own command named an explicit URL).
+# Read and joined in PURE BASH. An external program here (tr, grep, sed, paste) that a restricted PATH
+# lacks leaves the list or its pattern empty, and the check then switches itself off without a word.
 own_forges_list() {
+  local raw="" line f
   if [[ -n "${GOVERNANCE_OWN_FORGES:-}" ]]; then
-    printf '%s' "$GOVERNANCE_OWN_FORGES" | tr ',\n' '  '
+    raw=$GOVERNANCE_OWN_FORGES
   else
-    local f="${GOVERNANCE_OWN_FORGES_FILE:-$HOME/.governance/own-forges}"
-    [[ -f "$f" ]] && grep -v '^[[:space:]]*#' "$f" | tr '\n' ' '
+    f="${GOVERNANCE_OWN_FORGES_FILE:-$HOME/.governance/own-forges}"
+    [[ -f "$f" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ "$line" =~ ^[[:space:]]*# ]] && continue
+      raw+="$line "
+    done < "$f"
   fi
+  raw=${raw//,/ }
+  raw=${raw//$'\n'/ }
+  raw=${raw//$'\r'/ }
+  printf '%s' "$raw"
 }
 OWN_FORGES="$(own_forges_list)"
-if [[ -n "$OWN_FORGES" ]]; then
-  OWN_FORGES_RX=$(printf '%s\n' $OWN_FORGES | sed 's/[.[\*^$()+?{}|\\]/\\&/g' | paste -sd'|' -)
-  # Wide on two axes. `https?://` -- the credential helper resolves
-  # for a PLAIN http:// remote too, not only https. And userinfo -- `https://user@<host>/...` or
-  # `https://user:pass@<host>/...` -- which previously slipped past because the host no longer sat
-  # immediately after `://`; matched generically (anything but a slash, `@`, or whitespace, then `@`),
-  # since the userinfo itself is not something this check needs to parse, only skip over.
-  if [[ -n "$OWN_FORGES_RX" ]] \
-     && echo "$cmd" | grep -qiE "${GIT_SEG}([^;&|]*[[:space:]])?https?://([^/@[:space:];&|]*@)?($OWN_FORGES_RX)([^[:space:];&|]*)?"; then
+if [[ -n "${OWN_FORGES//[[:space:]]/}" ]]; then
+  OWN_FORGES_RX=""
+  read -r -a own_hosts <<< "$OWN_FORGES"
+  for own_host in "${own_hosts[@]}"; do
+    # A host is letters, digits, dots, hyphens, underscores and a port colon. Anything else is not a
+    # host name and is left out, never turned into a pattern.
+    [[ "$own_host" =~ ^[A-Za-z0-9._:-]+$ ]] || continue
+    OWN_FORGES_RX+="${OWN_FORGES_RX:+|}${own_host//./\\.}"
+  done
+  GIT_HTTP_URL="${GIT_SEG}([^;&|]*[[:space:]])?https?://"
+  if [[ -z "$OWN_FORGES_RX" ]]; then
+    # The list is SET but no host in it could be read. Fail CLOSED: an explicit URL in a git call
+    # cannot be checked against a list that did not load, so it is refused rather than waved through.
+    if echo "$cmd" | grep -qiE "$GIT_HTTP_URL"; then
+      deny git-https-own-forge "the installation's own-forge list is set but no host in it could be read, so an explicit http(s):// URL in a git call cannot be checked and is refused. Fix the list (host names, comma- or newline-separated), or use the repo's already-configured remote."
+    fi
+  # Wide on two axes. `https?://` -- the credential helper resolves for a PLAIN http:// remote too, not
+  # only https. And userinfo -- `https://user@<host>/...` or `https://user:pass@<host>/...` -- matched
+  # generically (anything but a slash, `@`, or whitespace, then `@`): the userinfo is only skipped over.
+  elif echo "$cmd" | grep -qiE "${GIT_HTTP_URL}([^/@[:space:];&|]*@)?($OWN_FORGES_RX)([^[:space:];&|]*)?"; then
     deny git-https-own-forge "this names an explicit http(s):// URL to one of the installation's own forges, which rides the operator's own credential helper if the session's own override has not reached this host. Use the repo's already-configured remote (a bare git push/fetch/pull/clone), or the forge's own API/MCP tools."
   fi
 fi
@@ -442,10 +468,13 @@ fi
 # NOT CLOSED: a `write <path>` that returns secret material (a transit decrypt, an AppRole secret-id,
 # auth/token/create): a write is not a read by shape, and the paths are installation-specific.
 osr_flat=$(printf '%s' "$scan" | tr '\n\r' '  ' | tr '[:upper:]' '[:lower:]')
+# A second copy with quotes and backslashes removed: `b''ao` and `b\ao` run the same binary, and a
+# list-form argv still reads `[bao,kv,get` there, so the comma keeps joining the words.
+osr_bare=$(printf '%s' "$osr_flat" | tr -d "\"'\\\\")
 OSR_SEP="[[:space:]\"',\\]"
 OSR_WORD="[^[:space:]\"',\;&|]"
 OPERATOR_SECRET_READ="(^|[^a-z0-9_-])(bao|vault)(${OSR_SEP}+-${OSR_WORD}+)*${OSR_SEP}+(kv${OSR_SEP}+(get|read)|read|unwrap|print${OSR_SEP}+token|token${OSR_SEP}+(lookup|create))([^a-z0-9_-]|\$)"
-if printf '%s' "$osr_flat" | grep -qE "$OPERATOR_SECRET_READ"; then
+if printf '%s' "$osr_bare" | grep -qE "$OPERATOR_SECRET_READ"; then
   deny operator-secret-read "this reads a secret, or reveals or mints from the resolved token, through the bao/vault CLI, which would ride the operator's own live session if one is open -- every process running as this user shares it, with no new presence check. Use the seat's own machine-identity credential path, or ask the human to run this themselves."
 fi
 
