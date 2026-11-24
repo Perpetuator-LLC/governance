@@ -295,7 +295,7 @@ layer1_probe() {
     # helper git lists.
     export GIT_CONFIG_NOSYSTEM=1
     unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT GIT_CONFIG_PARAMETERS \
-          GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_ASKPASS SSH_ASKPASS
+          GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_ASKPASS SSH_ASKPASS XDG_CONFIG_HOME
     local target_dir="$home"
     if [[ "$scope" == global ]]; then
       git config --global credential.helper "$HELPER" >/dev/null 2>&1
