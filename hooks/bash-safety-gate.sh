@@ -263,13 +263,16 @@ if [[ -n "${OWN_FORGES//[[:space:]]/}" ]]; then
   if [[ -z "$OWN_FORGES_RX" ]]; then
     # The list is SET but no host in it could be read. Fail CLOSED: an explicit URL in a git call
     # cannot be checked against a list that did not load, so it is refused rather than waved through.
-    if echo "$cmd" | grep -qiE "$GIT_HTTP_URL"; then
-      deny git-https-own-forge "the installation's own-forge list is set but no host in it could be read, so an explicit http(s):// URL in a git call cannot be checked and is refused. Fix the list (host names, comma- or newline-separated), or use the repo's already-configured remote."
+    if printf '%s' "$cmd_bare" | grep -qiE "$GIT_HTTP_URL"; then
+      deny git-own-forge-list-unreadable "the installation's own-forge list is set but no host in it could be read, so an explicit http(s):// URL in a git call cannot be checked and is refused. Fix the list (host names, comma- or newline-separated), or use the repo's already-configured remote."
     fi
   # Wide on two axes. `https?://` -- the credential helper resolves for a PLAIN http:// remote too, not
   # only https. And userinfo -- `https://user@<host>/...` or `https://user:pass@<host>/...` -- matched
   # generically (anything but a slash, `@`, or whitespace, then `@`): the userinfo is only skipped over.
-  elif echo "$cmd" | grep -qiE "${GIT_HTTP_URL}([^/@[:space:];&|]*@)?($OWN_FORGES_RX)([^[:space:];&|]*)?"; then
+  # Read on the quote-stripped copy, like every check in this block: git receives the URL after the
+  # shell has removed its quotes and backslashes, so `'https://<host>/x'`, `h''ttps://<host>/x` and
+  # `https://<ho\st>/x` all name the same forge.
+  elif printf '%s' "$cmd_bare" | grep -qiE "${GIT_HTTP_URL}([^/@[:space:];&|]*@)?($OWN_FORGES_RX)([^[:space:];&|]*)?"; then
     deny git-https-own-forge "this names an explicit http(s):// URL to one of the installation's own forges, which rides the operator's own credential helper if the session's own override has not reached this host. Use the repo's already-configured remote (a bare git push/fetch/pull/clone), or the forge's own API/MCP tools."
   fi
 fi

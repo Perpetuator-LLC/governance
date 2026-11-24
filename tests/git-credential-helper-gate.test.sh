@@ -275,6 +275,27 @@ check_allowed 'git clone https://github.com/someorg/somerepo' "https:// to a DIF
 check_allowed 'git clone http://github.com/someorg/somerepo' "http:// to a DIFFERENT host, not in the own-forges list" "$OWN"
 check_allowed 'git ls-remote https://git.example.com/org/repo' "control: with NO own-forges list configured at all, the same URL is not checked"
 
+echo " · an own-forge URL written with quotes or a backslash is the same URL once the shell has read it"
+X_SQ="git ls-remote 'https://git.example.com/org/repo'"
+X_DQ='git ls-remote "https://git.example.com/org/repo"'
+X_SCHEME="git ls-remote h''ttps://git.example.com/org/repo"
+X_HOSTBS='git ls-remote https://git.exam\ple.com/org/repo'
+X_HOSTQ="git ls-remote https://'git.example.com'/org/repo"
+X_SLASH='git ls-remote https:/\/git.example.com/org/repo'
+check_blocked "$X_SQ" "the URL in single quotes" "$OWN"
+check_blocked "$X_DQ" "the URL in double quotes" "$OWN"
+check_blocked "$X_SCHEME" "h''ttps (an empty quote pair inside the scheme)" "$OWN"
+check_blocked "$X_HOSTBS" "a backslash inside the host" "$OWN"
+check_blocked "$X_HOSTQ" "the host alone in quotes" "$OWN"
+check_blocked "$X_SLASH" "a backslash between the two slashes" "$OWN"
+check_allowed "git clone 'https://github.com/someorg/somerepo'" "another host in quotes" "$OWN"
+URL_SAVED_RUN=$(declare -f run)
+run() { local cmd="$1"; shift; payload "$cmd" | env "$OWN" bash "$GATE" >/dev/null 2>"$TMP/err"; }
+mutant "the own-forge URL check reads the command with its quotes left in" \
+  '  elif printf '"'"'%s'"'"' "$cmd_bare" | grep -qiE "${GIT_HTTP_URL}(' '  elif echo "$cmd" | grep -qiE "${GIT_HTTP_URL}(' \
+  "$X_SQ" "$X_DQ" "$X_SCHEME" "$X_HOSTBS" "$X_HOSTQ" "$X_SLASH"
+eval "$URL_SAVED_RUN"
+
 echo " · the own-forge check on a restricted PATH (no paste, as on a minimal host): still on, still exact"
 . "$ROOT/tests/lib/shim-path.sh"
 BARE_PATH="PATH=$(shim_path bare)"
@@ -292,7 +313,7 @@ check_allowed 'git ls-remote https://anything.example/org/repo' "control: the sa
 GATE_SAVED_RUN=$(declare -f run)
 run() { local cmd="$1"; shift; payload "$cmd" | env "$BAD" bash "$GATE" >/dev/null 2>"$TMP/err"; }
 mutant "an unreadable list switches the check off" \
-  '    if echo "$cmd" | grep -qiE "$GIT_HTTP_URL"; then' '    if false; then' \
+  '    if printf '"'"'%s'"'"' "$cmd_bare" | grep -qiE "$GIT_HTTP_URL"; then' '    if false; then' \
   "$F_URL"
 eval "$GATE_SAVED_RUN"
 
