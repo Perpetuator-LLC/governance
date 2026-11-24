@@ -162,7 +162,8 @@ GIT_CRED_SUBCOMMAND="${GIT_SEG}credential([[:space:]]+(fill|approve|reject|-C)\\
 # list, a backtick, or a glob standing in for the rest of the name (`git-credential-*`, `...chai?`).
 # A dot is not such an end, so a file that merely starts with the same letters and carries an
 # extension (a test named git-credential-<x>.test.sh, a doc) is not a helper call.
-GIT_CRED_HELPER_BINARY='(^|[^A-Za-z0-9_-])git-credential-[a-z0-9_-]*([^A-Za-z0-9_.-]|$)'
+# One extension is part of a helper's own name on one OS: `git-credential-manager.exe`, in any case.
+GIT_CRED_HELPER_BINARY='(^|[^A-Za-z0-9_-])git-credential-[a-z0-9_-]*(\.exe)?([^A-Za-z0-9_.-]|$)'
 # An alias reaches the same subsystem under another name: `-c alias.k=credential-<name>`, then `git k`.
 # Any alias whose value holds the word is refused, set on the command line or written to a config file.
 GIT_CRED_ALIAS='alias\.[^=[:space:]]+(=|[[:space:]]+)[^;&|]*credential'
@@ -183,41 +184,55 @@ if printf '%s' "$cmd_bare" | grep -qiE "$GIT_INCLUDE_KEY"; then
   deny git-config-include "this pulls another config file in at command scope (include.path / includeIf), which is read after the session's own credential-helper reset and can re-enable a helper. Pass the one setting you need as its own \`git -c <key>=<value>\`."
 fi
 
-# 3. `env -i` strips EVERY environment variable from the command it wraps, including the GIT_CONFIG_*/
-# GIT_TERMINAL_PROMPT overrides the session itself starts with -- re-exposing exactly the prompt those
-# exist to prevent. `env -u <name>` targeting one of those SAME four names does the identical thing,
-# narrower. Both are refused regardless of whether `git` is the very next word or reached through
-# other env assignments and flags first.
-ENV_STRIP_ALL="(^|[^A-Za-z0-9_-])env\\b[^;&|]*-i\\b[^;&|]*\\bgit\\b"
-ENV_STRIP_OVERRIDE="(^|[^A-Za-z0-9_-])env\\b[^;&|]*-u[[:space:]]+(GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_TERMINAL_PROMPT)\\b"
-# Read on the quote-stripped copy, like the key checks: `env`, `export` and `unset` receive a name
-# after the shell has removed its quotes, so `GIT_CONFIG_COU''NT` is the same variable.
-if printf '%s' "$cmd_bare" | grep -qE "$ENV_STRIP_ALL" || printf '%s' "$cmd_bare" | grep -qE "$ENV_STRIP_OVERRIDE"; then
-  deny env-strips-credential-override "this strips the session's own git credential-helper override (env -i, or env -u on one of its names) before running git, re-exposing the operator's saved login to a prompt the session starts closed. Run this yourself if the override genuinely needs lifting."
+# 3. CLEARING THE ENVIRONMENT the session's own override lives in. `env -i` strips every variable
+# from the command it wraps, `env -u <name>` one of them, and `exec -c` replaces the shell with a
+# command run in an empty environment. Each re-exposes exactly the prompt the override exists to
+# prevent. Refused by SHAPE, whatever the wrapped command or the variable is, because the spellings
+# cannot be told apart by name: `env -uNAME` glues the name to the flag, `env -` is `-i`, and a
+# cluster such as `-vi` hides the letter:
+#   env with a lone `-`, a short-option cluster holding `i` or `u`, `--ignore-environment` or `--unset`
+#   exec with a short-option cluster holding `c`
+# Only env's OWN options count: the ones before the wrapped command's first word, so the `-i` of
+# `env LC_ALL=C grep -i ...` and the `-u` of `env LC_ALL=C sort -u` are not this.
+# Cost, accepted: `env -u <an unrelated variable> <command>` and `env -i <command>` are refused too.
+# Read on the quote-stripped copy, like the key checks above.
+ENV_OWN_ARG='(-[CPS][[:space:]]+[^[:space:];&|]+|-[^[:space:];&|]*|[A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*)'
+ENV_CLEARS="(^|[^A-Za-z0-9_./-])env([[:space:]]+${ENV_OWN_ARG})*[[:space:]]+(-|-[A-Za-z0-9]*[iu][^[:space:];&|]*|--ignore-environment|--unset(=[^[:space:];&|]*)?)([[:space:];&|]|\$)"
+if printf '%s' "$cmd_bare" | grep -qE "$ENV_CLEARS"; then
+  deny env-strips-credential-override "this clears or unsets environment variables around a command (env with -, -i, -u or their long forms), which lifts the session's own git credential-helper override and re-exposes the operator's saved login. Set the one variable you need as NAME=value in front of the command instead, or run this yourself."
+fi
+EXEC_CLEARS='(^|[^A-Za-z0-9_./-])exec([[:space:]]+(-a[[:space:]]+[^[:space:];&|]+|-[A-Za-z]*))*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:];&|]|$)'
+if printf '%s' "$cmd_bare" | grep -qE "$EXEC_CLEARS"; then
+  deny exec-clears-environment "this replaces the shell with a command run in an empty environment (exec -c), which drops the session's own git credential-helper override. Run the command without exec -c, or run this yourself."
 fi
 
-# 3b. ANY assignment, export or unset of one of the SAME four names, in ANY shape, not only via `env`
-# -- `env -i`/`env -u` above only catches the WRAPPER forms; a plain shell assignment lifts or replaces
-# the override just as completely, and need not even mention `git` or `credential.helper` on the same
-# line to do it (the shell keeps the new value for every later command in the session):
-#   GIT_CONFIG_COUNT=0 git ls-remote https://<host>/...      (bare prefix assignment, resets to 0)
-#   GIT_CONFIG_VALUE_0=osxkeychain git ...                    (never names credential.helper; 1 above
-#                                                               only matches that literal key name)
-#   export GIT_CONFIG_COUNT=0; git ...  /  unset GIT_CONFIG_COUNT; git ...
-#   env GIT_CONFIG_COUNT=0 git ...                            (env with a plain assignment, no -i/-u)
+# 3b. ANY USE OF A GUARDED NAME EXCEPT READING IT. The session's override is five variable names. A
+# shell has many ways to change a variable, and a rule that lists them (an assignment, export, unset)
+# is one builtin behind for ever:
+#   GIT_CONFIG_COUNT=0 git ...            export GIT_CONFIG_COUNT=0        unset GIT_CONFIG_COUNT
+#   GIT_CONFIG_VALUE_0+=<helper>          export -n GIT_CONFIG_COUNT       declare +x / typeset +x
+#   printf -v GIT_CONFIG_VALUE_0 <h>      read GIT_CONFIG_VALUE_0 <<< <h>  for GIT_CONFIG_VALUE_0 in <h>
+#   local GIT_CONFIG_COUNT (in a function)                                 env GIT_CONFIG_COUNT=0 git ...
+# So the rule is structural: one of the names as a WHOLE WORD anywhere in the command is refused,
+# unless it is only being read, as `$NAME` or `${NAME...}`. Numbered names count with any number: a
+# raised count makes KEY_1 and VALUE_1 live. GIT_CONFIG_PARAMETERS is the fifth name: it is what
+# `git -c` itself exports, so setting it injects any key with no `-c` on the line at all.
 # Refused on the VALUE too, not only the override-removing one: a legitimate tool's own
-# `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory ...` silently drops the reset the same way a
-# malicious one would, and this gate cannot tell intent from shape -- `git -c <key>=<value>` is the
-# one-off form that does not touch the session-wide override at all.
-# Cost, accepted: the name followed by `=` is refused wherever it sits in the command, so a SEARCH for
-# that text (`rg -n 'GIT_CONFIG_COUNT=' hooks/`) is refused too. Search for the name without the `=`.
-# GIT_CONFIG_PARAMETERS is the fifth name: it is what `git -c` itself exports, so assigning it injects
-# any key (a helper, an include) at the same command scope without a `-c` on the line at all.
-GIT_ENV_OVERRIDE_NAMES='GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_TERMINAL_PROMPT|GIT_CONFIG_PARAMETERS'
-GIT_ENV_ASSIGN_RX="(^|[^A-Za-z0-9_])(${GIT_ENV_OVERRIDE_NAMES})="
-GIT_ENV_UNSET_RX="(^|[^A-Za-z0-9_-])unset([[:space:]]+-[a-zA-Z]+)*[[:space:]]+[^;&|]*\\b(${GIT_ENV_OVERRIDE_NAMES})\\b"
-if printf '%s' "$cmd_bare" | grep -qE "$GIT_ENV_ASSIGN_RX" || printf '%s' "$cmd_bare" | grep -qE "$GIT_ENV_UNSET_RX"; then
-  deny git-env-override-reassigned "this assigns, exports, or unsets one of the session's own git credential-helper override variables (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0, GIT_TERMINAL_PROMPT) or GIT_CONFIG_PARAMETERS, which lifts or replaces it for every later command in this session. Use \`git -c <key>=<value>\` for a one-off setting instead."
+# `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory ...` silently drops the reset the same way, and
+# this gate cannot tell intent from shape. `git -c <key>=<value>` is the one-off form that does not
+# touch the session-wide override at all.
+# Cost, accepted: a SEARCH for one of the names (`rg GIT_CONFIG_COUNT hooks/`), or a message that
+# quotes one, is refused too. Search for a shorter stem (`GIT_CONFIG_`), and pass a message by file.
+GIT_ENV_OVERRIDE_NAMES='GIT_CONFIG_COUNT|GIT_CONFIG_KEY_[0-9]+|GIT_CONFIG_VALUE_[0-9]+|GIT_TERMINAL_PROMPT|GIT_CONFIG_PARAMETERS'
+# Reads are taken out first, in pure bash (no helper program whose absence would change the verdict).
+cmd_names=$cmd_bare
+GIT_ENV_READ_RX="[\$][{]?(${GIT_ENV_OVERRIDE_NAMES})"
+while [[ "$cmd_names" =~ $GIT_ENV_READ_RX ]]; do
+  cmd_names=${cmd_names/"${BASH_REMATCH[0]}"/}
+done
+GIT_ENV_NAME_RX="(^|[^A-Za-z0-9_])(${GIT_ENV_OVERRIDE_NAMES})([^A-Za-z0-9_]|\$)"
+if printf '%s' "$cmd_names" | grep -qE "$GIT_ENV_NAME_RX"; then
+  deny git-env-override-reassigned "this names one of the session's own git credential-helper override variables (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n>, GIT_CONFIG_VALUE_<n>, GIT_TERMINAL_PROMPT, GIT_CONFIG_PARAMETERS) other than to read it. Any assignment, export, unset, read, printf -v, declare or loop over one of them lifts or replaces the override for later commands. Use \`git -c <key>=<value>\` for a one-off setting instead."
 fi
 
 # 4. A RAW https:// URL to one of the installation's OWN forges, inside a git invocation: this is the
@@ -232,25 +247,29 @@ fi
 # read and is unaffected (the measured incident's own command named an explicit URL).
 # Read and joined in PURE BASH. An external program here (tr, grep, sed, paste) that a restricted PATH
 # lacks leaves the list or its pattern empty, and the check then switches itself off without a word.
-own_forges_list() {
-  local raw="" line f
-  if [[ -n "${GOVERNANCE_OWN_FORGES:-}" ]]; then
-    raw=$GOVERNANCE_OWN_FORGES
-  else
-    f="${GOVERNANCE_OWN_FORGES_FILE:-$HOME/.governance/own-forges}"
-    [[ -f "$f" ]] || return 0
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      [[ "$line" =~ ^[[:space:]]*# ]] && continue
-      raw+="$line "
-    done < "$f"
+# A list file that EXISTS but is not a readable regular file (no read permission, a directory at the
+# path) is a list that did not load, not "no list": it takes the fail-closed branch below.
+OWN_FORGES=""
+OWN_FORGES_UNREADABLE=0
+if [[ -n "${GOVERNANCE_OWN_FORGES:-}" ]]; then
+  OWN_FORGES=$GOVERNANCE_OWN_FORGES
+else
+  own_forges_file="${GOVERNANCE_OWN_FORGES_FILE:-$HOME/.governance/own-forges}"
+  if [[ -e "$own_forges_file" || -L "$own_forges_file" ]]; then
+    if [[ -f "$own_forges_file" && -r "$own_forges_file" ]]; then
+      while IFS= read -r own_line || [[ -n "$own_line" ]]; do
+        [[ "$own_line" =~ ^[[:space:]]*# ]] && continue
+        OWN_FORGES+="$own_line "
+      done < "$own_forges_file"
+    else
+      OWN_FORGES_UNREADABLE=1
+    fi
   fi
-  raw=${raw//,/ }
-  raw=${raw//$'\n'/ }
-  raw=${raw//$'\r'/ }
-  printf '%s' "$raw"
-}
-OWN_FORGES="$(own_forges_list)"
-if [[ -n "${OWN_FORGES//[[:space:]]/}" ]]; then
+fi
+OWN_FORGES=${OWN_FORGES//,/ }
+OWN_FORGES=${OWN_FORGES//$'\n'/ }
+OWN_FORGES=${OWN_FORGES//$'\r'/ }
+if [[ -n "${OWN_FORGES//[[:space:]]/}" || "$OWN_FORGES_UNREADABLE" == 1 ]]; then
   OWN_FORGES_RX=""
   read -r -a own_hosts <<< "$OWN_FORGES"
   for own_host in "${own_hosts[@]}"; do
@@ -264,7 +283,7 @@ if [[ -n "${OWN_FORGES//[[:space:]]/}" ]]; then
     # The list is SET but no host in it could be read. Fail CLOSED: an explicit URL in a git call
     # cannot be checked against a list that did not load, so it is refused rather than waved through.
     if printf '%s' "$cmd_bare" | grep -qiE "$GIT_HTTP_URL"; then
-      deny git-own-forge-list-unreadable "the installation's own-forge list is set but no host in it could be read, so an explicit http(s):// URL in a git call cannot be checked and is refused. Fix the list (host names, comma- or newline-separated), or use the repo's already-configured remote."
+      deny git-own-forge-list-unreadable "the installation's own-forge list is set but could not be read, or holds no host name, so an explicit http(s):// URL in a git call cannot be checked and is refused. Fix the list (host names, comma- or newline-separated), or use the repo's already-configured remote."
     fi
   # Wide on two axes. `https?://` -- the credential helper resolves for a PLAIN http:// remote too, not
   # only https. And userinfo -- `https://user@<host>/...` or `https://user:pass@<host>/...` -- matched

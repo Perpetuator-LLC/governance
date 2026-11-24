@@ -20,6 +20,10 @@ GATE="$ROOT/hooks/bash-safety-gate.sh"
 TMP=$(mktemp -d) || exit 1
 trap 'rm -rf "$TMP"' EXIT
 export GOVERNANCE_DENY_LOG="$TMP/deny.jsonl"
+# No list from the surrounding session or this machine: a rendered home sets the variable for every
+# session, and a real list file would turn the "no list configured" controls into something else.
+unset GOVERNANCE_OWN_FORGES
+export GOVERNANCE_OWN_FORGES_FILE="$TMP/no-own-forges-file"
 fails=0
 pass() { printf '  PASS  %s\n' "$1"; }
 fail() { printf '  FAIL  %s\n' "$1"; fails=$((fails + 1)); }
@@ -188,8 +192,15 @@ check_blocked "$R_GLOB" "a ? standing in for the name's last letter"
 check_blocked "$R_STAR" "git-credential-* (a glob for the whole name)"
 check_allowed 'bash tests/git-credential-helper-gate.test.sh' "running this suite by path still passes"
 mutant "the name must be followed by a space or a separator" \
-  'git-credential-[a-z0-9_-]*([^A-Za-z0-9_.-]|$)' 'git-credential-[a-z0-9_-]+([[:space:];&|)]|$)' \
+  'git-credential-[a-z0-9_-]*(\.exe)?([^A-Za-z0-9_.-]|$)' 'git-credential-[a-z0-9_-]+(\.exe)?([[:space:];&|)]|$)' \
   "$R_REDIR" "$R_BRACE" "$R_TICK" "$R_GLOB" "$R_STAR"
+X_EXE='git-credential-manager.exe get'
+X_EXEC='Git-Credential-Manager.EXE get'
+check_blocked "$X_EXE" "a helper binary with its .exe extension"
+check_blocked "$X_EXEC" "the same in capitals"
+mutant "the .exe extension is not part of a helper's name" \
+  'git-credential-[a-z0-9_-]*(\.exe)?([^A-Za-z0-9_.-]|$)' 'git-credential-[a-z0-9_-]*([^A-Za-z0-9_.-]|$)' \
+  "$X_EXE" "$X_EXEC"
 
 echo "── git-credential-helper-gate: refuse STRIPPING the session's own override before running git"
 
@@ -203,7 +214,40 @@ check_blocked 'env -u GIT_CONFIG_VALUE_0 git push' "env -u GIT_CONFIG_VALUE_0"
 
 echo " · an ordinary env use, naming neither -i nor one of the four override vars, stays allowed"
 check_allowed 'env FOO=bar git push origin main' "env FOO=bar git (no -i)"
-check_allowed 'env -u SOME_OTHER_VAR git push origin main' "env -u on an unrelated var"
+check_blocked 'env -u SOME_OTHER_VAR git push origin main' "env -u on an unrelated var (refused by shape: -uNAME cannot be told from it)"
+check_allowed 'env LC_ALL=C sort -u names.txt' "the wrapped command's own -u is not env's"
+check_allowed 'env FOO=1 grep -i x notes.txt' "the wrapped command's own -i is not env's"
+check_allowed 'exec git status' "exec without -c"
+check_allowed 'exec -l bash' "exec -l (a login shell, the environment is kept)"
+
+echo " · env and exec clearing the environment, in every spelling"
+V_DASH='env - git status'
+V_VI='env -vi git status'
+V_LONG='env --ignore-environment git status'
+V_UNSETEQ='env --unset=FOO git fetch origin'
+V_GLUED='env -uFOO git fetch origin'
+V_NOGIT='env -i make test'
+V_AFTER='env FOO=1 -i git status'
+check_blocked "$V_DASH" "env - (the same as -i)"
+check_blocked "$V_VI" "env -vi (the letter inside a cluster)"
+check_blocked "$V_LONG" "env --ignore-environment"
+check_blocked "$V_UNSETEQ" "env --unset=<name>"
+check_blocked "$V_GLUED" "env -u<name> (glued)"
+check_blocked "$V_NOGIT" "env -i with no git word on the line"
+check_blocked "$V_AFTER" "env <assignment> -i"
+check_blocked 'env -uGIT_CONFIG_COUNT git fetch origin' "env -uGIT_CONFIG_COUNT"
+mutant "the env rule is removed" \
+  'if printf '"'"'%s'"'"' "$cmd_bare" | grep -qE "$ENV_CLEARS"; then' 'if false; then' \
+  "$V_DASH" "$V_VI" "$V_LONG" "$V_UNSETEQ" "$V_GLUED" "$V_NOGIT" "$V_AFTER"
+C_PLAIN='exec -c git fetch origin'
+C_CLUSTER='exec -cl git fetch origin'
+C_AFTER='exec -a x -c git fetch origin'
+check_blocked "$C_PLAIN" "exec -c"
+check_blocked "$C_CLUSTER" "exec -cl (a cluster)"
+check_blocked "$C_AFTER" "exec -a <name> -c"
+mutant "the exec rule is removed" \
+  'if printf '"'"'%s'"'"' "$cmd_bare" | grep -qE "$EXEC_CLEARS"; then' 'if false; then' \
+  "$C_PLAIN" "$C_CLUSTER" "$C_AFTER"
 check_allowed 'git push origin main' "a plain git push, no env wrapper at all"
 
 echo "── git-credential-helper-gate: refuse ANY assignment, export or unset of one of the four override"
@@ -230,7 +274,7 @@ E_KEY="env GIT_CONFIG_KEY_''0=include.path GIT_CONFIG_VALUE_''0=/tmp/x.cfg git f
 E_VAL="env GIT_CONFIG_VALUE_''0=osxkeychain git fetch origin"
 E_PAR="env GIT_CONFIG_PARA''METERS=x git fetch origin"
 E_EXP='export GIT_CONFIG_PARAMETER\S=x; git fetch origin'
-E_CNT="env GIT_CONFIG_COU''NT=2 GIT_CONFIG_KEY_1=include.path GIT_CONFIG_VALUE_1=/tmp/x.cfg git fetch origin"
+E_CNT="env GIT_CONFIG_COU''NT=2 GIT_CONFIG_KEY_''1=include.path GIT_CONFIG_VALUE_''1=/tmp/x.cfg git fetch origin"
 E_UNS="unset GIT_CONFIG_COU''NT; git fetch origin"
 check_blocked "$E_KEY" "GIT_CONFIG_KEY_''0 and GIT_CONFIG_VALUE_''0 (quoted inside the name)"
 check_blocked "$E_VAL" "GIT_CONFIG_VALUE_''0=<helper>"
@@ -238,17 +282,43 @@ check_blocked "$E_PAR" "GIT_CONFIG_PARA''METERS"
 check_blocked "$E_EXP" 'export GIT_CONFIG_PARAMETER\S (a backslash inside the name)'
 check_blocked "$E_CNT" "GIT_CONFIG_COU''NT=2 with a second key"
 check_blocked "$E_UNS" "unset GIT_CONFIG_COU''NT"
-mutant "the assign and unset checks read the command with its quotes left in" \
-  'if printf '"'"'%s'"'"' "$cmd_bare" | grep -qE "$GIT_ENV_ASSIGN_RX" || printf '"'"'%s'"'"' "$cmd_bare" | grep -qE "$GIT_ENV_UNSET_RX"; then' \
-  'if echo "$cmd" | grep -qE "$GIT_ENV_ASSIGN_RX" || echo "$cmd" | grep -qE "$GIT_ENV_UNSET_RX"; then' \
+mutant "the name rule reads the command with its quotes left in" \
+  'cmd_names=$cmd_bare' 'cmd_names=$cmd' \
   "$E_KEY" "$E_VAL" "$E_PAR" "$E_EXP" "$E_CNT" "$E_UNS"
-S_U="env -u GIT_TERMINAL_PRO''MPT git fetch origin"
+
+echo " · a guarded name is refused as a whole word, however the shell is asked to change it"
+D_APPEND='GIT_CONFIG_VALUE_0+=osxkeychain; git fetch origin'
+D_EXPN='export -n GIT_CONFIG_COUNT; git fetch origin'
+D_DECL='declare +x GIT_CONFIG_COUNT; git fetch origin'
+D_TYPE='typeset +x GIT_CONFIG_COUNT; git fetch origin'
+D_PRINTF='printf -v GIT_CONFIG_VALUE_0 osxkeychain; git fetch origin'
+D_READ='read GIT_CONFIG_VALUE_0 <<< osxkeychain; git fetch origin'
+D_FOR='for GIT_CONFIG_VALUE_0 in osxkeychain; do git fetch origin; done'
+D_LOCAL='f() { local GIT_CONFIG_COUNT; git fetch origin; }; f'
+D_KEY1='GIT_CONFIG_KEY_1=include.path git fetch origin'
+check_blocked "$D_APPEND" "NAME+=<value>"
+check_blocked "$D_EXPN" "export -n NAME"
+check_blocked "$D_DECL" "declare +x NAME"
+check_blocked "$D_TYPE" "typeset +x NAME"
+check_blocked "$D_PRINTF" "printf -v NAME"
+check_blocked "$D_READ" "read NAME"
+check_blocked "$D_FOR" "for NAME in ..."
+check_blocked "$D_LOCAL" "local NAME inside a function"
+check_blocked "$D_KEY1" "a numbered name with another number"
+check_allowed 'echo "$GIT_TERMINAL_PROMPT"' "reading a guarded name as \$NAME"
+check_allowed 'echo "${GIT_CONFIG_COUNT:-unset}"' "reading a guarded name as \${NAME...}"
+check_allowed 'test -n "$GIT_CONFIG_KEY_0" && echo set' "testing a guarded name's value"
+check_allowed 'echo MY_GIT_CONFIG_COUNT_X=1' "a longer name that only contains a guarded one"
+mutant "the name rule is removed" \
+  'if printf '"'"'%s'"'"' "$cmd_names" | grep -qE "$GIT_ENV_NAME_RX"; then' 'if false; then' \
+  "$D_APPEND" "$D_EXPN" "$D_DECL" "$D_TYPE" "$D_PRINTF" "$D_READ" "$D_FOR" "$D_LOCAL" "$D_KEY1"
+S_U="env -'u' FOO git fetch origin"
 S_I="env -'i' git status"
-check_blocked "$S_U" "env -u GIT_TERMINAL_PRO''MPT"
+check_blocked "$S_U" "env -'u' <name> (a quoted flag)"
 check_blocked "$S_I" "env -'i' git (a quoted flag)"
-mutant "the env-strip check reads the command with its quotes left in" \
-  'if printf '"'"'%s'"'"' "$cmd_bare" | grep -qE "$ENV_STRIP_ALL" || printf '"'"'%s'"'"' "$cmd_bare" | grep -qE "$ENV_STRIP_OVERRIDE"; then' \
-  'if echo "$cmd" | grep -qE "$ENV_STRIP_ALL" || echo "$cmd" | grep -qE "$ENV_STRIP_OVERRIDE"; then' \
+check_blocked "env -u GIT_TERMINAL_PRO''MPT git fetch origin" "env -u GIT_TERMINAL_PRO''MPT"
+mutant "the env rule reads the command with its quotes left in" \
+  'if printf '"'"'%s'"'"' "$cmd_bare" | grep -qE "$ENV_CLEARS"; then' 'if echo "$cmd" | grep -qE "$ENV_CLEARS"; then' \
   "$S_U" "$S_I"
 
 echo "── git-credential-helper-gate: refuse an explicit https:// URL to one of the installation's OWN"
@@ -316,6 +386,28 @@ mutant "an unreadable list switches the check off" \
   '    if printf '"'"'%s'"'"' "$cmd_bare" | grep -qiE "$GIT_HTTP_URL"; then' '    if false; then' \
   "$F_URL"
 eval "$GATE_SAVED_RUN"
+
+echo " · a list FILE that exists but cannot be read is a list that did not load, not no list"
+FDIR="$TMP/own-forges-is-a-directory"; mkdir -p "$FDIR"
+F_DIR="GOVERNANCE_OWN_FORGES_FILE=$FDIR"
+check_blocked "$F_URL" "a directory at the list file's path" "$F_DIR"
+check_allowed 'git push origin main' "a bare git push with a directory at the path" "$F_DIR"
+FNOREAD="$TMP/own-forges-mode-000"; printf 'git.example.com\n' > "$FNOREAD"; chmod 000 "$FNOREAD"
+if [[ -r "$FNOREAD" ]]; then
+  pass "a list file with no read permission: not run (this user can read a mode-000 file)"
+else
+  check_blocked "$F_URL" "a list file with no read permission" "GOVERNANCE_OWN_FORGES_FILE=$FNOREAD"
+fi
+chmod 600 "$FNOREAD"
+FGOOD="$TMP/own-forges-good"; printf '# our forges\ngit.example.com\n' > "$FGOOD"
+check_blocked 'git ls-remote https://git.example.com/org/repo' "a readable list file is used" "GOVERNANCE_OWN_FORGES_FILE=$FGOOD"
+check_allowed "$F_URL" "a readable list file does not refuse another host" "GOVERNANCE_OWN_FORGES_FILE=$FGOOD"
+FILE_SAVED_RUN=$(declare -f run)
+run() { local cmd="$1"; shift; payload "$cmd" | env "$F_DIR" bash "$GATE" >/dev/null 2>"$TMP/err"; }
+mutant "a list file that cannot be read counts as no list" \
+  'OWN_FORGES_UNREADABLE=1' 'OWN_FORGES_UNREADABLE=0' \
+  "$F_URL"
+eval "$FILE_SAVED_RUN"
 
 echo "── git-credential-helper-gate: LAYER 1 ITSELF — settings/claude.json's own env block stops a"
 echo "   real credential-helper call. Portable: no real"
