@@ -127,6 +127,96 @@ if echo "$cmd" | grep -qE "${GIT_SEG}reset([[:space:]][^;&|]*)?[[:space:]]--hard
   deny hard-reset "Hard reset requires manual confirmation. Run this command yourself if intended."
 fi
 
+# Block RIDING THE OPERATOR'S OWN CREDENTIAL HELPER: Apple's system gitconfig sets
+# `credential.helper=osxkeychain` globally, so an agent's own `git ls-remote https://<forge>` makes
+# macOS ask the OPERATOR to unlock their login keychain -- an unrelated prompt, on the operator's own
+# screen, for a credential the agent's call never needed. settings/claude.json's own `env` block is
+# the primary fix (every session starts with the helper reset to empty, GIT_CONFIG_COUNT/KEY/VALUE,
+# and GIT_TERMINAL_PROMPT=0 so a prompt that still manages to fire never blocks on an answer); these
+# three checks are the floor backstop for a session that mitigation never reached, or a command that
+# tries to work around it directly.
+#
+# 1. RE-ENABLING a helper the env override reset to empty: `-c credential.helper=<value>` or
+# `git config ... credential.helper <value>`, where <value> is non-empty -- an EMPTY value is the safe
+# direction (it is exactly what the env override itself sets, and `--unset` removes the key outright),
+# so neither is refused, the same "empty/no-op is off" shape as ControlPath=none and
+# ControlPersist=false in the ssh-mux check above.
+GIT_CRED_HELPER_SET='credential\.helper(=|[[:space:]]+)[^[:space:];&|]*[A-Za-z0-9][^[:space:];&|]*'
+# 2. The credential subsystem invoked DIRECTLY: `git credential fill/approve/reject/-C`, or a helper
+# binary called by its own name (`git-credential-osxkeychain`, `git credential-manager`) -- there is no
+# legitimate agent use for any of these; a seat that needs a credential uses its own AppRole path, not
+# git's.
+GIT_CRED_SUBCOMMAND="${GIT_SEG}credential([[:space:]]+(fill|approve|reject|-C)\\b|-[a-z0-9_-]+)"
+GIT_CRED_HELPER_BINARY='(^|[^A-Za-z0-9_/-])git-credential-[a-z0-9_-]+\b'
+if echo "$cmd" | grep -qE "$GIT_CRED_HELPER_SET" \
+   || echo "$cmd" | grep -qE "$GIT_CRED_SUBCOMMAND" \
+   || echo "$cmd" | grep -qE "$GIT_CRED_HELPER_BINARY"; then
+  deny git-credential-helper-use "this sets, unsets-to-a-value, or directly invokes a git credential helper, which would read or re-enable the operator's own saved login -- never an agent's to reach. Run this yourself if a helper genuinely needs changing."
+fi
+
+# 3. `env -i` strips EVERY environment variable from the command it wraps, including the GIT_CONFIG_*/
+# GIT_TERMINAL_PROMPT overrides the session itself starts with -- re-exposing exactly the prompt those
+# exist to prevent. `env -u <name>` targeting one of those SAME four names does the identical thing,
+# narrower. Both are refused regardless of whether `git` is the very next word or reached through
+# other env assignments and flags first.
+ENV_STRIP_ALL="(^|[^A-Za-z0-9_-])env\\b[^;&|]*-i\\b[^;&|]*\\bgit\\b"
+ENV_STRIP_OVERRIDE="(^|[^A-Za-z0-9_-])env\\b[^;&|]*-u[[:space:]]+(GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_TERMINAL_PROMPT)\\b"
+if echo "$cmd" | grep -qE "$ENV_STRIP_ALL" || echo "$cmd" | grep -qE "$ENV_STRIP_OVERRIDE"; then
+  deny env-strips-credential-override "this strips the session's own git credential-helper override (env -i, or env -u on one of its names) before running git, re-exposing the operator's saved login to a prompt the session starts closed. Run this yourself if the override genuinely needs lifting."
+fi
+
+# 3b. ANY assignment, export or unset of one of the SAME four names, in ANY shape, not only via `env`
+# -- `env -i`/`env -u` above only catches the WRAPPER forms; a plain shell assignment lifts or replaces
+# the override just as completely, and need not even mention `git` or `credential.helper` on the same
+# line to do it (the shell keeps the new value for every later command in the session):
+#   GIT_CONFIG_COUNT=0 git ls-remote https://<host>/...      (bare prefix assignment, resets to 0)
+#   GIT_CONFIG_VALUE_0=osxkeychain git ...                    (never names credential.helper; 1 above
+#                                                               only matches that literal key name)
+#   export GIT_CONFIG_COUNT=0; git ...  /  unset GIT_CONFIG_COUNT; git ...
+#   env GIT_CONFIG_COUNT=0 git ...                            (env with a plain assignment, no -i/-u)
+# Refused on the VALUE too, not only the override-removing one: a legitimate tool's own
+# `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory ...` silently drops the reset the same way a
+# malicious one would, and this gate cannot tell intent from shape -- `git -c <key>=<value>` is the
+# one-off form that does not touch the session-wide override at all.
+GIT_ENV_OVERRIDE_NAMES='GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_TERMINAL_PROMPT'
+GIT_ENV_ASSIGN_RX="(^|[^A-Za-z0-9_])(${GIT_ENV_OVERRIDE_NAMES})="
+GIT_ENV_UNSET_RX="(^|[^A-Za-z0-9_-])unset([[:space:]]+-[a-zA-Z]+)*[[:space:]]+[^;&|]*\\b(${GIT_ENV_OVERRIDE_NAMES})\\b"
+if echo "$cmd" | grep -qE "$GIT_ENV_ASSIGN_RX" || echo "$cmd" | grep -qE "$GIT_ENV_UNSET_RX"; then
+  deny git-env-override-reassigned "this assigns, exports, or unsets one of the session's own git credential-helper override variables (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0, GIT_TERMINAL_PROMPT), which lifts or replaces it for every later command in this session. Use \`git -c <key>=<value>\` for a one-off setting instead."
+fi
+
+# 4. A RAW https:// URL to one of the installation's OWN forges, inside a git invocation: this is the
+# measured incident's own shape (`git ls-remote https://<forge>`), typed with an explicit URL rather
+# than through the repo's already-configured remote. The host list is a PARAMETER from the adapter --
+# $GOVERNANCE_OWN_FORGES (comma- or newline-separated), or a file at $GOVERNANCE_OWN_FORGES_FILE
+# (default ~/.governance/own-forges, one host per line, `#` comments allowed) when that is unset -- the
+# same env-var-then-dotfile convention id-provenance-gate.py's gated-tool list and redaction-check's
+# own private-pattern list already use, for the same reason: a literal host name in core is a rule for
+# every fleet, so it can never be core's own.  NOT a bare `git push`/`fetch`/`pull`/`clone` with no URL
+# argument at all: that uses the remote already configured for the repo, which this check does not
+# read and is unaffected (the measured incident's own command named an explicit URL).
+own_forges_list() {
+  if [[ -n "${GOVERNANCE_OWN_FORGES:-}" ]]; then
+    printf '%s' "$GOVERNANCE_OWN_FORGES" | tr ',\n' '  '
+  else
+    local f="${GOVERNANCE_OWN_FORGES_FILE:-$HOME/.governance/own-forges}"
+    [[ -f "$f" ]] && grep -v '^[[:space:]]*#' "$f" | tr '\n' ' '
+  fi
+}
+OWN_FORGES="$(own_forges_list)"
+if [[ -n "$OWN_FORGES" ]]; then
+  OWN_FORGES_RX=$(printf '%s\n' $OWN_FORGES | sed 's/[.[\*^$()+?{}|\\]/\\&/g' | paste -sd'|' -)
+  # cisa J1 (PR #443, c191198): widened on two axes. `https?://` -- the credential helper resolves
+  # for a PLAIN http:// remote too, not only https. And userinfo -- `https://user@<host>/...` or
+  # `https://user:pass@<host>/...` -- which previously slipped past because the host no longer sat
+  # immediately after `://`; matched generically (anything but a slash, `@`, or whitespace, then `@`),
+  # since the userinfo itself is not something this check needs to parse, only skip over.
+  if [[ -n "$OWN_FORGES_RX" ]] \
+     && echo "$cmd" | grep -qiE "${GIT_SEG}([^;&|]*[[:space:]])?https?://([^/@[:space:];&|]*@)?($OWN_FORGES_RX)([^[:space:];&|]*)?"; then
+    deny git-https-own-forge "this names an explicit http(s):// URL to one of the installation's own forges, which rides the operator's own credential helper if the session's own override has not reached this host. Use the repo's already-configured remote (a bare git push/fetch/pull/clone), or the forge's own API/MCP tools."
+  fi
+fi
+
 # Block database destruction
 if echo "$cmd" | grep -qiE '(DROP\s+(TABLE|DATABASE)|TRUNCATE\s+TABLE|DELETE\s+FROM\s+\w+\s*;?\s*(["'"'"']|$))'; then
   deny database-destroy "Destructive database operation. Requires manual confirmation."
