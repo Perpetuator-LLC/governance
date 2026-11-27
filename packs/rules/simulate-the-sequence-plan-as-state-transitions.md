@@ -19,6 +19,20 @@ consolidator inherits the duty to keep the drift-guard attached — and should n
 "make sure you're up to date" habit-step (`git pull`, `git checkout <branch>`) to someone else's
 verified block, which mutates the very state the block asserted.
 
+**The same holds for the block's own AUTHOR: a block that runs committed code pins the code; it
+never pulls it.** `cd <repo> && git pull && <script>` runs whatever the branch says at run time, not
+what the author verified, and it fails outright when the human's checkout is detached, dirty, or on
+another branch — so the script never runs and the human is handed a git error instead of the step.
+The author prepares the code before handing over: a checkout at the commit they verified (a detached
+worktree at that SHA, made and checked by the author), or a structured run that names
+`{repo, path, commit}`. The block then only runs the command there.
+
+**Scope.** This is about running code. A block whose purpose IS to update a checkout (the human
+syncing their own working copy) is a different step: it names the branch and checks the tree is
+clean first. Where the author cannot reach the machine that runs the block, the block's first step
+creates the pinned worktree itself (fetch, then a detached worktree at the SHA), never a pull into
+the human's working branch.
+
 **And RE-VERIFY AT PRINT TIME — every print, not once at receipt.** A block that arrives verified is
 verified *as of its arrival*; if it then sits in a queue, gets re-ordered, or is re-printed in a later
 sitting, its preconditions are a fresh claim each time it is put in front of the human. So the moment

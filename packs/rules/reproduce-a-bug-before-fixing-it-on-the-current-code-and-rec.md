@@ -11,7 +11,13 @@ that conflicts with the first.
 **Before writing a fix, reproduce the report on the current default branch** (or on the deployed
 build it was reported against) **and record on the ticket:** the steps or command, observed versus
 expected, and the commit it ran against.
-- **It reproduces** → that reproduction becomes the fix's first failing test.
+- **It reproduces** → that reproduction becomes the fix's first failing test, **and the ticket closes
+  only when that same reproduction passes**: the reporter's own action, as the reporter, on the build
+  the reporter uses. A narrower check that the fix itself made true (a setting read back, one record
+  of several, a unit test of the changed function) proves the change landed, not that the report is
+  gone. Where the symptom names one action, the close re-runs that action; where it names an area,
+  the close covers every action the reporter can take in it. The same harm limit applies as to the
+  reproduction (the second mirror below): an action that moves money or data is re-run on a copy.
 - **It does not reproduce** → find the change that removed it (search the history between the ticket's
   commit and now), and close the ticket citing that change.
 - **It does not reproduce, and no removing change can be found** → do not close it as fixed. Record
